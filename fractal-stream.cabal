@@ -36,8 +36,10 @@ library
                     , Fractal.Stream.Backend.Redis
                     , Fractal.Stream.Outbox
                     , Fractal.Schema.Registry
+                    , Fractal.Schema.Types
                     , Fractal.Schema.Backend.Class
                     , Fractal.Schema.Backend.PostgreSQL
+                    , Fractal.Schema.Compatibility.Avro
                     , Fractal.Layer
     build-depends:    base >=4.17.0.0
                     , aeson >= 2.0 && < 3
@@ -74,6 +76,7 @@ library
                     , vinyl
                     , yesod-core
                     , free >= 5.1 && < 6
+                    , avro
 
     hs-source-dirs:   src
     default-language: Haskell2010

@@ -7,8 +7,8 @@ import Data.Int (Int32, Int64)
 import GHC.Generics (Generic)
 import Data.Vector (Vector)
 
--- Import from the main module
-import Fractal.Schema.Registry
+-- Import from the types module
+import Fractal.Schema.Types
   ( SubjectName(..)
   , SchemaId(..)
   , Version(..)

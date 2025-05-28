@@ -1,6 +1,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 module Fractal.Schema.Backend.PostgreSQL where
 import Fractal.Schema.Backend.Class
+import Fractal.Schema.Types
 import qualified Hasql.Connection as HC
 import qualified Hasql.Session as HS
 import qualified Hasql.Statement as HST
@@ -13,14 +14,13 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Data.Int (Int64)
-import Fractal.Schema.Registry
 
 -- Hasql-based store monad
 newtype HasqlStore a = HasqlStore (ReaderT HC.Connection IO a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader HC.Connection)
 
-runHasqlStore :: HC.Connection -> HasqlStore a -> IO a
-runHasqlStore conn (HasqlStore m) = runReaderT m conn
+runHasqlStore :: MonadIO m => HC.Connection -> HasqlStore a -> m a
+runHasqlStore conn (HasqlStore m) = liftIO $ runReaderT m conn
 
 -- Helper to run statements
 runStatement :: HST.Statement a b -> a -> HasqlStore (Either StoreError b)
