@@ -125,3 +125,8 @@ test-suite fractal-stream-test
                     , fractal-stream
                     , hspec >= 2.10 && < 3
                     , QuickCheck >= 2.14 && < 3
+                    , avro
+                    , text
+                    , unordered-containers
+                    , aeson
+                    , containers

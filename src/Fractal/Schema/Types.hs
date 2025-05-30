@@ -33,6 +33,72 @@ data SchemaType = AVRO | JSON | PROTOBUF
   deriving (Show, Eq, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+-- | These levels determine how schema evolution is handled and what changes are allowed
+-- between different versions of a schema.
+--
+-- == Compatibility Types
+--
+-- * __BACKWARD__: A new schema is backward compatible if it can read data written with the old schema.
+--   This is the most common compatibility mode. You can:
+--     * Add fields with defaults
+--     * Remove fields (the reader will ignore them)
+--     * Promote types: int → long/float/double, long → float/double, float → double, string ↔ bytes
+--
+-- * __BACKWARD_TRANSITIVE__: Like BACKWARD, but checks compatibility across all historical versions,
+--   not just the immediate predecessor. This ensures that any new schema can read data written with
+--   any previous version.
+--
+-- * __FORWARD__: A new schema is forward compatible if the old schema can read data written with the new schema.
+--   You can:
+--     * Remove fields
+--     * Add fields only if the old schema has defaults for them
+--     * Demote types where supported
+--
+-- * __FORWARD_TRANSITIVE__: Like FORWARD, but checks compatibility across all historical versions,
+--   not just the immediate predecessor. This ensures that any old schema can read data written with
+--   any newer version.
+--
+-- * __FULL__: A schema is fully compatible if it is both backward and forward compatible.
+--   This is the most restrictive mode. You can:
+--     * Add fields with defaults
+--     * Remove fields with defaults
+--     * Promote/demote types where supported in both directions
+--
+-- * __FULL_TRANSITIVE__: Like FULL, but checks compatibility across all historical versions,
+--   not just the immediate predecessor. This ensures that any schema can read data written with
+--   any other version.
+--
+-- * __NONE__: No compatibility checks are performed. Any schema changes are allowed.
+--
+-- == Examples
+--
+-- Backward compatible changes:
+-- @
+-- -- Old schema
+-- {"type": "record", "name": "User", "fields": [
+--   {"name": "id", "type": "int"}
+-- ]}
+--
+-- -- New schema (backward compatible)
+-- {"type": "record", "name": "User", "fields": [
+--   {"name": "id", "type": "int"},
+--   {"name": "name", "type": "string", "default": "Unknown"}
+-- ]}
+-- @
+--
+-- Forward compatible changes:
+-- @
+-- -- Old schema
+-- {"type": "record", "name": "User", "fields": [
+--   {"name": "id", "type": "int"},
+--   {"name": "email", "type": "string"}
+-- ]}
+--
+-- -- New schema (forward compatible)
+-- {"type": "record", "name": "User", "fields": [
+--   {"name": "id", "type": "int"}
+-- ]}
+-- @
 data CompatibilityLevel
   = BACKWARD
   | BACKWARD_TRANSITIVE

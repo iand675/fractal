@@ -14,7 +14,8 @@
   # processes.cargo-watch.exec = "cargo-watch";
 
   # https://devenv.sh/services/
-  # services.postgres.enable = true;
+  services.postgres.enable = true;
+  services.redis.enable = true;
 
   # https://devenv.sh/scripts/
   scripts.hello.exec = ''
@@ -44,4 +45,5 @@
   # See full reference at https://devenv.sh/reference/options/
   languages.nix.enable = true;
   languages.haskell.enable = true;
+
 }
