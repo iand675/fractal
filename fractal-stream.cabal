@@ -48,6 +48,7 @@ library
                     , hedis >= 0.15 && < 1
                     , hasql >= 1.6 && < 2
                     , hasql-th >= 0.4 && < 1
+                    , hasql-transaction >= 1.0.0 && < 2
                     , hs-opentelemetry-api
                     , ki
                     , lens >= 5.0 && < 6

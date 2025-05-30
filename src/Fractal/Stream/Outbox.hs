@@ -29,7 +29,7 @@ module Fractal.Stream.Outbox
 
 import Contravariant.Extras
 import Control.Monad (forever, when, void)
-import Data.Aeson (ToJSON(..), Value, encode, decode, eitherDecode')
+import Data.Aeson (ToJSON(..), Value, encode, decode, eitherDecode', object, (.=))
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
@@ -38,7 +38,7 @@ import Data.Int (Int32)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
-import Data.UUID (UUID)
+import Data.UUID (UUID, nil)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import GHC.Generics (Generic)
@@ -50,6 +50,8 @@ import Hasql.Statement (Statement)
 import qualified Hasql.Statement as Statement
 import qualified Hasql.Decoders as Decoders
 import qualified Hasql.Encoders as Encoders
+import Hasql.Transaction (Transaction, statement)
+import qualified Hasql.Transaction.Sessions as TransactionSessions
 import UnliftIO
 import UnliftIO.Concurrent
 
@@ -99,10 +101,20 @@ createOutboxTableStatement = Statement.Statement sql Encoders.noParams Decoders.
           \  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
           \  processed_at TIMESTAMPTZ, \
           \  retries INT NOT NULL DEFAULT 0, \
-          \  error TEXT, \
-          \  INDEX idx_unprocessed (processed_at) WHERE processed_at IS NULL, \
-          \  INDEX idx_created (created_at) \
+          \  error TEXT \
           \)"
+
+-- Create unprocessed events index
+createUnprocessedIndexStatement :: Statement () ()
+createUnprocessedIndexStatement = Statement.Statement sql Encoders.noParams Decoders.noResult True
+  where
+    sql = "CREATE INDEX IF NOT EXISTS idx_unprocessed ON outbox_events (processed_at) WHERE processed_at IS NULL"
+
+-- Create created_at index
+createCreatedIndexStatement :: Statement () ()
+createCreatedIndexStatement = Statement.Statement sql Encoders.noParams Decoders.noResult True
+  where
+    sql = "CREATE INDEX IF NOT EXISTS idx_created ON outbox_events (created_at)"
 
 -- Insert outbox event
 insertOutboxEventStatement :: Statement OutboxEvent ()
@@ -177,7 +189,12 @@ updateRetryStatement = Statement.Statement sql encoder Decoders.noResult True
 
 -- Database operations
 createOutboxTable :: MonadIO m => Connection -> m (Either SessionError ())
-createOutboxTable conn = liftIO $ Session.run (Session.statement () createOutboxTableStatement) conn
+createOutboxTable conn = liftIO $ do
+  let transaction = do
+        statement () createOutboxTableStatement
+        statement () createUnprocessedIndexStatement
+        statement () createCreatedIndexStatement
+  Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
 writeToOutbox :: (MonadIO m, ToJSON e) =>
                  Connection -> Text -> Maybe Text -> EventEnvelope e -> m (Either SessionError ())
@@ -195,20 +212,24 @@ writeToOutbox conn topic key envelope = liftIO $ do
         , outboxEventError = Nothing
         }
 
-  Session.run (Session.statement outboxEvent insertOutboxEventStatement) conn
+  let transaction = statement outboxEvent insertOutboxEventStatement
+  Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
 getUnprocessedEvents :: MonadIO m => Connection -> Int32 -> m (Either SessionError (Vector OutboxEvent))
-getUnprocessedEvents conn limit = liftIO $
-  Session.run (Session.statement limit getUnprocessedEventsStatement) conn
+getUnprocessedEvents conn limit = liftIO $ do
+  let transaction = statement limit getUnprocessedEventsStatement
+  Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
 markAsProcessed :: MonadIO m => Connection -> UUID -> m (Either SessionError ())
 markAsProcessed conn eid = liftIO $ do
   now <- getCurrentTime
-  Session.run (Session.statement (eid, now) markAsProcessedStatement) conn
+  let transaction = statement (eid, now) markAsProcessedStatement
+  Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
 updateOutboxEvent :: MonadIO m => Connection -> UUID -> Int32 -> Text -> m (Either SessionError ())
-updateOutboxEvent conn eid retries errorMsg = liftIO $
-  Session.run (Session.statement (eid, retries, errorMsg) updateRetryStatement) conn
+updateOutboxEvent conn eid retries errorMsg = liftIO $ do
+  let transaction = statement (eid, retries, errorMsg) updateRetryStatement
+  Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
 -- Outbox processor implementation
 startOutboxProcessor :: (MonadStream m, MonadUnliftIO m) =>

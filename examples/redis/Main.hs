@@ -11,6 +11,7 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Aeson
 import Data.Text (Text, unpack)
 import Data.Time (UTCTime)
+import Data.Time (UTCTime, getCurrentTime)
 import Database.Redis (defaultConnectInfo)
 import GHC.Generics
 import Hasql.Connection as Connection
@@ -151,12 +152,13 @@ main = do
 
       -- Simulate publishing events
       forever $ do
+        now <- getCurrentTime
         let event = TransactionPosted
               { transactionId = "txn_12345"
               , accountId = "acc_67890"
               , amount = 100.0
               , currency = "USD"
-              , postedAt = undefined  -- Would use current time
+              , postedAt = now  -- Would use current time
               }
 
         -- Publish with exactly-once semantics

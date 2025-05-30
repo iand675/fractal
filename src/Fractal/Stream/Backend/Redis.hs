@@ -107,8 +107,10 @@ instance MonadUnliftIO m => MonadStream (RedisStreamT m) where
       xadd streamName "*" fields
 
     case result of
-      Left err -> return $ Left $ PublishError $ "Redis error: " <> T.pack (show err)
-      Right msgId -> return $ Right $ _eventId event
+      Left err -> do
+        return $ Left $ PublishError $ "Redis error: " <> T.pack (show err)
+      Right msgId -> do
+        return $ Right $ _eventId event
 
   createConsumer :: RedisStreamEnv -> StreamConfig -> RedisStreamT m (Either StreamError ConsumerState)
   createConsumer env config = RedisStreamT $ liftIO $ do
@@ -116,7 +118,7 @@ instance MonadUnliftIO m => MonadStream (RedisStreamT m) where
         groupName = consumerGroupKey groupId
 
     -- Create consumer groups for each topic
-    results <- forM (_streamTopics config) $ \topic -> do
+    _results <- forM (_streamTopics config) $ \topic -> do
       let streamName = streamKey topic
       runRedis (redisConnection env) $ do
         -- Try to create group, ignore if already exists
@@ -125,6 +127,7 @@ instance MonadUnliftIO m => MonadStream (RedisStreamT m) where
     -- Initialize consumer state
     activeVar <- newTVarIO True
     atomically $ modifyTVar (redisConsumerMap env) ((groupId, activeVar) :)
+
 
     return $ Right $ ConsumerState config (StreamOffset "$") True
 
@@ -160,22 +163,21 @@ instance MonadUnliftIO m => MonadStream (RedisStreamT m) where
                         validation
                           (\errs -> do
                             -- Log error but don't acknowledge
-                            -- This allows retry on next poll
                             return ())
-                          (\_ -> void $ liftIO $ runRedis (redisConnection env) $ do
-                            xack stream groupName [msgId])
+                          (\_ -> do
+                            void $ liftIO $ runRedis (redisConnection env) $ do
+                              xack stream groupName [msgId])
                           processingResult
                       Left err -> do
-                        -- Log deserialization error
                         -- Acknowledge to prevent stuck messages
                         void $ liftIO $ runRedis (redisConnection env) $ do
                           xack stream groupName [msgId]
               Left err -> do
-                -- Log connection error and retry
                 threadDelay 1000000  -- 1 second
           threadDelay 10000  -- 10ms between polls
 
-      Nothing -> return ()
+      Nothing -> do
+        return ()
 
   commitOffset :: RedisStreamEnv -> ConsumerGroupId -> StreamOffset -> RedisStreamT m (Either StreamError ())
   commitOffset env groupId offset = RedisStreamT $ liftIO $ do
@@ -186,8 +188,10 @@ instance MonadUnliftIO m => MonadStream (RedisStreamT m) where
       Redis.set key value
 
     case result of
-      Right _ -> return $ Right ()
-      Left err -> return $ Left $ OffsetError $ "Failed to commit offset: " <> T.pack (show err)
+      Right _ -> do
+        return $ Right ()
+      Left err -> do
+        return $ Left $ OffsetError $ "Failed to commit offset: " <> T.pack (show err)
 
   getOffset :: RedisStreamEnv -> ConsumerGroupId -> RedisStreamT m (Either StreamError StreamOffset)
   getOffset env groupId = RedisStreamT $ liftIO $ do
