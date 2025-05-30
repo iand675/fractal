@@ -7,9 +7,7 @@
 
 module Fractal.Stream.Types where
 
-import Control.Lens
 import Data.Aeson
-import Data.ByteString (ByteString)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
@@ -34,17 +32,6 @@ newtype ConsumerGroupId = ConsumerGroupId Text
 newtype StreamOffset = StreamOffset Text
   deriving newtype (Eq, Ord, Show, ToJSON, FromJSON)
 
--- Trace context for OpenTelemetry integration
-data TraceContext = TraceContext
-  { _traceId :: Text
-  , _spanId :: Text
-  , _traceFlags :: Maybe Text
-  , _traceState :: Maybe Text
-  } deriving (Eq, Show, Generic)
-
-instance ToJSON TraceContext
-instance FromJSON TraceContext
-
 -- Event metadata for routing and filtering
 newtype EventMetadata = EventMetadata (Map Text Text)
   deriving newtype (Eq, Show, ToJSON, FromJSON, Semigroup, Monoid)
@@ -56,7 +43,6 @@ data EventEnvelope e = EventEnvelope
   , _eventVersion :: SchemaVersion
   , _eventTime :: UTCTime
   , _eventSource :: ServiceIdentifier
-  , _traceContext :: TraceContext
   , _payload :: e
   , _metadata :: EventMetadata
   } deriving (Eq, Show, Generic)
@@ -129,12 +115,3 @@ data EventFilter = EventFilter
 -- Processing result for railway-oriented programming
 -- Using Validation from validation-selective for better error accumulation
 type ProcessingResult a = Validation (NonEmpty StreamError) a
-
--- Generate lenses
-makeLenses ''TraceContext
-makeLenses ''EventEnvelope
-makeLenses ''StreamConfig
-makeLenses ''PublishConfig
-makeLenses ''ConsumerState
-makeLenses ''ReplayConfig
-makeLenses ''EventFilter

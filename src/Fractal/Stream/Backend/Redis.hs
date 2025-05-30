@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -8,28 +7,18 @@
 
 module Fractal.Stream.Backend.Redis where
 
-import Control.Exception (bracket, catch, SomeException)
-import Control.Lens
 import Control.Monad (forever, forM, forM_, when, void)
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
-import Data.Either (rights)
-import Data.List (find)
-import Data.Maybe (fromMaybe, catMaybes)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Time (UTCTime, getCurrentTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
-import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
 import Database.Redis as Redis
-import GHC.Generics (Generic)
 import Validation
 import UnliftIO
 import UnliftIO.Concurrent
@@ -68,7 +57,6 @@ eventToRedisFields EventEnvelope{..} =
   , ("event_version", BS8.pack $ show $ case _eventVersion of SchemaVersion v -> v)
   , ("event_time", T.encodeUtf8 $ T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" _eventTime)
   , ("event_source", T.encodeUtf8 $ case _eventSource of ServiceIdentifier s -> s)
-  , ("trace_context", LBS.toStrict $ encode _traceContext)
   , ("payload", LBS.toStrict $ encode _payload)
   , ("metadata", LBS.toStrict $ encode _metadata)
   ]
@@ -96,17 +84,13 @@ redisFieldsToEvent fields = do
 
   let eventSource = ServiceIdentifier $ maybe "" T.decodeUtf8 $ lookupField "event_source"
 
-  traceContext <- case lookupField "trace_context" >>= (Data.Aeson.decode . LBS.fromStrict) of
-    Just tc -> Right tc
-    Nothing -> Left $ DeserializationError "Missing or invalid trace_context"
-
   let payload = fromMaybe "" $ lookupField "payload"
 
   metadata <- case lookupField "metadata" >>= (Data.Aeson.decode . LBS.fromStrict) of
     Just md -> Right md
     Nothing -> Right $ EventMetadata mempty
 
-  Right $ EventEnvelope eventId eventType eventVersion eventTime eventSource traceContext payload metadata
+  Right $ EventEnvelope eventId eventType eventVersion eventTime eventSource payload metadata
 
 -- MonadStream instance for Redis
 instance MonadUnliftIO m => MonadStream (RedisStreamT m) where

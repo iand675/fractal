@@ -14,13 +14,12 @@ module Fractal.Stream
   , ServiceIdentifier(..)
   , ConsumerGroupId(..)
   , StreamOffset(..)
-  , TraceContext(..)
   , EventMetadata(..)
   , StreamConfig(..)
   , StartOffset(..)
   , PublishConfig(..)
   , StreamError(..)
-  , ProcessingResult(..)
+  , ProcessingResult
   , ReplayConfig(..)
   , EventFilter(..)
 
@@ -44,15 +43,13 @@ module Fractal.Stream
   , StreamProcess
   ) where
 
-import Control.Lens
-import Control.Monad (forever, when)
-import Data.Aeson (ToJSON, FromJSON)
+import Control.Monad (forever)
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
-import Data.UUID (UUID, toText)
 import qualified Data.UUID.V4 as UUID
 import Validation
 
@@ -88,7 +85,7 @@ consumer backend config = do
     Right state -> return state
 
 -- Subscribe to events with automatic deserialization
-subscribe :: forall m e. (MonadStream m, FromJSON e) =>
+subscribe :: forall m e. (MonadStream m) =>
              StreamBackend m -> ConsumerState -> (EventEnvelope e -> m (ProcessingResult ())) -> m ()
 subscribe backend state handler = do
   Fractal.Stream.Class.subscribe backend state $ \envelope -> do
@@ -97,7 +94,7 @@ subscribe backend state handler = do
       Left err -> return $ failure $ DeserializationError err
       Right typedEnvelope -> handler typedEnvelope
   where
-    decodePayload :: FromJSON e => EventEnvelope ByteString -> Either Text (EventEnvelope e)
+    decodePayload :: EventEnvelope ByteString -> Either Text (EventEnvelope e)
     decodePayload env = case eitherDecode' (LBS.fromStrict $ _payload env) of
       Left err -> Left $ T.pack err
       Right payload -> Right $ env { _payload = payload }
@@ -105,7 +102,7 @@ subscribe backend state handler = do
     eitherDecode' = undefined -- Would use Data.Aeson.eitherDecode
 
 -- Subscribe forever with error handling
-subscribeForever :: forall m e. (MonadStream m, MonadUnliftIO m, FromJSON e) =>
+subscribeForever :: forall m e. (MonadStream m, MonadUnliftIO m) =>
                     StreamBackend m -> ConsumerState -> (EventEnvelope e -> m (ProcessingResult ())) -> m ()
 subscribeForever backend state handler = forever $ do
   Fractal.Stream.subscribe backend state handler `catch` handleError
@@ -118,12 +115,10 @@ subscribeForever backend state handler = forever $ do
       liftIO $ threadDelay 5000000  -- 5 seconds
 
 -- Event envelope builder
-mkEventEnvelope :: (MonadIO m, ToJSON e) => Text -> e -> m (EventEnvelope e)
+mkEventEnvelope :: (MonadIO m) => Text -> e -> m (EventEnvelope e)
 mkEventEnvelope eventType payload = liftIO $ do
   eventId <- EventId <$> UUID.nextRandom
   eventTime <- getCurrentTime
-  traceId <- toText <$> UUID.nextRandom
-  spanId <- toText <$> UUID.nextRandom
 
   return EventEnvelope
     { _eventId = eventId
@@ -131,7 +126,6 @@ mkEventEnvelope eventType payload = liftIO $ do
     , _eventVersion = SchemaVersion 1
     , _eventTime = eventTime
     , _eventSource = ServiceIdentifier "fractal-stream"  -- Would be configurable
-    , _traceContext = TraceContext traceId spanId Nothing Nothing
     , _payload = payload
     , _metadata = EventMetadata mempty
     }

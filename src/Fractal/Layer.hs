@@ -133,11 +133,13 @@ module Fractal.Layer
     composeLayer,
     resource,
     effect,
+    bracketed,
 
     -- * Services
     Service,
     mkService,
     service,
+    uncached,
 
     -- * Building reusable environments
     Environment,
@@ -156,8 +158,6 @@ where
 import Control.Applicative
 import Control.Arrow
 import Control.Category
-import Control.Concurrent (yield)
-import Control.Exception (throw)
 import Control.Monad
 import Control.Monad.Reader.Class
 import Control.Monad.Trans.Class (lift)
@@ -192,25 +192,25 @@ data LayerEnv = LayerEnv
   }
 
 newtype Service m deps env = Service
-  { unService :: Layer m deps env
+  { uncached :: Layer m deps env
   }
 
 getOrCreateCachedService :: forall m deps env. (MonadUnliftIO m, Typeable env) => Service m deps env -> Layer m deps env
-getOrCreateCachedService (Service service) = Layer $ \lenv env -> do
+getOrCreateCachedService (Service m) = Layer $ \lenv env -> do
   let rep = typeRep (Proxy @env)
 
   -- Try to get the current state
   states <- liftIO $ readMVar lenv.serviceStates
   case HashMap.lookup rep states of
-    Just (Initialized service) -> pure $ unsafeCoerce service
+    Just (Initialized x) -> pure $ unsafeCoerce x
     Just (Failed e) -> throwIO e
-    _ -> join $ modifyMVar lenv.serviceStates $ \states -> do
-      case HashMap.lookup rep states of
-        Just (Initialized service) -> pure (states, pure $ unsafeCoerce service)
-        Just (Failed e) -> pure (states, throwIO e)
+    _ -> join $ modifyMVar lenv.serviceStates $ \serviceStates -> do
+      case HashMap.lookup rep serviceStates of
+        Just (Initialized x) -> pure (serviceStates, pure $ unsafeCoerce x)
+        Just (Failed e) -> pure (serviceStates, throwIO e)
         Nothing -> do
           -- Initialize the service
-          eRes <- try $ build service lenv env
+          eRes <- try $ build m lenv env
           case eRes of
             Left e -> do
               let states' = HashMap.insert rep (Failed e) states
@@ -338,9 +338,9 @@ bracketed f = Layer $ \_ deps -> do
     ( async do
       lift $ f deps (\env -> putMVar resourceVar env >> takeMVar cleanupVar)
     )
-    (\handle -> do
+    (\h -> do
       putMVar cleanupVar ()
-      wait handle
+      wait h
     )
   takeMVar resourceVar
 
@@ -501,7 +501,7 @@ instance Monad m => Category (Layer m) where
 instance Functor m => Profunctor (Layer m) where
   {-# SPECIALIZE instance Profunctor (Layer IO) #-}
   dimap f g (Layer l) = Layer $ \lenv a -> fmap g (l lenv (f a))
-  lmap f = mapLayer f
+  lmap  = mapLayer
   rmap = fmap
 
 instance Monad m => Strong (Layer m) where
@@ -535,7 +535,7 @@ instance Monad m => Traversing (Layer m) where
 
 instance Monad m => Arrow (Layer m) where
   {-# SPECIALIZE instance Arrow (Layer IO) #-}
-  arr f = Layer $ \lenv a -> pure (f a)
+  arr f = Layer $ \_ a -> pure (f a)
   first = first'
   second = second'
 
