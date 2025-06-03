@@ -27,6 +27,8 @@ import Prelude hiding (id, (.))
 
 -- Import the Avro schema compatibility tests
 import qualified Fractal.Schema.Compatibility.AvroSpec as Avro
+-- Import the client tests
+import qualified Fractal.Schema.ClientSpec as Client
 
 -- Test data types
 data Config = Config { port :: Int, host :: String } deriving (Eq, Show)
@@ -94,6 +96,8 @@ main :: IO ()
 main = hspec $ do
   -- Include the Avro schema compatibility tests
   Avro.spec
+  -- Include the client tests
+  Client.spec
 
   describe "Layer - Basic Construction" $ do
     it "effect creates a simple layer" $ do
@@ -224,12 +228,12 @@ main = hspec $ do
       result `shouldBe` 42
 
     it "first applies to first component" $ do
-      let layer = first @(Layer IO) (arr (*2))
+      let layer = first @(Layer IO) (arr @(Layer IO) @Int @Int (*2))
       result <- runLayer (21, "test") layer
       result `shouldBe` (42, "test")
 
     it "second applies to second component" $ do
-      let layer = second @(Layer IO) (arr (*2))
+      let layer = second @(Layer IO) (arr @(Layer IO) @Int @Int (*2))
       result <- runLayer ("test", 21) layer
       result `shouldBe` ("test", 42)
 

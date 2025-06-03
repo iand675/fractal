@@ -13,8 +13,6 @@
 -- |
 -- Module      : Fractal.Layer
 -- Description : A composable resource management and dependency injection system
--- Copyright   : (c) Mercury, 2024
--- License     : AllRightsReserved
 -- Stability   : experimental
 -- Portability : Portable
 --

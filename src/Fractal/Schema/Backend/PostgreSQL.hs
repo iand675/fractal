@@ -1,7 +1,8 @@
 {-# LANGUAGE QuasiQuotes #-}
 module Fractal.Schema.Backend.PostgreSQL where
-import Fractal.Schema.Backend.Class
-import Fractal.Schema.Types
+import Fractal.Schema.Backend.Class as Class
+import Fractal.Schema.Types as Types
+import Fractal.Schema.Compatibility.Avro as Avro
 import qualified Hasql.Connection as HC
 import qualified Hasql.Session as HS
 import qualified Hasql.Statement as HST
@@ -9,11 +10,18 @@ import qualified Hasql.Encoders as HE
 import qualified Hasql.Decoders as HD
 import qualified Hasql.TH as HTH
 import Control.Monad.Reader
-import Data.Functor.Contravariant
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Data.Int (Int64)
+import Data.Avro (Schema(..))
+import qualified Data.Avro.Schema.Schema as AvroSchema
+import Data.Either (partitionEithers)
+import Data.List.NonEmpty (NonEmpty(..), toList)
+import Data.Aeson (FromJSON(..), eitherDecode, encode, eitherDecodeStrictText)
+import Data.ByteString.Lazy (fromStrict)
+import Data.Text.Encoding (encodeUtf8)
 
 -- Hasql-based store monad
 newtype HasqlStore a = HasqlStore (ReaderT HC.Connection IO a)
@@ -177,8 +185,7 @@ setGlobalConfigStmt :: HST.Statement Text ()
 setGlobalConfigStmt = [HTH.resultlessStatement|
   INSERT INTO configs (subject, compatibility)
   VALUES (NULL, $1 :: text)
-  ON CONFLICT (subject) WHERE subject IS NULL
-  DO UPDATE SET compatibility = EXCLUDED.compatibility
+  ON CONFLICT (subject) DO UPDATE SET compatibility = EXCLUDED.compatibility
   |]
 
 getSubjectConfigStmt :: HST.Statement Text (Maybe Text)
@@ -200,6 +207,33 @@ deleteSubjectConfigStmt :: HST.Statement Text ()
 deleteSubjectConfigStmt = [HTH.resultlessStatement|
   DELETE FROM configs
   WHERE subject = $1 :: text
+  |]
+
+getSchemaVersionsStmt :: HST.Statement Int64 (V.Vector (Text, Int64))
+getSchemaVersionsStmt = [HTH.vectorStatement|
+  SELECT subject :: text, version :: int8
+  FROM subject_versions
+  WHERE schema_id = $1 :: int8 AND NOT deleted
+  ORDER BY subject, version
+  |]
+
+getReferencedByStmt :: HST.Statement (Text, Int64) (V.Vector (Text, Int64, Maybe Text, Text))
+getReferencedByStmt = [HTH.vectorStatement|
+  WITH referenced_schema AS (
+    SELECT schema_id
+    FROM subject_versions
+    WHERE subject = $1 :: text AND version = $2 :: int8 AND NOT deleted
+  )
+  SELECT
+    sv.subject :: text,
+    sv.version :: int8,
+    s.schema_type :: text?,
+    s.schema :: text
+  FROM subject_versions sv
+  JOIN schemas s ON sv.schema_id = s.id
+  WHERE sv.schema_id IN (SELECT schema_id FROM referenced_schema)
+    AND sv.deleted = false
+  ORDER BY sv.subject, sv.version
   |]
 
 -- Schema Store instance for HasqlStore
@@ -225,7 +259,20 @@ instance SchemaStore HasqlStore where
     result <- runStatement insertSchemaStmt (schema, schemaTypeText, hash)
     case result of
       Right sid -> pure $ Right $ SchemaId sid
-      Left err -> pure $ Left err
+      Left err ->
+        let errMsg = show err in
+        if "duplicate key value violates unique constraint" `T.isInfixOf` T.pack errMsg && "schemas_hash_key" `T.isInfixOf` T.pack errMsg
+          then do
+            liftIO $ putStrLn $ "Schema with hash already exists, returning existing ID. Hash: " ++ T.unpack hash
+            mExisting <- runStatement findSchemaByHashStmt hash
+            case mExisting of
+              Right (Just record) -> pure $ Right $ Class.srId record
+              _ -> do
+                liftIO $ putStrLn $ "Failed to find existing schema after unique constraint violation. Hash: " ++ T.unpack hash
+                pure $ Left $ DatabaseError $ T.pack $ "Failed to insert schema (duplicate hash) and could not find existing: " ++ errMsg
+          else do
+            liftIO $ putStrLn $ "Failed to insert schema: " ++ errMsg ++ "\nSchema type: " ++ show schemaType ++ "\nHash: " ++ T.unpack hash
+            pure $ Left $ DatabaseError $ T.pack $ "Failed to insert schema: " ++ errMsg
 
   getAllSchemaTypes = pure $ V.fromList [AVRO, JSON, PROTOBUF]
 
@@ -259,7 +306,7 @@ instance SchemaStore HasqlStore where
     result <- runStatement insertSubjectVersionStmt (subject, sid)
     case result of
       Right v -> pure $ Right $ Version v
-      Left err -> pure $ Left err
+      Left err -> pure $ Left $ DatabaseError $ T.pack $ "Failed to register schema version: " ++ show err
 
   softDeleteSubject (SubjectName subject) = do
     result <- runStatement softDeleteSubjectStmt subject
@@ -277,7 +324,10 @@ instance SchemaStore HasqlStore where
     result <- runStatement getGlobalConfigStmt ()
     case result of
       Right (Just compat) -> pure $ parseCompatibility compat
-      _ -> pure BACKWARD  -- Default
+      _ -> do
+        -- Set default to FULL if not configured
+        _ <- runStatement setGlobalConfigStmt "FULL"
+        pure FULL
 
   setGlobalCompatibility compat = do
     _ <- runStatement setGlobalConfigStmt (compatToText compat)
@@ -304,6 +354,81 @@ instance SchemaStore HasqlStore where
   setSubjectMode _ _ = pure ()
   deleteSubjectMode _ = pure ()
 
+  getSchemaVersions (SchemaId sid) = do
+    result <- runStatement getSchemaVersionsStmt sid
+    case result of
+      Right versions -> pure $ Right $ fmap (\(subject, version) -> SubjectVersion subject (Version version)) versions
+      Left err -> pure $ Left err
+
+  getReferencedBy (SubjectName subject) (Version version) = do
+    result <- runStatement getReferencedByStmt (subject, version)
+    case result of
+      Right refs -> pure $ Right $ fmap (\(subj, ver, schemaType, schema) ->
+        SchemaInfo
+          subj
+          (SchemaId 0) -- We don't have the schema ID in the result
+          (Version ver)
+          (case schemaType of
+            Just "AVRO" -> Just AVRO
+            Just "JSON" -> Just JSON
+            Just "PROTOBUF" -> Just PROTOBUF
+            _ -> Nothing)
+          schema) refs
+      Left err -> pure $ Left err
+
+  checkCompatibility (SubjectName subject) (Version version) newSchema = do
+    -- Get the existing schema
+    versionResult <- Class.getSubjectVersion (SubjectName subject) (Version version)
+    case versionResult of
+      Right (schemaId, _) -> do
+        schemaResult <- getSchema schemaId
+        case schemaResult of
+          Right existingSchema -> do
+            -- Get compatibility level
+            subjectCompat <- getSubjectCompatibility (SubjectName subject)
+            globalCompat <- getGlobalCompatibility
+            let level = fromMaybe globalCompat subjectCompat
+
+            -- Check compatibility based on schema type
+            case (existingSchema.srSchemaType, newSchema.schemaType) of
+              (Just AVRO, Just AVRO) -> do
+                -- Parse both schemas
+                case (eitherDecodeStrictText existingSchema.srSchema,
+                      eitherDecodeStrictText newSchema.schema) of
+                  (Right existingAvro, Right newAvro) -> do
+                    -- Create schema environment for references
+                    let env = Avro.SchemaEnv mempty mempty -- TODO: Add support for references
+                    -- Check compatibility based on level
+                    let result = case level of
+                          NONE -> Avro.Compatible
+                          BACKWARD -> Avro.checkBackwardCompatibility existingAvro newAvro
+                          FORWARD -> Avro.checkForwardCompatibility existingAvro newAvro
+                          FULL -> Avro.checkFullCompatibility existingAvro newAvro
+                          BACKWARD_TRANSITIVE -> Avro.checkBackwardTransitive (newAvro :| [existingAvro])
+                          FORWARD_TRANSITIVE -> Avro.checkForwardTransitive (newAvro :| [existingAvro])
+                          FULL_TRANSITIVE -> Avro.checkFullTransitive (newAvro :| [existingAvro])
+                    case result of
+                      Avro.Compatible -> pure $ Right $ Types.CompatibilityCheckResult True Nothing
+                      Avro.Incompatible errors -> pure $ Right $ Types.CompatibilityCheckResult False $ Just $ fmap convertError $ toList errors
+                  (Left err, _) -> pure $ Left $ DatabaseError $ T.pack $ "Failed to parse existing schema: " ++ show err
+                  (_, Left err) -> pure $ Left $ DatabaseError $ T.pack $ "Failed to parse new schema: " ++ show err
+              (Just JSON, Just JSON) -> do
+                -- TODO: Implement JSON compatibility check
+                pure $ Right $ Types.CompatibilityCheckResult True Nothing
+              (Just PROTOBUF, Just PROTOBUF) -> do
+                -- TODO: Implement Protobuf compatibility check
+                pure $ Right $ Types.CompatibilityCheckResult True Nothing
+              _ -> pure $ Right $ Types.CompatibilityCheckResult False $ Just [Types.CompatibilityError Types.TypeMismatch "" "Schema types do not match"]
+          Left err -> pure $ Left err
+      Left err -> pure $ Left err
+
+  checkCompatibilityLatest (SubjectName subject) newSchema = do
+    -- Get the latest version
+    latestResult <- Class.getLatestVersion (SubjectName subject)
+    case latestResult of
+      Right version -> Class.checkCompatibility (SubjectName subject) version newSchema
+      Left err -> pure $ Left err
+
 -- Helper functions
 parseCompatibility :: Text -> CompatibilityLevel
 parseCompatibility = \case
@@ -325,6 +450,26 @@ compatToText = \case
   FULL -> "FULL"
   FULL_TRANSITIVE -> "FULL_TRANSITIVE"
   NONE -> "NONE"
+
+convertError :: Avro.CompatibilityError -> Types.CompatibilityError
+convertError err = Types.CompatibilityError
+  { error_type = convertErrorType $ Avro.errorType err
+  , error_path = Avro.formatPath $ Avro.errorPath err
+  , error_details = Avro.errorDetails err
+  }
+
+convertErrorType :: Avro.ErrorType -> Types.ErrorType
+convertErrorType = \case
+  Avro.TypeMismatch -> Types.TypeMismatch
+  Avro.MissingField -> Types.MissingField
+  Avro.MissingDefault -> Types.MissingDefault
+  Avro.NameMismatch -> Types.NameMismatch
+  Avro.SizeMismatch -> Types.SizeMismatch
+  Avro.EnumSymbolMismatch -> Types.EnumSymbolMismatch
+  Avro.UnionVariantMismatch -> Types.UnionVariantMismatch
+  Avro.PromotionError _ _ -> Types.PromotionError
+  Avro.ReferenceError -> Types.ReferenceError
+  Avro.AliasError -> Types.AliasError
 
 -- Schema for PostgreSQL tables
 {-

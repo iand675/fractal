@@ -140,7 +140,29 @@ data SchemaInfo = SchemaInfo
 
 data CompatibilityCheckResult = CompatibilityCheckResult
   { is_compatible :: Bool
+  , errors :: Maybe [CompatibilityError]
   } deriving (Show, Eq, Generic)
+    deriving anyclass (FromJSON, ToJSON)
+
+data CompatibilityError = CompatibilityError
+  { error_type :: ErrorType
+  , error_path :: Text
+  , error_details :: Text
+  } deriving (Show, Eq, Generic)
+    deriving anyclass (FromJSON, ToJSON)
+
+data ErrorType
+  = TypeMismatch
+  | MissingField
+  | MissingDefault
+  | NameMismatch
+  | SizeMismatch
+  | EnumSymbolMismatch
+  | UnionVariantMismatch
+  | PromotionError
+  | ReferenceError
+  | AliasError
+  deriving (Show, Eq, Generic)
     deriving anyclass (FromJSON, ToJSON)
 
 data ConfigUpdateRequest = ConfigUpdateRequest

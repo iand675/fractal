@@ -1,9 +1,6 @@
 module Fractal.Schema.Backend.Class where
 
-import Control.Monad.IO.Class (MonadIO)
 import Data.Text (Text)
-import Data.Maybe (listToMaybe)
-import Data.Int (Int32, Int64)
 import GHC.Generics (Generic)
 import Data.Vector (Vector)
 
@@ -18,6 +15,10 @@ import Fractal.Schema.Types
   , CompatibilityLevel(..)
   , ConfigResponse(..)
   , ModeResponse(..)
+  , SubjectVersion(..)
+  , CompatibilityCheckResult(..)
+  , CompatibilityError(..)
+  , ErrorType(..)
   )
 
 -- Store-specific types
@@ -61,6 +62,7 @@ class Monad m => SchemaStore m where
   findSchemaByHash :: Text -> m (Maybe SchemaRecord)
   insertSchema :: Text -> Maybe SchemaType -> Text -> m (Either StoreError SchemaId)
   getAllSchemaTypes :: m (Vector SchemaType)
+  getSchemaVersions :: SchemaId -> m (Either StoreError (Vector SubjectVersion))
 
   -- Subject operations
   listSubjects :: m (Vector SubjectName)
@@ -70,6 +72,13 @@ class Monad m => SchemaStore m where
   registerSchemaVersion :: SubjectName -> SchemaId -> m (Either StoreError Version)
   softDeleteSubject :: SubjectName -> m (Vector Version)
   softDeleteVersion :: SubjectName -> Version -> m (Either StoreError ())
+
+  -- Reference operations
+  getReferencedBy :: SubjectName -> Version -> m (Either StoreError (Vector SchemaInfo))
+
+  -- Compatibility operations
+  checkCompatibility :: SubjectName -> Version -> Schema -> m (Either StoreError CompatibilityCheckResult)
+  checkCompatibilityLatest :: SubjectName -> Schema -> m (Either StoreError CompatibilityCheckResult)
 
   -- Config operations
   getGlobalCompatibility :: m CompatibilityLevel
