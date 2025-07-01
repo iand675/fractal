@@ -288,11 +288,11 @@ main = do
   putStrLn "Starting Schema Registry on port 8081"
   let settings = []
   bracket (HC.acquire settings)
-          (\conn -> case conn of
-              Right c -> HC.release c
-              Left _ -> pure ())
-          $ \conn -> case conn of
-              Right c -> do
-                setupDatabaseSchema c
-                run 8081 $ app c
-              Left err -> error $ "Failed to acquire connection: " ++ show err
+          (\case
+            Right c -> HC.release c
+            Left _ -> pure ())
+          (\case
+            Right c -> do
+              setupDatabaseSchema c
+              run 8081 $ app c
+            Left err -> error $ "Failed to acquire connection: " ++ show err)
