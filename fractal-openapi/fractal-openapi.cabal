@@ -1,0 +1,161 @@
+cabal-version:      3.0
+name:               fractal-openapi
+version:            0.1.0.0
+synopsis:           JSON Schema and OpenAPI 3.x support with code generation
+description:        A comprehensive library for JSON Schema (all versions) and OpenAPI 3.x
+                    with support for validation, metadata extraction, and pluggable Template
+                    Haskell-based code generation. Generate Haskell types with Aeson instances,
+                    Servant APIs, and Yesod routes from schemas.
+license:            BSD-3-Clause
+author:             Ian Duncan
+maintainer:         ian@iankduncan.com
+category:           Web, JSON, OpenAPI, Code Generation
+build-type:         Simple
+extra-doc-files:    SPEC.md
+
+source-repository head
+  type:     git
+  location: https://github.com/iand675/fractal
+
+common warnings
+    ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
+                 -Wincomplete-uni-patterns -Wmissing-home-modules
+                 -Wpartial-fields -Wredundant-constraints
+
+common extensions
+    default-extensions: OverloadedStrings
+                      , OverloadedRecordDot
+                      , RecordWildCards
+                      , DeriveGeneric
+                      , DerivingStrategies
+                      , LambdaCase
+                      , GeneralizedNewtypeDeriving
+                      , RankNTypes
+                      , ScopedTypeVariables
+                      , BlockArguments
+                      , DataKinds
+                      , TypeFamilies
+                      , GADTs
+                      , StandaloneDeriving
+
+library
+    import:           warnings, extensions
+    exposed-modules:  -- JSON Schema Core
+                      Fractal.OpenApi.JsonSchema
+                    , Fractal.OpenApi.JsonSchema.Types
+                    , Fractal.OpenApi.JsonSchema.Parser
+                    , Fractal.OpenApi.JsonSchema.Renderer
+                    , Fractal.OpenApi.JsonSchema.Validator
+                    , Fractal.OpenApi.JsonSchema.Vocabulary
+                    , Fractal.OpenApi.JsonSchema.Metadata
+
+                    -- OpenAPI Support
+                    , Fractal.OpenApi
+                    , Fractal.OpenApi.Types
+                    , Fractal.OpenApi.Parser
+                    , Fractal.OpenApi.Renderer
+                    , Fractal.OpenApi.Validator
+
+                    -- Code Generation
+                    , Fractal.OpenApi.Codegen
+                    , Fractal.OpenApi.Codegen.Core
+                    , Fractal.OpenApi.Codegen.TH
+                    , Fractal.OpenApi.Codegen.Strategy
+                    , Fractal.OpenApi.Codegen.Aeson
+
+    -- Optional framework integrations
+    -- , Fractal.OpenApi.Codegen.Servant
+    -- , Fractal.OpenApi.Codegen.Yesod
+
+    build-depends:    base >= 4.17.0.0 && < 5
+
+                    -- Core JSON/Text handling
+                    , aeson >= 2.0 && < 3
+                    , text >= 2.0 && < 3
+                    , bytestring >= 0.11 && < 1
+
+                    -- Data structures
+                    , containers >= 0.6 && < 1
+                    , unordered-containers >= 0.2 && < 1
+                    , vector >= 0.13 && < 1
+                    , hashable >= 1.4 && < 2
+
+                    -- Numeric
+                    , scientific >= 0.3 && < 1
+
+                    -- Parsing
+                    , yaml >= 0.11 && < 1
+                    , uri-bytestring >= 0.3 && < 1
+                    , regex-tdfa >= 1.3 && < 2
+
+                    -- Template Haskell
+                    , template-haskell >= 2.19 && < 3
+                    , th-lift >= 0.8 && < 1
+
+                    -- Validation
+                    , validation-selective >= 0.1 && < 1
+
+                    -- Utilities
+                    , time >= 1.12 && < 2
+                    , mtl >= 2.2 && < 3
+                    , transformers >= 0.5 && < 0.7
+
+    hs-source-dirs:   src
+    default-language: Haskell2010
+
+-- Optional Servant integration
+-- library fractal-openapi-servant
+--     import:           warnings, extensions
+--     exposed-modules:  Fractal.OpenApi.Codegen.Servant
+--     build-depends:    base >= 4.17.0.0 && < 5
+--                     , fractal-openapi
+--                     , servant >= 0.19 && < 1
+--                     , servant-server >= 0.19 && < 1
+--     hs-source-dirs:   src-servant
+--     default-language: Haskell2010
+
+-- Optional Yesod integration
+-- library fractal-openapi-yesod
+--     import:           warnings, extensions
+--     exposed-modules:  Fractal.OpenApi.Codegen.Yesod
+--     build-depends:    base >= 4.17.0.0 && < 5
+--                     , fractal-openapi
+--                     , yesod-core >= 1.6 && < 2
+--     hs-source-dirs:   src-yesod
+--     default-language: Haskell2010
+
+test-suite fractal-openapi-test
+    import:           warnings, extensions
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Spec.hs
+    other-modules:    Fractal.OpenApi.JsonSchema.ParserSpec
+                    , Fractal.OpenApi.JsonSchema.ValidatorSpec
+                    , Fractal.OpenApi.JsonSchema.VocabularySpec
+                    , Fractal.OpenApi.Codegen.THSpec
+    build-tool-depends: hspec-discover:hspec-discover >= 2.10 && < 3
+    build-depends:    base >= 4.17.0.0 && < 5
+                    , fractal-openapi
+                    , hspec >= 2.10 && < 3
+                    , QuickCheck >= 2.14 && < 3
+                    , aeson >= 2.0 && < 3
+                    , text >= 2.0 && < 3
+                    , bytestring >= 0.11 && < 1
+                    , containers >= 0.6 && < 1
+                    , unordered-containers >= 0.2 && < 1
+                    , vector >= 0.13 && < 1
+                    , yaml >= 0.11 && < 1
+                    , file-embed >= 0.0.15 && < 1
+
+benchmark fractal-openapi-bench
+    import:           warnings, extensions
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   bench
+    main-is:          Main.hs
+    build-depends:    base >= 4.17.0.0 && < 5
+                    , fractal-openapi
+                    , criterion >= 1.6 && < 2
+                    , aeson >= 2.0 && < 3
+                    , deepseq >= 1.4 && < 2

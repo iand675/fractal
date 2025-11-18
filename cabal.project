@@ -1,4 +1,5 @@
 packages:
   fractal-stream
   fractal-schema
+  fractal-openapi
   fractal-layer
