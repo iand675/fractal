@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DataKinds #-}
 
-module Main where
+module Fractal.Layer.LayerSpec (spec) where
 
 import Test.Hspec
 import Test.QuickCheck
@@ -24,11 +24,6 @@ import UnliftIO hiding (assert)
 import UnliftIO.Async
 import Data.Time (getCurrentTime, diffUTCTime)
 import Prelude hiding (id, (.))
-
--- Import the Avro schema compatibility tests
-import qualified Fractal.Schema.Compatibility.AvroSpec as Avro
--- Import the client tests
-import qualified Fractal.Schema.ClientSpec as Client
 
 -- Test data types
 data Config = Config { port :: Int, host :: String } deriving (Eq, Show)
@@ -92,13 +87,8 @@ delayedFailingLayer delayMs = resource
     throwIO $ userError "Delayed failure")
   (\_ -> pure ())
 
-main :: IO ()
-main = hspec $ do
-  -- Include the Avro schema compatibility tests
-  Avro.spec
-  -- Include the client tests
-  Client.spec
-
+spec :: Spec
+spec = do
   describe "Layer - Basic Construction" $ do
     it "effect creates a simple layer" $ do
       let layer = effect $ \() -> pure "test"

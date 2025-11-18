@@ -1,0 +1,110 @@
+cabal-version:      3.0
+name:               fractal-schema
+version:            0.1.0.0
+synopsis:           Schema registry for event streaming with Avro support
+description:        A schema registry implementation supporting Avro schemas with compatibility
+                    checking and version management. Features include PostgreSQL storage backend,
+                    HTTP API via Servant, and schema evolution validation.
+license:            BSD-3-Clause
+author:             Ian Duncan
+maintainer:         ian@iankduncan.com
+category:           Database, Streaming
+build-type:         Simple
+
+source-repository head
+  type:     git
+  location: https://github.com/iand675/fractal
+
+common warnings
+    ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
+                 -Wincomplete-uni-patterns -Wmissing-home-modules
+                 -Wpartial-fields -Wredundant-constraints
+
+common extensions
+    default-extensions: OverloadedStrings
+                      , OverloadedRecordDot
+                      , RecordWildCards
+                      , DeriveGeneric
+                      , DerivingStrategies
+                      , LambdaCase
+                      , GeneralizedNewtypeDeriving
+                      , RankNTypes
+                      , ScopedTypeVariables
+                      , BlockArguments
+
+library
+    import:           warnings, extensions
+    exposed-modules:  Fractal.Schema.Registry
+                    , Fractal.Schema.Types
+                    , Fractal.Schema.Backend.Class
+                    , Fractal.Schema.Backend.PostgreSQL
+                    , Fractal.Schema.Compatibility.Avro
+                    , Fractal.Schema.Client
+    build-depends:    base >= 4.17.0.0 && < 5
+                    , aeson >= 2.0 && < 3
+                    , avro >= 0.6 && < 1
+                    , bytestring >= 0.11 && < 1
+                    , containers >= 0.6 && < 1
+                    , crypton >= 0.34 && < 1
+                    , hasql >= 1.6 && < 2
+                    , hasql-th >= 0.4 && < 1
+                    , hasql-transaction >= 1.0.0 && < 2
+                    , http-client >= 0.7 && < 1
+                    , http-client-tls >= 0.3 && < 1
+                    , memory >= 0.18 && < 1
+                    , mtl >= 2.2 && < 3
+                    , servant >= 0.19 && < 1
+                    , servant-server >= 0.19 && < 1
+                    , servant-client >= 0.19 && < 1
+                    , servant-client-core >= 0.19 && < 1
+                    , text >= 2.0 && < 3
+                    , vector >= 0.13 && < 1
+                    , wai >= 3.2 && < 4
+                    , warp >= 3.3 && < 4
+
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    default-extensions: OverloadedStrings
+                      , RecordWildCards
+                      , DeriveGeneric
+                      , DerivingStrategies
+                      , LambdaCase
+                      , GeneralizedNewtypeDeriving
+                      , RankNTypes
+
+test-suite fractal-schema-test
+    import:           warnings, extensions
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Spec.hs
+    other-modules:    Fractal.Schema.Compatibility.AvroSpec
+                    , Fractal.Schema.ClientSpec
+    build-depends:    base >= 4.17.0.0 && < 5
+                    , fractal-schema
+                    , aeson >= 2.0 && < 3
+                    , atomic-counter >= 0.1 && < 1
+                    , avro >= 0.6 && < 1
+                    , bytestring >= 0.11 && < 1
+                    , containers >= 0.6 && < 1
+                    , hasql >= 1.6 && < 2
+                    , hasql-pool >= 0.10 && < 1
+                    , hasql-th >= 0.4 && < 1
+                    , hedgehog >= 1.2 && < 1.3
+                    , hspec >= 2.10 && < 3
+                    , hspec-hedgehog >= 0.1.1 && < 0.2
+                    , http-client >= 0.7 && < 1
+                    , http-client-tls >= 0.3 && < 1
+                    , mtl >= 2.2 && < 3
+                    , QuickCheck >= 2.14 && < 3
+                    , random >= 1.2 && < 2
+                    , servant-client >= 0.19 && < 1
+                    , servant-client-core >= 0.19 && < 1
+                    , text >= 2.0 && < 3
+                    , time >= 1.12 && < 2
+                    , unliftio >= 0.2 && < 1
+                    , unordered-containers >= 0.2 && < 1
+                    , vector >= 0.13 && < 1
+                    , vinyl >= 0.14 && < 1
+                    , wai >= 3.2 && < 4
+                    , warp >= 3.3 && < 4
