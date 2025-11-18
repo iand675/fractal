@@ -42,8 +42,8 @@ library
                     , Fractal.Schema.Backend.PostgreSQL
                     , Fractal.Schema.Compatibility.Avro
                     , Fractal.Schema.Client
-                    , Fractal.Layer
     build-depends:    base >=4.17.0.0
+                    , fractal-layer
                     , aeson >= 2.0 && < 3
                     , async >= 2.2 && < 3
                     , atomic-counter
