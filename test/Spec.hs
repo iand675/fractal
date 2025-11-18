@@ -27,6 +27,8 @@ import Prelude hiding (id, (.))
 
 -- Import the Avro schema compatibility tests
 import qualified Fractal.Schema.Compatibility.AvroSpec as Avro
+-- Import the JSON schema compatibility tests
+import qualified Fractal.Schema.Compatibility.JsonSpec as Json
 -- Import the client tests
 import qualified Fractal.Schema.ClientSpec as Client
 
@@ -96,6 +98,8 @@ main :: IO ()
 main = hspec $ do
   -- Include the Avro schema compatibility tests
   Avro.spec
+  -- Include the JSON schema compatibility tests
+  Json.spec
   -- Include the client tests
   Client.spec
 

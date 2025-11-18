@@ -45,10 +45,12 @@ library
                     , Fractal.Schema.Backend.Class
                     , Fractal.Schema.Backend.PostgreSQL
                     , Fractal.Schema.Compatibility.Avro
+                    , Fractal.Schema.Compatibility.Json
                     , Fractal.Schema.Client
     build-depends:    base >= 4.17.0.0 && < 5
                     , fractal-layer
                     , aeson >= 2.0 && < 3
+                    , scientific >= 0.3 && < 1
                     , async >= 2.2 && < 3
                     , atomic-counter >= 0.1 && < 1
                     , atomic-primops >= 0.8 && < 1
@@ -134,6 +136,7 @@ test-suite fractal-stream-test
     hs-source-dirs:   test
     main-is:          Spec.hs
     other-modules:    Fractal.Schema.Compatibility.AvroSpec
+                    , Fractal.Schema.Compatibility.JsonSpec
                     , Fractal.Schema.ClientSpec
     build-depends:    base >= 4.17.0.0 && < 5
                     , http-client >= 0.7 && < 1

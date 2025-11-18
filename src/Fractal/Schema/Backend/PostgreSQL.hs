@@ -3,6 +3,7 @@ module Fractal.Schema.Backend.PostgreSQL where
 import Fractal.Schema.Backend.Class as Class
 import Fractal.Schema.Types as Types
 import Fractal.Schema.Compatibility.Avro as Avro
+import Fractal.Schema.Compatibility.Json as Json
 import qualified Hasql.Connection as HC
 import qualified Hasql.Session as HS
 import qualified Hasql.Statement as HST
@@ -413,8 +414,24 @@ instance SchemaStore HasqlStore where
                   (Left err, _) -> pure $ Left $ DatabaseError $ T.pack $ "Failed to parse existing schema: " ++ show err
                   (_, Left err) -> pure $ Left $ DatabaseError $ T.pack $ "Failed to parse new schema: " ++ show err
               (Just JSON, Just JSON) -> do
-                -- TODO: Implement JSON compatibility check
-                pure $ Right $ Types.CompatibilityCheckResult True Nothing
+                -- Parse both JSON schemas
+                case (eitherDecodeStrictText existingSchema.srSchema,
+                      eitherDecodeStrictText newSchema.schema) of
+                  (Right existingJson, Right newJson) -> do
+                    -- Check compatibility based on level
+                    let result = case level of
+                          NONE -> Json.Compatible
+                          BACKWARD -> Json.checkBackwardCompatibility existingJson newJson
+                          FORWARD -> Json.checkForwardCompatibility existingJson newJson
+                          FULL -> Json.checkFullCompatibility existingJson newJson
+                          BACKWARD_TRANSITIVE -> Json.checkBackwardTransitive (newJson :| [existingJson])
+                          FORWARD_TRANSITIVE -> Json.checkForwardTransitive (newJson :| [existingJson])
+                          FULL_TRANSITIVE -> Json.checkFullTransitive (newJson :| [existingJson])
+                    case result of
+                      Json.Compatible -> pure $ Right $ Types.CompatibilityCheckResult True Nothing
+                      Json.Incompatible errors -> pure $ Right $ Types.CompatibilityCheckResult False $ Just $ fmap convertJsonError $ toList errors
+                  (Left err, _) -> pure $ Left $ DatabaseError $ T.pack $ "Failed to parse existing JSON schema: " ++ show err
+                  (_, Left err) -> pure $ Left $ DatabaseError $ T.pack $ "Failed to parse new JSON schema: " ++ show err
               (Just PROTOBUF, Just PROTOBUF) -> do
                 -- TODO: Implement Protobuf compatibility check
                 pure $ Right $ Types.CompatibilityCheckResult True Nothing
@@ -470,6 +487,28 @@ convertErrorType = \case
   Avro.PromotionError _ _ -> Types.PromotionError
   Avro.ReferenceError -> Types.ReferenceError
   Avro.AliasError -> Types.AliasError
+
+convertJsonError :: Json.CompatibilityError -> Types.CompatibilityError
+convertJsonError err = Types.CompatibilityError
+  { error_type = convertJsonErrorType $ Json.errorType err
+  , error_path = Json.formatPath $ Json.errorPath err
+  , error_details = Json.errorDetails err
+  }
+
+convertJsonErrorType :: Json.ErrorType -> Types.ErrorType
+convertJsonErrorType = \case
+  Json.TypeMismatch -> Types.TypeMismatch
+  Json.RequiredFieldAdded -> Types.MissingField
+  Json.RequiredFieldRemoved -> Types.MissingField
+  Json.EnumValueRemoved -> Types.EnumSymbolMismatch
+  Json.EnumValueAdded -> Types.EnumSymbolMismatch
+  Json.ConstraintTightened -> Types.TypeMismatch
+  Json.ConstraintRelaxed -> Types.TypeMismatch
+  Json.PropertyRemoved -> Types.MissingField
+  Json.PropertyAdded -> Types.MissingField
+  Json.TypeNarrowed -> Types.TypeMismatch
+  Json.TypeWidened -> Types.TypeMismatch
+  Json.FormatChanged -> Types.TypeMismatch
 
 -- Schema for PostgreSQL tables
 {-
