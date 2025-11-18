@@ -25,11 +25,6 @@ import UnliftIO.Async
 import Data.Time (getCurrentTime, diffUTCTime)
 import Prelude hiding (id, (.))
 
--- Import the Avro schema compatibility tests
-import qualified Fractal.Schema.Compatibility.AvroSpec as Avro
--- Import the client tests
-import qualified Fractal.Schema.ClientSpec as Client
-
 -- Test data types
 data Config = Config { port :: Int, host :: String } deriving (Eq, Show)
 data Database = Database { connId :: Int } deriving (Eq, Show)
@@ -94,11 +89,6 @@ delayedFailingLayer delayMs = resource
 
 main :: IO ()
 main = hspec $ do
-  -- Include the Avro schema compatibility tests
-  Avro.spec
-  -- Include the client tests
-  Client.spec
-
   describe "Layer - Basic Construction" $ do
     it "effect creates a simple layer" $ do
       let layer = effect $ \() -> pure "test"

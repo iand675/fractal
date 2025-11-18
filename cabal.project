@@ -1,3 +1,4 @@
 packages:
   fractal-stream
+  fractal-schema
   fractal-layer

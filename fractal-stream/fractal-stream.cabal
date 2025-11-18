@@ -40,14 +40,9 @@ library
                     , Fractal.Stream.Class
                     , Fractal.Stream.Backend.Redis
                     , Fractal.Stream.Outbox
-                    , Fractal.Schema.Registry
-                    , Fractal.Schema.Types
-                    , Fractal.Schema.Backend.Class
-                    , Fractal.Schema.Backend.PostgreSQL
-                    , Fractal.Schema.Compatibility.Avro
-                    , Fractal.Schema.Client
     build-depends:    base >= 4.17.0.0 && < 5
                     , fractal-layer
+                    , fractal-schema
                     , aeson >= 2.0 && < 3
                     , async >= 2.2 && < 3
                     , atomic-counter >= 0.1 && < 1
@@ -133,9 +128,8 @@ test-suite fractal-stream-test
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test
     main-is:          Spec.hs
-    other-modules:    Fractal.Schema.Compatibility.AvroSpec
-                    , Fractal.Schema.ClientSpec
     build-depends:    base >= 4.17.0.0 && < 5
+                    , fractal-layer
                     , http-client >= 0.7 && < 1
                     , http-client-tls >= 0.3 && < 1
                     , hasql >= 1.6 && < 2
