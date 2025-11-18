@@ -201,17 +201,32 @@ newtype Service m deps env = Service
 getOrCreateCachedService :: forall m deps env. (MonadUnliftIO m, Typeable env) => Service m deps env -> Layer m deps env
 getOrCreateCachedService (Service m) = Layer $ \lenv env -> do
   let rep = typeRep (Proxy @env)
+      serviceName = T.pack (show rep)
 
   -- Try to get the current state
   states <- liftIO $ readMVar lenv.serviceStates
   case HashMap.lookup rep states of
-    Just (Initialized x) -> pure $ unsafeCoerce x
+    Just (Initialized x) -> do
+      -- Service already exists, notify reuse
+      lift $ onServiceReuse (interceptor lenv) serviceName rep
+      pure $ unsafeCoerce x
     Just (Failed e) -> throwIO e
     _ -> join $ modifyMVar lenv.serviceStates $ \serviceStates -> do
       case HashMap.lookup rep serviceStates of
-        Just (Initialized x) -> pure (serviceStates, pure $ unsafeCoerce x)
+        Just (Initialized x) -> do
+          -- Another thread initialized it
+          lift $ onServiceReuse (interceptor lenv) serviceName rep
+          pure (serviceStates, pure $ unsafeCoerce x)
         Just (Failed e) -> pure (serviceStates, throwIO e)
         Nothing -> do
+          -- Notify service creation
+          let ctx = OperationContext
+                { operationName = serviceName
+                , operationType = Just rep
+                , operationMetadata = []
+                }
+          lift $ onServiceCreate (interceptor lenv) ctx
+
           -- Initialize the service
           eRes <- try $ build m lenv env
           case eRes of
@@ -286,16 +301,32 @@ mkLayer f = Layer $ \_ -> f
 --   -- Use the handle...
 -- @
 resource ::
-  MonadUnliftIO m =>
+  forall m deps env. (MonadUnliftIO m, Typeable env) =>
   -- | Acquire resource
   (deps -> m env) ->
   -- | Release resource
   (env -> m ()) ->
   Layer m deps env
-resource acq rel = Layer $ \_ deps -> do
+resource acq rel = Layer $ \lenv deps -> do
+  -- Notify interceptor
+  let ctx = OperationContext
+        { operationName = T.pack (show $ typeRep (Proxy @env))
+        , operationType = Just (typeRep (Proxy @env))
+        , operationMetadata = []
+        }
+  lift $ onResourceAcquire (interceptor lenv) ctx
+  startTime <- liftIO getCurrentTime
+
+  -- Original logic
   (_, env) <- allocateU (lift $ acq deps) (lift . rel)
+
+  -- Notify interceptor on release
+  endTime <- liftIO getCurrentTime
+  let duration = diffUTCTime endTime startTime
+  lift $ onResourceRelease (interceptor lenv) (operationName ctx) duration
+
   pure env
-{-# SPECIALIZE resource :: (deps -> IO env) -> (env -> IO ()) -> Layer IO deps env #-}
+{-# SPECIALIZE resource :: forall deps env. Typeable env => (deps -> IO env) -> (env -> IO ()) -> Layer IO deps env #-}
 
 -- |
 -- Lift a monadic function into a layer without requiring cleanup.
@@ -312,12 +343,30 @@ resource acq rel = Layer $ \_ deps -> do
 --   pure $ Config (read port) host
 -- @
 effect ::
-  MonadUnliftIO m =>
+  forall m deps env. (MonadUnliftIO m, Typeable env) =>
   -- | Run effect to produce environment
   (deps -> m env) ->
   Layer m deps env
-effect f = Layer $ \_ deps -> lift $ f deps
-{-# SPECIALIZE effect :: (deps -> IO env) -> Layer IO deps env #-}
+effect f = Layer $ \lenv deps -> do
+  -- Notify interceptor
+  let ctx = OperationContext
+        { operationName = T.pack (show $ typeRep (Proxy @env))
+        , operationType = Just (typeRep (Proxy @env))
+        , operationMetadata = []
+        }
+  lift $ onEffectRun (interceptor lenv) ctx
+  startTime <- liftIO getCurrentTime
+
+  -- Run effect
+  result <- lift $ f deps
+
+  -- Notify completion
+  endTime <- liftIO getCurrentTime
+  let duration = diffUTCTime endTime startTime
+  lift $ onEffectComplete (interceptor lenv) (operationName ctx) duration
+
+  pure result
+{-# SPECIALIZE effect :: forall deps env. Typeable env => (deps -> IO env) -> Layer IO deps env #-}
 
 -- |
 -- When you want to run a scoped effect that acquires a resource and releases it, you maybe want it to survive

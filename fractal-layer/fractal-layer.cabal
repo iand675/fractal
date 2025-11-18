@@ -52,3 +52,20 @@ library
                     , bytestring >= 0.11 && < 1
     hs-source-dirs:   src
     default-language: Haskell2010
+
+test-suite fractal-layer-test
+    import:           warnings, extensions
+    default-language: Haskell2010
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Spec.hs
+    other-modules:    Fractal.Layer.DiagnosticsSpec
+    build-tool-depends: hspec-discover:hspec-discover >= 2.10 && < 3
+    build-depends:    base >=4.17.0.0
+                    , fractal-layer
+                    , hspec >= 2.10 && < 3
+                    , unliftio >= 0.2 && < 1
+                    , text >= 2.0 && < 3
+                    , aeson >= 2.0 && < 3
+                    , bytestring >= 0.11 && < 1
+                    , resourcet >= 1.2 && < 2
