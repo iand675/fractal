@@ -1356,9 +1356,89 @@ deleteUserR :: UserId -> Handler ()
 
 ### Compliance Tests
 
-- JSON Schema Test Suite (official tests)
-- OpenAPI validation tests
-- Format validation tests
+#### JSON Schema Test Suite Compliance
+
+**REQUIREMENT**: This implementation MUST pass the official JSON Schema Test Suite for all supported specification versions.
+
+**Test Suite Repository**: https://github.com/json-schema-org/JSON-Schema-Test-Suite
+
+**Supported Versions and Test Suites**:
+
+| Specification | Test Directory | Required Pass Rate |
+|--------------|----------------|-------------------|
+| Draft-04 | `tests/draft4/` | 100% of mandatory tests |
+| Draft-06 | `tests/draft6/` | 100% of mandatory tests |
+| Draft-07 | `tests/draft7/` | 100% of mandatory tests |
+| Draft 2019-09 | `tests/draft2019-09/` | 100% of mandatory tests |
+| Draft 2020-12 | `tests/draft2020-12/` | 100% of mandatory tests |
+
+**Test Categories**:
+
+1. **Mandatory Tests**: All tests MUST pass except those explicitly marked as optional
+2. **Optional Tests**: Tests in `optional/` subdirectories (format validation, etc.)
+   - Format validation: Should pass but can be configured as annotation-only
+   - BigNum: Must handle large numbers correctly or document limitations
+   - ECMA-262 regex: Should support or document deviations
+
+**Implementation Requirements**:
+
+```haskell
+-- Test suite integration
+runJSONSchemaTestSuite
+  :: Dialect           -- Which dialect to test
+  -> FilePath          -- Path to test suite
+  -> IO TestResults
+
+data TestResults = TestResults
+  { testsPassed :: Int
+  , testsFailed :: Int
+  , testsSkipped :: Int
+  , failureDetails :: [TestFailure]
+  }
+
+data TestFailure = TestFailure
+  { testFile :: FilePath
+  , testDescription :: Text
+  , testSchema :: Value
+  , testData :: Value
+  , expectedResult :: Bool
+  , actualResult :: Bool
+  , validationErrors :: [ValidationError]
+  }
+```
+
+**Test Execution**:
+
+```bash
+# Run all test suites
+cabal test fractal-openapi:json-schema-suite
+
+# Run specific version
+cabal test fractal-openapi:json-schema-suite --test-options="--match draft2020-12"
+
+# Run with verbose output
+cabal test fractal-openapi:json-schema-suite --test-show-details=streaming
+```
+
+**CI/CD Integration**:
+
+- Test suite MUST be run in CI for all PRs
+- Failing test suite blocks merging
+- Test results should be reported as GitHub check
+- Performance regression tests for large schemas
+
+**Test Suite Updates**:
+
+- Monitor upstream test suite for updates
+- Pin test suite version in cabal.project or test dependencies
+- Document any known deviations or issues
+
+**Additional Compliance Tests**:
+
+- OpenAPI validation tests (OpenAPI Test Suite if available)
+- Format validation tests (email, uri, hostname, ipv4, ipv6, etc.)
+- Meta-schema validation (schemas validate against their own meta-schemas)
+- Vocabulary loading and custom dialect tests
 
 ### Performance Tests
 
