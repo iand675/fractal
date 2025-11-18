@@ -71,12 +71,16 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.IORef
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
+import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime, UTCTime)
 import Data.Typeable
 import Fractal.Layer.Interceptor
 import GHC.Generics (Generic)
 import System.IO (hFlush, stdout)
-import UnliftIO (MonadIO, liftIO)
+import UnliftIO (MonadIO, MonadUnliftIO, liftIO)
+import UnliftIO.Resource (ResourceT)
+
+-- Import Layer types and functions (defined later in dependency order)
+import Fractal.Layer (Layer, runLayerWithInterceptor, withLayerAndInterceptor)
 
 -------------------------------------------------------------------------------
 -- Types
@@ -235,7 +239,7 @@ data DiagnosticsCollectorState = DiagnosticsCollectorState
   -- ^ Stack of nodes being built (top = current)
   , collectorNextId :: !Int
   -- ^ Next available node ID
-  , collectorStartTime :: !NominalDiffTime
+  , collectorStartTime :: !UTCTime
   -- ^ When collection started
   , collectorServiceMap :: !(HashMap TypeRep Text)
   -- ^ Map of service types to their node IDs (for tracking sharing)
@@ -253,7 +257,7 @@ newtype DiagnosticsCollector = DiagnosticsCollector
 -- | Create a new diagnostics collector
 newDiagnosticsCollector :: MonadIO m => m DiagnosticsCollector
 newDiagnosticsCollector = liftIO $ do
-  start <- diffUTCTime <$> getCurrentTime <*> getCurrentTime
+  start <- getCurrentTime
   ref <- newIORef DiagnosticsCollectorState
     { collectorNodeStack = [rootNode]
     , collectorNextId = 1
@@ -279,8 +283,8 @@ newDiagnosticsCollector = liftIO $ do
 finalizeDiagnostics :: MonadIO m => DiagnosticsCollector -> m LayerDiagnostics
 finalizeDiagnostics (DiagnosticsCollector ref) = liftIO $ do
   state <- readIORef ref
-  endTime <- diffUTCTime <$> getCurrentTime <*> getCurrentTime
-  let totalDur = realToFrac (endTime - collectorStartTime state)
+  endTime <- getCurrentTime
+  let totalDur = realToFrac (diffUTCTime endTime (collectorStartTime state))
       rootNode = case collectorNodeStack state of
         [] -> error "Diagnostics collector has empty stack"
         (node:_) -> node { status = Initialized, duration = Just totalDur }
@@ -404,51 +408,53 @@ createDiagnosticsInterceptor (DiagnosticsCollector ref) = LayerInterceptor
 -- Running with Diagnostics
 -------------------------------------------------------------------------------
 
--- | Build a layer with diagnostics tracking enabled.
--- This is a placeholder implementation - the actual implementation would
--- require modifications to the Layer type itself to collect this information.
-buildLayerDiagnostics :: MonadIO m => m LayerDiagnostics
-buildLayerDiagnostics = liftIO $ do
-  -- This is a simplified placeholder
-  -- In a real implementation, we'd instrument the Layer monad
-  pure $ LayerDiagnostics
-    { rootNode = placeholderNode
-    , totalDuration = 0.0
-    , totalResources = 0
-    , sharedResources = 0
-    }
-  where
-    placeholderNode = LayerNode
-      { nodeId = "root"
-      , nodeName = "Root"
-      , nodeType = ComposedNode
-      , resourceType = Nothing
-      , status = Initialized
-      , duration = Nothing
-      , children = []
-      , metadata = HashMap.empty
-      }
+-- | Build a layer with diagnostics tracking enabled and return the diagnostics.
+--
+-- This function is deprecated in favor of 'withLayerDiagnostics' which provides
+-- both the environment and diagnostics. This version is kept for compatibility.
+--
+-- Note: This runs the layer to completion and discards the environment,
+-- only returning diagnostics. For most use cases, 'withLayerDiagnostics' is preferred.
+buildLayerDiagnostics ::
+  (MonadUnliftIO m, Typeable env) =>
+  -- | Layer to build
+  Layer m deps env ->
+  -- | Dependencies
+  deps ->
+  m LayerDiagnostics
+buildLayerDiagnostics layer deps = do
+  collector <- newDiagnosticsCollector
+  let interceptor = createDiagnosticsInterceptor collector
+  _ <- runLayerWithInterceptor interceptor deps layer
+  finalizeDiagnostics collector
 
 -- | Run a layer with diagnostics enabled.
 -- Returns both the environment and the diagnostics information.
 --
--- Note: This is a placeholder signature. The actual implementation would need
--- to be integrated into the Layer module itself.
+-- This function runs the layer with diagnostics collection enabled, then provides
+-- both the initialized environment and collected diagnostics to your continuation.
+--
+-- Example:
+-- @
+-- withLayerDiagnostics myLayer config $ \(env, diags) -> do
+--   putStrLn $ renderLayerTree diags
+--   -- Use the environment...
+-- @
 withLayerDiagnostics ::
-  MonadIO m =>
-  -- | Layer to run (would be actual Layer type)
-  a ->
+  (MonadUnliftIO m, Typeable env) =>
+  -- | Layer to run
+  Layer m deps env ->
   -- | Dependencies
   deps ->
   -- | Action with environment and diagnostics
-  ((env, LayerDiagnostics) -> m r) ->
+  ((env, LayerDiagnostics) -> ResourceT m r) ->
   m r
-withLayerDiagnostics _layer _deps action = do
-  diags <- buildLayerDiagnostics
-  -- Placeholder - actual implementation would build the layer
-  -- and collect diagnostics during initialization
-  let env = undefined -- Would be the actual environment
-  action (env, diags)
+withLayerDiagnostics layer deps action = do
+  collector <- newDiagnosticsCollector
+  let interceptor = createDiagnosticsInterceptor collector
+  withLayerAndInterceptor interceptor deps layer $ \env -> do
+    diags <- finalizeDiagnostics collector
+    action (env, diags)
 
 -------------------------------------------------------------------------------
 -- Rendering to Terminal
@@ -588,8 +594,8 @@ clearFromCursor = "\ESC[0J"
 snapshotDiagnostics :: MonadIO m => DiagnosticsCollector -> m LayerDiagnostics
 snapshotDiagnostics (DiagnosticsCollector ref) = liftIO $ do
   state <- readIORef ref
-  endTime <- diffUTCTime <$> getCurrentTime <*> getCurrentTime
-  let totalDur = realToFrac (endTime - collectorStartTime state)
+  endTime <- getCurrentTime
+  let totalDur = realToFrac (diffUTCTime endTime (collectorStartTime state))
       root = case collectorNodeStack state of
         [] -> LayerNode
           { nodeId = "empty"

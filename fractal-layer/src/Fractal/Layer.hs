@@ -125,7 +125,9 @@ module Fractal.Layer
     LayerEnv (..),
     build,
     runLayer,
+    runLayerWithInterceptor,
     withLayer,
+    withLayerAndInterceptor,
     mkLayer,
     mapLayer,
     zipLayer,
@@ -817,6 +819,55 @@ withLayer ::
   m r
 withLayer deps (Layer l) useEnv = runResourceT $ do
   lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure nullInterceptor
+  env <- l lenv deps
+  useEnv env
+
+-- |
+-- Run a layer with a custom interceptor.
+-- This allows you to instrument layer operations for diagnostics, logging, etc.
+--
+-- Example:
+-- @
+-- myInterceptor <- createDiagnosticsInterceptor collector
+-- result <- runLayerWithInterceptor myInterceptor () myLayer
+-- @
+runLayerWithInterceptor ::
+  MonadUnliftIO m =>
+  -- | Custom interceptor
+  LayerInterceptor m ->
+  -- | Dependencies
+  deps ->
+  -- | Layer to run
+  Layer m deps env ->
+  m env
+runLayerWithInterceptor interceptor deps (Layer l) = do
+  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure interceptor
+  runResourceT (l lenv deps)
+{-# SPECIALIZE runLayerWithInterceptor :: LayerInterceptor IO -> deps -> Layer IO deps env -> IO env #-}
+
+-- |
+-- Run a layer with a custom interceptor and use the environment.
+-- Similar to 'withLayer' but allows custom instrumentation via an interceptor.
+--
+-- Example:
+-- @
+-- myInterceptor <- createDiagnosticsInterceptor collector
+-- withLayerAndInterceptor myInterceptor config myLayer $ \env -> do
+--   -- Use the environment...
+-- @
+withLayerAndInterceptor ::
+  MonadUnliftIO m =>
+  -- | Custom interceptor
+  LayerInterceptor m ->
+  -- | Dependencies
+  deps ->
+  -- | Layer to run
+  Layer m deps env ->
+  -- | Action that needs the env
+  (env -> ResourceT m r) ->
+  m r
+withLayerAndInterceptor interceptor deps (Layer l) useEnv = runResourceT $ do
+  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure interceptor
   env <- l lenv deps
   useEnv env
 

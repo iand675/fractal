@@ -11,6 +11,7 @@ import Control.Monad (void)
 import Data.Aeson (encode, decode)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as T
+import Data.Typeable (Proxy(..), typeRep)
 import Fractal.Layer
 import Fractal.Layer.Diagnostics
 import Fractal.Layer.Interceptor
@@ -252,4 +253,114 @@ spec = do
       serverPort ws `shouldBe` 9090
 
       diags <- finalizeDiagnostics collector
+      nodeName (rootNode diags) `shouldBe` "Root"
+
+  describe "Interceptor Edge Cases" $ do
+    it "combines interceptors with empty list" $ do
+      let combined = combineInterceptors []
+      -- Should behave like nullInterceptor
+      ref <- newIORef ([] :: [String])
+      let layer = effect @IO @() @String $ \_ -> do
+            modifyIORef ref (++ ["effect"])
+            pure "test"
+      let (Layer l) = layer
+      lenv <- LayerEnv <$> newMVar mempty <*> pure combined
+      result <- runResourceT $ l lenv ()
+      result `shouldBe` "test"
+      logs <- readIORef ref
+      logs `shouldBe` ["effect"]
+
+    it "interceptor captures all operation types" $ do
+      ref <- newIORef ([] :: [String])
+      let loggingInterceptor = LayerInterceptor
+            { onResourceAcquire = \_ -> liftIO $ modifyIORef ref (++ ["acquire"])
+            , onResourceRelease = \_ _ -> liftIO $ modifyIORef ref (++ ["release"])
+            , onEffectRun = \_ -> liftIO $ modifyIORef ref (++ ["effect"])
+            , onEffectComplete = \_ _ -> liftIO $ modifyIORef ref (++ ["effect-done"])
+            , onServiceCreate = \_ -> liftIO $ modifyIORef ref (++ ["service-create"])
+            , onServiceReuse = \_ _ -> liftIO $ modifyIORef ref (++ ["service-reuse"])
+            , onCompositionStart = \_ -> liftIO $ modifyIORef ref (++ ["comp-start"])
+            , onCompositionEnd = \_ _ -> liftIO $ modifyIORef ref (++ ["comp-end"])
+            }
+
+      let resourceLayer = resource @IO @() @Int (\_ -> pure 100) (\_ -> pure ())
+      let effectLayer = effect @IO @() @String (\_ -> pure "test")
+      let serviceLayer = mkService resourceLayer
+      let composed = do
+            _ <- resourceLayer
+            _ <- effectLayer
+            _ <- service serviceLayer
+            _ <- service serviceLayer  -- Reuse
+            pure ()
+
+      let (Layer l) = composed
+      lenv <- LayerEnv <$> newMVar mempty <*> pure loggingInterceptor
+      void $ runResourceT $ l lenv ()
+
+      logs <- readIORef ref
+      "acquire" `elem` logs `shouldBe` True
+      "effect" `elem` logs `shouldBe` True
+      "service-create" `elem` logs `shouldBe` True
+      "service-reuse" `elem` logs `shouldBe` True
+
+    it "helper functions create proper contexts" $ do
+      let ctx1 = simpleContext "test"
+      operationName ctx1 `shouldBe` "test"
+      operationType ctx1 `shouldBe` Nothing
+
+      let ctx2 = withType (typeRep (Proxy @Int)) ctx1
+      operationType ctx2 `shouldSatisfy` (/= Nothing)
+
+      let ctx3 = withMetadata [("key", "value")] ctx1
+      operationMetadata ctx3 `shouldBe` [("key", "value")]
+
+  describe "Snapshot Diagnostics" $ do
+    it "snapshotDiagnostics doesn't finalize collector" $ do
+      collector <- newDiagnosticsCollector
+      let interceptor = createDiagnosticsInterceptor collector
+
+      -- Take a snapshot
+      snap1 <- snapshotDiagnostics collector
+      totalResources snap1 `shouldBe` 0
+
+      -- Run a layer
+      let layer = effect @IO @() @Int (\_ -> pure 42)
+      let (Layer l) = layer
+      lenv <- LayerEnv <$> newMVar mempty <*> pure interceptor
+      void $ runResourceT $ l lenv ()
+
+      -- Take another snapshot - should still work
+      snap2 <- snapshotDiagnostics collector
+      -- Snapshot should reflect new state
+      -- (exact values depend on implementation)
+
+      -- Final finalize should also still work
+      final <- finalizeDiagnostics collector
+      totalDuration final `shouldSatisfy` (>= 0)
+
+    it "live diagnostics rendering with manual control" $ do
+      collector <- newDiagnosticsCollector
+
+      -- Initial snapshot
+      snap <- snapshotDiagnostics collector
+      nodeName (rootNode snap) `shouldBe` "Root"
+
+      -- Render should not crash
+      let rendered = renderLayerTree snap
+      rendered `shouldContain` "Layer Initialization Tree"
+
+  describe "Complex Diagnostics with withLayerDiagnostics" $ do
+    it "withLayerDiagnostics provides both environment and diagnostics" $ do
+      let testLayer = effect @IO @() @Int (\_ -> pure 42)
+
+      withLayerDiagnostics testLayer () $ \(env, diags) -> liftIO $ do
+        env `shouldBe` 42
+        totalDuration diags `shouldSatisfy` (>= 0)
+        nodeName (rootNode diags) `shouldBe` "Root"
+
+    it "buildLayerDiagnostics runs layer and returns diagnostics" $ do
+      let testLayer = effect @IO @() @String (\_ -> pure "test")
+
+      diags <- buildLayerDiagnostics testLayer ()
+      totalDuration diags `shouldSatisfy` (>= 0)
       nodeName (rootNode diags) `shouldBe` "Root"
