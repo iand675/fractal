@@ -180,7 +180,7 @@ spec = do
       diags <- finalizeDiagnostics collector
       let rendered = renderLayerTree diags
       rendered `shouldContain` "Layer Initialization Tree"
-      rendered `shouldContain` "Total Duration:"
+      rendered `shouldContain` "Duration:"
 
     it "renders detailed tree with metadata" $ do
       collector <- newDiagnosticsCollector
@@ -194,7 +194,7 @@ spec = do
       diags <- finalizeDiagnostics collector
       let rendered = renderLayerTreeDetailed diags
       rendered `shouldContain` "Layer Initialization Tree (Detailed)"
-      rendered `shouldContain` "Status:"
+      rendered `shouldContain` "Initialized"
 
     it "exports to JSON" $ do
       collector <- newDiagnosticsCollector

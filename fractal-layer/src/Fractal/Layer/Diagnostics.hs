@@ -53,11 +53,17 @@ module Fractal.Layer.Diagnostics
     renderLayerTreeCompact,
     renderLayerTreeDetailed,
 
+    -- * Live Terminal Rendering
+    renderLayerTreeLive,
+    snapshotDiagnostics,
+
     -- * JSON Export
     diagnosticsToJSON,
   )
 where
 
+import Control.Concurrent (threadDelay)
+import Control.Monad (when)
 import Control.Monad.IO.Class
 import Data.Aeson (ToJSON (..), FromJSON (..), object, (.=), (.:), Value, withObject, withText)
 import Data.HashMap.Strict (HashMap)
@@ -69,6 +75,7 @@ import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Data.Typeable
 import Fractal.Layer.Interceptor
 import GHC.Generics (Generic)
+import System.IO (hFlush, stdout)
 import UnliftIO (MonadIO, liftIO)
 
 -------------------------------------------------------------------------------
@@ -463,11 +470,11 @@ renderLayerTree :: LayerDiagnostics -> String
 renderLayerTree diags =
   unlines $
     [ "Layer Initialization Tree"
-    , "========================="
+    , "═════════════════════════"
     , ""
-    , "Total Duration: " ++ show (totalDuration diags) ++ "s"
-    , "Total Resources: " ++ show (totalResources diags)
-    , "Shared Resources: " ++ show (sharedResources diags)
+    , "⧗ Duration: " ++ show (totalDuration diags) ++ "s"
+    , "◆ Resources: " ++ show (totalResources diags)
+    , "↻ Shared: " ++ show (sharedResources diags)
     , ""
     ] ++ renderNode "" True (rootNode diags)
 
@@ -480,11 +487,11 @@ renderLayerTreeDetailed :: LayerDiagnostics -> String
 renderLayerTreeDetailed diags =
   unlines $
     [ "Layer Initialization Tree (Detailed)"
-    , "====================================="
+    , "═════════════════════════════════════"
     , ""
-    , "Total Duration: " ++ show (totalDuration diags) ++ "s"
-    , "Total Resources: " ++ show (totalResources diags)
-    , "Shared Resources: " ++ show (sharedResources diags)
+    , "⧗ Duration: " ++ show (totalDuration diags) ++ "s"
+    , "◆ Resources: " ++ show (totalResources diags)
+    , "↻ Shared: " ++ show (sharedResources diags)
     , ""
     ] ++ renderNodeDetailed "" True (rootNode diags)
 
@@ -493,7 +500,8 @@ renderNode :: String -> Bool -> LayerNode -> [String]
 renderNode prefix isLast node =
   let connector = if isLast then "└── " else "├── "
       extension = if isLast then "    " else "│   "
-      nodeInfo = T.unpack (nodeName node) ++ formatDuration (duration node) ++ formatStatus (status node)
+      typeSymbol = nodeTypeSymbol (nodeType node)
+      nodeInfo = typeSymbol ++ " " ++ T.unpack (nodeName node) ++ formatDuration (duration node) ++ formatStatus (status node)
       header = prefix ++ connector ++ nodeInfo
       childPrefix = prefix ++ extension
       childCount = length (children node)
@@ -505,27 +513,28 @@ renderNodeDetailed :: String -> Bool -> LayerNode -> [String]
 renderNodeDetailed prefix isLast node =
   let connector = if isLast then "└── " else "├── "
       extension = if isLast then "    " else "│   "
-      nodeInfo = T.unpack (nodeName node) ++ " [" ++ show (nodeType node) ++ "]"
+      typeSymbol = nodeTypeSymbol (nodeType node)
+      nodeInfo = typeSymbol ++ " " ++ T.unpack (nodeName node) ++ " [" ++ show (nodeType node) ++ "]"
       header = prefix ++ connector ++ nodeInfo
       childPrefix = prefix ++ extension
 
       -- Add metadata lines
       metaLines = if HashMap.null (metadata node)
         then []
-        else map (\(k, v) -> childPrefix ++ "  • " ++ T.unpack k ++ ": " ++ T.unpack v) (HashMap.toList $ metadata node)
+        else map (\(k, v) -> childPrefix ++ "  ▸ " ++ T.unpack k ++ ": " ++ T.unpack v) (HashMap.toList $ metadata node)
 
       -- Add type info if available
       typeLines = case resourceType node of
         Nothing -> []
-        Just tr -> [childPrefix ++ "  Type: " ++ show tr]
+        Just tr -> [childPrefix ++ "  ▸ Type: " ++ show tr]
 
       -- Add duration
       durationLines = case duration node of
         Nothing -> []
-        Just d -> [childPrefix ++ "  Duration: " ++ show d ++ "s"]
+        Just d -> [childPrefix ++ "  ⧗ " ++ show d ++ "s"]
 
       -- Add status
-      statusLines = [childPrefix ++ "  Status: " ++ formatStatusDetailed (status node)]
+      statusLines = [childPrefix ++ "  " ++ formatStatusDetailed (status node)]
 
       detailLines = typeLines ++ durationLines ++ statusLines ++ metaLines
 
@@ -533,21 +542,125 @@ renderNodeDetailed prefix isLast node =
       childLines = concat $ zipWith (\i child -> renderNodeDetailed childPrefix (i == childCount - 1) child) [1..] (children node)
   in (header : detailLines) ++ childLines
 
+-- | Symbol for each node type
+nodeTypeSymbol :: LayerNodeType -> String
+nodeTypeSymbol ResourceNode = "◆"
+nodeTypeSymbol EffectNode = "⚡"
+nodeTypeSymbol ServiceNode = "◉"
+nodeTypeSymbol ComposedNode = "⊕"
+nodeTypeSymbol ParallelNode = "⋈"
+nodeTypeSymbol SequentialNode = "⇒"
+
 formatDuration :: Maybe Double -> String
 formatDuration Nothing = ""
-formatDuration (Just d) = " (" ++ show d ++ "s)"
+formatDuration (Just d) = " ⧗" ++ show d ++ "s"
 
 formatStatus :: ResourceStatus -> String
-formatStatus Initializing = " [INITIALIZING]"
-formatStatus Initialized = ""
-formatStatus (Failed err) = " [FAILED: " ++ err ++ "]"
-formatStatus (SharedReference refId) = " [SHARED: " ++ T.unpack refId ++ "]"
+formatStatus Initializing = " ⟳"
+formatStatus Initialized = " ✓"
+formatStatus (Failed err) = " ✗ [" ++ err ++ "]"
+formatStatus (SharedReference refId) = " ↻ " ++ T.unpack refId
 
 formatStatusDetailed :: ResourceStatus -> String
-formatStatusDetailed Initializing = "Initializing"
-formatStatusDetailed Initialized = "Initialized"
-formatStatusDetailed (Failed err) = "Failed - " ++ err
-formatStatusDetailed (SharedReference refId) = "Shared reference to " ++ T.unpack refId
+formatStatusDetailed Initializing = "⟳ Initializing"
+formatStatusDetailed Initialized = "✓ Initialized"
+formatStatusDetailed (Failed err) = "✗ Failed - " ++ err
+formatStatusDetailed (SharedReference refId) = "↻ Shared reference to " ++ T.unpack refId
+
+-------------------------------------------------------------------------------
+-- Live Terminal Rendering
+-------------------------------------------------------------------------------
+
+-- | ANSI escape codes for terminal control
+clearScreen :: String
+clearScreen = "\ESC[2J"
+
+moveCursorHome :: String
+moveCursorHome = "\ESC[H"
+
+clearFromCursor :: String
+clearFromCursor = "\ESC[0J"
+
+-- | Get a snapshot of current diagnostics without finalizing
+--
+-- This is useful for live rendering while initialization is still in progress.
+-- Unlike 'finalizeDiagnostics', this doesn't mark the collector as finished.
+snapshotDiagnostics :: MonadIO m => DiagnosticsCollector -> m LayerDiagnostics
+snapshotDiagnostics (DiagnosticsCollector ref) = liftIO $ do
+  state <- readIORef ref
+  endTime <- diffUTCTime <$> getCurrentTime <*> getCurrentTime
+  let totalDur = realToFrac (endTime - collectorStartTime state)
+      root = case collectorNodeStack state of
+        [] -> LayerNode
+          { nodeId = "empty"
+          , nodeName = "Empty"
+          , nodeType = ComposedNode
+          , resourceType = Nothing
+          , status = Initialized
+          , duration = Nothing
+          , children = []
+          , metadata = HashMap.empty
+          }
+        (n:_) -> n
+  pure LayerDiagnostics
+    { rootNode = root
+    , totalDuration = totalDur
+    , totalResources = collectorTotalResources state
+    , sharedResources = collectorSharedResources state
+    }
+
+-- | Render the layer tree live in the terminal with periodic updates
+--
+-- This function takes a DiagnosticsCollector and a check function. It will:
+-- 1. Clear the terminal
+-- 2. Render the current state of the tree
+-- 3. Wait for a short period (100ms)
+-- 4. Check if initialization is complete using the provided function
+-- 5. If not complete, go back to step 1
+--
+-- Example usage:
+-- @
+-- collector <- newDiagnosticsCollector
+-- let interceptor = createDiagnosticsInterceptor collector
+--
+-- -- Start a thread to do the live rendering
+-- renderThread <- async $ renderLayerTreeLive collector (const $ pure False)
+--
+-- -- Run your layer initialization
+-- lenv <- LayerEnv <$> newMVar mempty <*> pure interceptor
+-- result <- runResourceT $ build myLayer lenv ()
+--
+-- -- Stop the render thread
+-- cancel renderThread
+-- @
+renderLayerTreeLive :: MonadIO m => DiagnosticsCollector -> m Bool -> m ()
+renderLayerTreeLive collector isDone = do
+  -- Initial clear
+  liftIO $ do
+    putStr clearScreen
+    putStr moveCursorHome
+    hFlush stdout
+
+  -- Rendering loop
+  let loop = do
+        done <- isDone
+
+        -- Get current snapshot
+        diags <- snapshotDiagnostics collector
+
+        -- Move cursor to home and clear from cursor
+        liftIO $ do
+          putStr moveCursorHome
+          putStr clearFromCursor
+          putStrLn $ renderLayerTree diags
+          hFlush stdout
+
+        -- If not done, wait and loop
+        when (not done) $ do
+          liftIO $ threadDelay 100000  -- 100ms
+          loop
+
+  loop
 
 -------------------------------------------------------------------------------
 -- JSON Export
