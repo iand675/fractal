@@ -65,12 +65,16 @@ test-suite fractal-layer-test
     hs-source-dirs:   test
     main-is:          Spec.hs
     other-modules:    Fractal.Layer.DiagnosticsSpec
+                    , Fractal.Layer.LayerSpec
     build-tool-depends: hspec-discover:hspec-discover >= 2.10 && < 3
     build-depends:    base >= 4.17.0.0 && < 5
                     , fractal-layer
                     , hspec >= 2.10 && < 3
+                    , QuickCheck >= 2.14 && < 3
                     , unliftio >= 0.2 && < 1
                     , text >= 2.0 && < 3
                     , aeson >= 2.0 && < 3
                     , bytestring >= 0.11 && < 1
                     , resourcet >= 1.2 && < 2
+                    , time >= 1.12 && < 2
+                    , vinyl >= 0.14 && < 1
