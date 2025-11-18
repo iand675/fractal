@@ -38,6 +38,12 @@ module Fractal.Layer.Diagnostics
     LayerNodeType (..),
     ResourceStatus (..),
 
+    -- * Diagnostics Interceptor
+    createDiagnosticsInterceptor,
+    DiagnosticsCollector,
+    newDiagnosticsCollector,
+    finalizeDiagnostics,
+
     -- * Running with Diagnostics
     withLayerDiagnostics,
     buildLayerDiagnostics,
@@ -56,10 +62,14 @@ import Control.Monad.IO.Class
 import Data.Aeson (ToJSON (..), object, (.=), Value)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
+import Data.IORef
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
 import Data.Typeable
+import Fractal.Layer.Interceptor
 import GHC.Generics (Generic)
+import UnliftIO (MonadIO, liftIO)
 
 -------------------------------------------------------------------------------
 -- Types
@@ -168,6 +178,181 @@ instance ToJSON ResourceStatus where
     Initialized -> object ["status" .= ("initialized" :: Text)]
     Failed err -> object ["status" .= ("failed" :: Text), "error" .= err]
     SharedReference nodeId -> object ["status" .= ("shared" :: Text), "reference" .= nodeId]
+
+-------------------------------------------------------------------------------
+-- Diagnostics Collector (Interceptor-based)
+-------------------------------------------------------------------------------
+
+-- | Mutable state for collecting diagnostics during layer initialization
+data DiagnosticsCollectorState = DiagnosticsCollectorState
+  { collectorNodeStack :: ![LayerNode]
+  -- ^ Stack of nodes being built (top = current)
+  , collectorNextId :: !Int
+  -- ^ Next available node ID
+  , collectorStartTime :: !NominalDiffTime
+  -- ^ When collection started
+  , collectorServiceMap :: !(HashMap TypeRep Text)
+  -- ^ Map of service types to their node IDs (for tracking sharing)
+  , collectorTotalResources :: !Int
+  -- ^ Total number of resources allocated
+  , collectorSharedResources :: !Int
+  -- ^ Number of shared/reused resources
+  }
+
+-- | Opaque handle to a diagnostics collector
+newtype DiagnosticsCollector = DiagnosticsCollector
+  { unCollector :: IORef DiagnosticsCollectorState
+  }
+
+-- | Create a new diagnostics collector
+newDiagnosticsCollector :: MonadIO m => m DiagnosticsCollector
+newDiagnosticsCollector = liftIO $ do
+  start <- diffUTCTime <$> getCurrentTime <*> getCurrentTime
+  ref <- newIORef DiagnosticsCollectorState
+    { collectorNodeStack = [rootNode]
+    , collectorNextId = 1
+    , collectorStartTime = start
+    , collectorServiceMap = HashMap.empty
+    , collectorTotalResources = 0
+    , collectorSharedResources = 0
+    }
+  pure $ DiagnosticsCollector ref
+  where
+    rootNode = LayerNode
+      { nodeId = "root"
+      , nodeName = "Root"
+      , nodeType = ComposedNode
+      , resourceType = Nothing
+      , status = Initializing
+      , duration = Nothing
+      , children = []
+      , metadata = HashMap.empty
+      }
+
+-- | Finalize diagnostics and get the complete tree
+finalizeDiagnostics :: MonadIO m => DiagnosticsCollector -> m LayerDiagnostics
+finalizeDiagnostics (DiagnosticsCollector ref) = liftIO $ do
+  state <- readIORef ref
+  endTime <- diffUTCTime <$> getCurrentTime <*> getCurrentTime
+  let totalDur = realToFrac (endTime - collectorStartTime state)
+      rootNode = case collectorNodeStack state of
+        [] -> error "Diagnostics collector has empty stack"
+        (node:_) -> node { status = Initialized, duration = Just totalDur }
+  pure $ LayerDiagnostics
+    { rootNode = rootNode
+    , totalDuration = totalDur
+    , totalResources = collectorTotalResources state
+    , sharedResources = collectorSharedResources state
+    }
+
+-- | Create a LayerInterceptor that collects diagnostics
+createDiagnosticsInterceptor :: MonadIO m => DiagnosticsCollector -> LayerInterceptor m
+createDiagnosticsInterceptor (DiagnosticsCollector ref) = LayerInterceptor
+  { onResourceAcquire = \ctx -> liftIO $ do
+      startNode ctx ResourceNode
+  , onResourceRelease = \name duration -> liftIO $ do
+      endNode name duration Initialized
+  , onEffectRun = \ctx -> liftIO $ do
+      startNode ctx EffectNode
+  , onEffectComplete = \name duration -> liftIO $ do
+      endNode name duration Initialized
+  , onServiceCreate = \ctx -> liftIO $ do
+      startNode ctx ServiceNode
+      -- Register service for tracking sharing
+      case operationType ctx of
+        Just tr -> modifyIORef' ref $ \s -> s
+          { collectorServiceMap = HashMap.insert tr (operationName ctx) (collectorServiceMap s)
+          , collectorTotalResources = collectorTotalResources s + 1
+          }
+        Nothing -> modifyIORef' ref $ \s -> s
+          { collectorTotalResources = collectorTotalResources s + 1
+          }
+  , onServiceReuse = \name tr -> liftIO $ do
+      state <- readIORef ref
+      case HashMap.lookup tr (collectorServiceMap state) of
+        Just originalNodeId -> do
+          -- Add a shared reference node
+          let sharedNode = LayerNode
+                { nodeId = T.pack ("shared-" <> show (collectorNextId state))
+                , nodeName = name
+                , nodeType = ServiceNode
+                , resourceType = Just tr
+                , status = SharedReference originalNodeId
+                , duration = Nothing
+                , children = []
+                , metadata = HashMap.empty
+                }
+          addChildToCurrentNode sharedNode
+          modifyIORef' ref $ \s -> s
+            { collectorNextId = collectorNextId s + 1
+            , collectorSharedResources = collectorSharedResources s + 1
+            }
+        Nothing -> pure () -- Service not tracked, skip
+  , onCompositionStart = \typ -> liftIO $ do
+      let nodeType = case typ of
+            Sequential -> SequentialNode
+            Parallel -> ParallelNode
+      startNode (simpleContext $ T.pack $ show typ) nodeType
+  , onCompositionEnd = \_ duration -> liftIO $ do
+      endNode (T.pack "composition") duration Initialized
+  }
+  where
+    startNode :: OperationContext -> LayerNodeType -> IO ()
+    startNode ctx nodeType = do
+      state <- readIORef ref
+      let newNode = LayerNode
+            { nodeId = T.pack ("node-" <> show (collectorNextId state))
+            , nodeName = operationName ctx
+            , nodeType = nodeType
+            , resourceType = operationType ctx
+            , status = Initializing
+            , duration = Nothing
+            , children = []
+            , metadata = HashMap.fromList (operationMetadata ctx)
+            }
+      modifyIORef' ref $ \s -> s
+        { collectorNodeStack = newNode : collectorNodeStack s
+        , collectorNextId = collectorNextId s + 1
+        }
+
+    endNode :: Text -> NominalDiffTime -> ResourceStatus -> IO ()
+    endNode _name duration status = do
+      state <- readIORef ref
+      case collectorNodeStack state of
+        [] -> pure () -- Empty stack, nothing to complete
+        [rootNode] -> do
+          -- Completing the root node
+          let completed = rootNode
+                { status = status
+                , duration = Just (realToFrac duration)
+                }
+          writeIORef ref $ state { collectorNodeStack = [completed] }
+        (current:parent:rest) -> do
+          -- Complete current node and add to parent
+          let completed = current
+                { status = status
+                , duration = Just (realToFrac duration)
+                }
+              updatedParent = parent
+                { children = children parent ++ [completed]
+                }
+          writeIORef ref $ state { collectorNodeStack = updatedParent : rest }
+
+    addChildToCurrentNode :: LayerNode -> IO ()
+    addChildToCurrentNode child = do
+      state <- readIORef ref
+      case collectorNodeStack state of
+        [] -> pure ()
+        (current:rest) -> do
+          let updated = current { children = children current ++ [child] }
+          writeIORef ref $ state { collectorNodeStack = updated : rest }
+
+    simpleContext :: Text -> OperationContext
+    simpleContext name = OperationContext
+      { operationName = name
+      , operationType = Nothing
+      , operationMetadata = []
+      }
 
 -------------------------------------------------------------------------------
 -- Running with Diagnostics

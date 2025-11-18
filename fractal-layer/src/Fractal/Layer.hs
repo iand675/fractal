@@ -125,7 +125,6 @@ module Fractal.Layer
     build,
     runLayer,
     withLayer,
-    withLayerDiagnostics,
     mkLayer,
     mapLayer,
     zipLayer,
@@ -179,8 +178,7 @@ import Data.Traversable
 import Data.Tuple
 import Data.Vinyl
 import Data.Vinyl.TypeLevel
-import Fractal.Layer.Diagnostics (LayerDiagnostics (..), LayerNode (..), LayerNodeType (..), ResourceStatus (..))
-import qualified Fractal.Layer.Diagnostics as Diag
+import Fractal.Layer.Interceptor
 import UnliftIO
 import UnliftIO.Resource
 import Unsafe.Coerce
@@ -191,17 +189,9 @@ data ServiceState a
   = Initialized a
   | Failed SomeException
 
-data DiagnosticsState = DiagnosticsState
-  { nodeStack :: ![LayerNode]
-  , nextNodeId :: !Int
-  , startTime :: !NominalDiffTime
-  , serviceMap :: !(HashMap TypeRep Text) -- Maps service types to their node IDs
-  }
-
-data LayerEnv = LayerEnv
+data LayerEnv m = LayerEnv
   { serviceStates :: !(MVar (HashMap TypeRep (ServiceState Any)))
-  , diagnosticsEnabled :: !Bool
-  , diagnosticsRef :: !(Maybe (MVar DiagnosticsState))
+  , interceptor :: !(LayerInterceptor m)
   }
 
 newtype Service m deps env = Service
@@ -260,7 +250,7 @@ getOrCreateCachedService (Service m) = Layer $ \lenv env -> do
 --   (\db -> closeConnection (connection db))
 -- @
 newtype Layer m deps env = Layer
-  { build :: LayerEnv -> deps -> ResourceT m env
+  { build :: LayerEnv m -> deps -> ResourceT m env
   -- ^ Build the layer inside 'ResourceT', acquiring any required
   --   resources and registering their corresponding finalizers.
   }
@@ -747,7 +737,7 @@ unsafelyMergeReleaseMap ReleaseMapClosed r = r
 --   'withLayer' instead- this function exists mainly for quick tests.
 runLayer :: MonadUnliftIO m => deps -> Layer m deps env -> m env
 runLayer deps (Layer l) = do
-  lenv <- LayerEnv <$> newMVar HashMap.empty
+  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure nullInterceptor
   runResourceT (l lenv deps)
 {-# SPECIALIZE runLayer :: deps -> Layer IO deps env -> IO env #-}
 
@@ -776,7 +766,7 @@ withLayer ::
   (env -> ResourceT m r) ->
   m r
 withLayer deps (Layer l) useEnv = runResourceT $ do
-  lenv <- LayerEnv <$> newMVar HashMap.empty
+  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure nullInterceptor
   env <- l lenv deps
   useEnv env
 
