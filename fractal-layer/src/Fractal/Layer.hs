@@ -125,6 +125,7 @@ module Fractal.Layer
     build,
     runLayer,
     withLayer,
+    withLayerDiagnostics,
     mkLayer,
     mapLayer,
     zipLayer,
@@ -171,10 +172,15 @@ import Data.Typeable
 import Data.IntMap.Strict (mapKeysMonotonic)
 import Data.Profunctor
 import Data.Profunctor.Traversing
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
 import Data.Traversable
 import Data.Tuple
 import Data.Vinyl
 import Data.Vinyl.TypeLevel
+import Fractal.Layer.Diagnostics (LayerDiagnostics (..), LayerNode (..), LayerNodeType (..), ResourceStatus (..))
+import qualified Fractal.Layer.Diagnostics as Diag
 import UnliftIO
 import UnliftIO.Resource
 import Unsafe.Coerce
@@ -185,8 +191,17 @@ data ServiceState a
   = Initialized a
   | Failed SomeException
 
+data DiagnosticsState = DiagnosticsState
+  { nodeStack :: ![LayerNode]
+  , nextNodeId :: !Int
+  , startTime :: !NominalDiffTime
+  , serviceMap :: !(HashMap TypeRep Text) -- Maps service types to their node IDs
+  }
+
 data LayerEnv = LayerEnv
   { serviceStates :: !(MVar (HashMap TypeRep (ServiceState Any)))
+  , diagnosticsEnabled :: !Bool
+  , diagnosticsRef :: !(Maybe (MVar DiagnosticsState))
   }
 
 newtype Service m deps env = Service
