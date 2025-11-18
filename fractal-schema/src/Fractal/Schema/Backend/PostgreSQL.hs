@@ -209,6 +209,42 @@ deleteSubjectConfigStmt = [HTH.resultlessStatement|
   WHERE subject = $1 :: text
   |]
 
+-- Mode statements
+getGlobalModeStmt :: HST.Statement () (Maybe Text)
+getGlobalModeStmt = [HTH.maybeStatement|
+  SELECT mode :: text
+  FROM modes
+  WHERE subject IS NULL
+  |]
+
+setGlobalModeStmt :: HST.Statement Text ()
+setGlobalModeStmt = [HTH.resultlessStatement|
+  INSERT INTO modes (subject, mode)
+  VALUES (NULL, $1 :: text)
+  ON CONFLICT (subject) DO UPDATE SET mode = EXCLUDED.mode, updated_at = NOW()
+  |]
+
+getSubjectModeStmt :: HST.Statement Text (Maybe Text)
+getSubjectModeStmt = [HTH.maybeStatement|
+  SELECT mode :: text
+  FROM modes
+  WHERE subject = $1 :: text
+  |]
+
+setSubjectModeStmt :: HST.Statement (Text, Text) ()
+setSubjectModeStmt = [HTH.resultlessStatement|
+  INSERT INTO modes (subject, mode)
+  VALUES ($1 :: text, $2 :: text)
+  ON CONFLICT (subject)
+  DO UPDATE SET mode = EXCLUDED.mode, updated_at = NOW()
+  |]
+
+deleteSubjectModeStmt :: HST.Statement Text ()
+deleteSubjectModeStmt = [HTH.resultlessStatement|
+  DELETE FROM modes
+  WHERE subject = $1 :: text
+  |]
+
 getSchemaVersionsStmt :: HST.Statement Int64 (V.Vector (Text, Int64))
 getSchemaVersionsStmt = [HTH.vectorStatement|
   SELECT subject :: text, version :: int8
@@ -347,12 +383,34 @@ instance SchemaStore HasqlStore where
     _ <- runStatement deleteSubjectConfigStmt subject
     pure ()
 
-  -- Mode operations would follow similar pattern
-  getGlobalMode = pure "READWRITE"
-  setGlobalMode _ = pure ()
-  getSubjectMode _ = pure Nothing
-  setSubjectMode _ _ = pure ()
-  deleteSubjectMode _ = pure ()
+  -- Mode operations
+  getGlobalMode = do
+    result <- runStatement getGlobalModeStmt ()
+    case result of
+      Right (Just mode) -> pure mode
+      Right Nothing -> do
+        -- Set default mode if not exists
+        _ <- runStatement setGlobalModeStmt "READWRITE"
+        pure "READWRITE"
+      Left _ -> pure "READWRITE"
+
+  setGlobalMode mode = do
+    _ <- runStatement setGlobalModeStmt mode
+    pure ()
+
+  getSubjectMode (SubjectName subject) = do
+    result <- runStatement getSubjectModeStmt subject
+    case result of
+      Right mode -> pure mode
+      Left _ -> pure Nothing
+
+  setSubjectMode (SubjectName subject) mode = do
+    _ <- runStatement setSubjectModeStmt (subject, mode)
+    pure ()
+
+  deleteSubjectMode (SubjectName subject) = do
+    _ <- runStatement deleteSubjectModeStmt subject
+    pure ()
 
   getSchemaVersions (SchemaId sid) = do
     result <- runStatement getSchemaVersionsStmt sid
