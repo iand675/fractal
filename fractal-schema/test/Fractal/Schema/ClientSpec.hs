@@ -46,6 +46,7 @@ import qualified Hasql.Connection.Setting as HCS
 import Fractal.Schema.Client
 import Fractal.Schema.Types hiding (SchemaRegistryRoutes(..))
 import Fractal.Schema.Compatibility.Avro hiding (CompatibilityError, TypeMismatch)
+import TestDatabase (withTestDatabase)
 
 -- Test data
 testSubject :: SubjectName
@@ -77,143 +78,31 @@ testSchemaV2 = $(makeSchemaFromByteString [r|
 |])
 
 
--- Database schema setup
-setupDatabaseSchema :: HC.Connection -> IO ()
-setupDatabaseSchema conn = do
-  let createTables :: HST.Statement () ()
-      createTables = HST.Statement sql encoder decoder True
-        where
-          sql = "CREATE TABLE IF NOT EXISTS schemas (\
-                \  id SERIAL PRIMARY KEY,\
-                \  schema TEXT NOT NULL,\
-                \  schema_type TEXT,\
-                \  hash TEXT NOT NULL UNIQUE,\
-                \  created_at TIMESTAMPTZ DEFAULT NOW()\
-                \)"
-          encoder = HE.noParams
-          decoder = HD.noResult
-
-  result1 <- HS.run (HS.statement () createTables) conn
-  case result1 of
-    Left err -> error $ "Failed to create schemas table: " ++ show err
-    Right _ -> pure ()
-
-  let createSubjectVersions :: HST.Statement () ()
-      createSubjectVersions = HST.Statement sql encoder decoder True
-        where
-          sql = "CREATE TABLE IF NOT EXISTS subject_versions (\
-                \  subject TEXT NOT NULL,\
-                \  version INT NOT NULL,\
-                \  schema_id INT NOT NULL REFERENCES schemas(id),\
-                \  deleted BOOLEAN DEFAULT FALSE,\
-                \  created_at TIMESTAMPTZ DEFAULT NOW(),\
-                \  PRIMARY KEY (subject, version)\
-                \)"
-          encoder = HE.noParams
-          decoder = HD.noResult
-
-  result2 <- HS.run (HS.statement () createSubjectVersions) conn
-  case result2 of
-    Left err -> error $ "Failed to create subject_versions table: " ++ show err
-    Right _ -> pure ()
-
-  let createIndexes :: HST.Statement () ()
-      createIndexes = HST.Statement sql encoder decoder True
-        where
-          sql = "CREATE INDEX IF NOT EXISTS idx_subject_versions_schema_id ON subject_versions(schema_id)"
-          encoder = HE.noParams
-          decoder = HD.noResult
-
-  result3 <- HS.run (HS.statement () createIndexes) conn
-  case result3 of
-    Left err -> error $ "Failed to create schema_id index: " ++ show err
-    Right _ -> pure ()
-
-  let createDeletedIndex :: HST.Statement () ()
-      createDeletedIndex = HST.Statement sql encoder decoder True
-        where
-          sql = "CREATE INDEX IF NOT EXISTS idx_subject_versions_deleted ON subject_versions(subject, deleted) WHERE NOT deleted"
-          encoder = HE.noParams
-          decoder = HD.noResult
-
-  result4 <- HS.run (HS.statement () createDeletedIndex) conn
-  case result4 of
-    Left err -> error $ "Failed to create deleted index: " ++ show err
-    Right _ -> pure ()
-
-  let createConfigs :: HST.Statement () ()
-      createConfigs = HST.Statement sql encoder decoder True
-        where
-          sql = "CREATE TABLE IF NOT EXISTS configs (\
-                \  subject TEXT,\
-                \  compatibility TEXT NOT NULL,\
-                \  updated_at TIMESTAMPTZ DEFAULT NOW(),\
-                \  UNIQUE (subject)\
-                \)"
-          encoder = HE.noParams
-          decoder = HD.noResult
-
-  result5 <- HS.run (HS.statement () createConfigs) conn
-  case result5 of
-    Left err -> error $ "Failed to create configs table: " ++ show err
-    Right _ -> pure ()
-
-  let createModes :: HST.Statement () ()
-      createModes = HST.Statement sql encoder decoder True
-        where
-          sql = "CREATE TABLE IF NOT EXISTS modes (\
-                \  subject TEXT,\
-                \  mode TEXT NOT NULL,\
-                \  updated_at TIMESTAMPTZ DEFAULT NOW(),\
-                \  UNIQUE (subject)\
-                \)"
-          encoder = HE.noParams
-          decoder = HD.noResult
-
-  result5 <- HS.run (HS.statement () createModes) conn
-  case result5 of
-    Left err -> error $ "Failed to create modes table: " ++ show err
-    Right _ -> pure ()
-
 -- Test setup
+-- This will automatically spin up a temporary PostgreSQL server for testing
 withTestEnvironment :: (Manager -> HC.Connection -> IO a) -> IO a
 withTestEnvironment action = do
   -- Create HTTP manager
   manager <- newManager tlsManagerSettings
 
-  -- Create database connection for server
-  bracket (HC.acquire [])
-          (\conn -> case conn of
-              Right c -> HC.release c
-              Left _ -> pure ())
-          $ \conn -> case conn of
-              Right serverConn -> do
-                -- Set up database schema
-                setupDatabaseSchema serverConn
+  -- Use temporary database (automatically downloads and starts PostgreSQL if needed)
+  withTestDatabase $ \conn -> do
+    -- Start Schema Registry server in a separate thread
+    serverStarted <- newEmptyMVar
+    serverThread <- forkIO $ do
+      putMVar serverStarted ()
+      run 8081 $ app conn
 
-                -- Start Schema Registry server in a separate thread
-                serverStarted <- newEmptyMVar
-                serverThread <- forkIO $ do
-                  putMVar serverStarted ()
-                  run 8081 $ app serverConn
+    -- Wait for server to start
+    takeMVar serverStarted
 
-                -- Wait for server to start
-                takeMVar serverStarted
+    -- Run the test action with both manager and connection
+    result <- action manager conn
 
-                -- Create database connection for client
-                bracket (HC.acquire [])
-                        (\conn -> case conn of
-                            Right c -> HC.release c
-                            Left _ -> pure ())
-                        $ \conn -> case conn of
-                            Right clientConn -> do
-                              result <- action manager clientConn
-                              killThread serverThread  -- Clean up server thread
-                              pure result
-                            Left err -> do
-                              killThread serverThread  -- Clean up server thread
-                              error $ "Failed to acquire client connection: " ++ show err
-              Left err -> error $ "Failed to acquire server connection: " ++ show err
+    -- Clean up server thread
+    killThread serverThread
+
+    pure result
 
 -- Helper function to create client environment
 mkTestClientEnv :: Manager -> ClientEnv
