@@ -199,15 +199,21 @@ data NewtypeSpec = NewtypeSpec
   }
 ```
 
-### 1.2 Vocabulary System
+### 1.2 Vocabulary and Dialect System
 
-Support the JSON Schema 2019-09+ vocabulary system for extensibility:
+The vocabulary system is the cornerstone of extensibility in JSON Schema 2019-09+. It allows custom keywords to be added, providing domain-specific validation, annotations, and semantics.
+
+#### 1.2.1 Vocabularies
+
+A **vocabulary** is a collection of keywords with defined semantics. Each vocabulary has a unique URI identifier and specifies how its keywords should be interpreted.
 
 ```haskell
 data Vocabulary = Vocabulary
   { vocabularyURI :: URI
+  , vocabularyRequired :: Bool  -- Whether this vocabulary must be understood
   , vocabularyKeywords :: Map Text KeywordDefinition
   , vocabularyValidator :: Maybe VocabularyValidator
+  , vocabularyMetaSchema :: Maybe Schema  -- Schema that describes this vocabulary
   }
 
 data KeywordDefinition = KeywordDefinition
@@ -216,6 +222,7 @@ data KeywordDefinition = KeywordDefinition
   , keywordParser :: Value -> Either ParseError KeywordValue
   , keywordValidator :: Maybe KeywordValidator
   , keywordAnnotator :: Maybe KeywordAnnotator
+  , keywordPriority :: Int  -- Evaluation order
   }
 
 data KeywordScope
@@ -224,24 +231,391 @@ data KeywordScope
   | ArraySchemaOnly
   | StringSchemaOnly
   | NumericSchemaOnly
-  deriving (Eq, Show)
+  | BooleanSchemaOnly
+  deriving (Eq, Show, Ord)
+
+-- Keyword value - opaque type that keywords can define
+data KeywordValue where
+  KeywordValue :: (Eq a, Show a, Typeable a) => a -> KeywordValue
 
 type VocabularyValidator = Schema -> ValidationContext -> Either ValidationError ()
 type KeywordValidator = KeywordValue -> Value -> ValidationContext -> ValidationResult
 type KeywordAnnotator = KeywordValue -> Value -> Map Text Value
 ```
 
-Standard vocabularies to implement:
+#### 1.2.2 Dialects
 
-1. **Core Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/core`)
-2. **Applicator Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/applicator`)
-3. **Validation Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/validation`)
-4. **Meta-Data Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/meta-data`)
-5. **Format Annotation Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/format-annotation`)
-6. **Format Assertion Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/format-assertion`)
-7. **Content Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/content`)
-8. **Unevaluated Vocabulary** (`https://json-schema.org/draft/2020-12/vocab/unevaluated`)
+A **dialect** is a complete configuration of vocabularies that defines a JSON Schema variant. Dialects specify which vocabularies are enabled, their requirement status, and any additional configuration.
 
+```haskell
+data Dialect = Dialect
+  { dialectURI :: URI
+  , dialectName :: Text
+  , dialectVersion :: Text
+  , dialectVocabularies :: Map URI Bool  -- URI -> required?
+  , dialectMetaSchema :: Schema
+  , dialectDefaultFormat :: FormatBehavior
+  , dialectUnknownKeywords :: UnknownKeywordMode
+  }
+
+-- How to handle unknown keywords
+data UnknownKeywordMode
+  = IgnoreUnknown        -- Silently ignore
+  | WarnUnknown          -- Emit warnings but continue
+  | ErrorOnUnknown       -- Fail parsing
+  | CollectUnknown       -- Collect in extensions map
+  deriving (Eq, Show)
+
+-- Format keyword behavior
+data FormatBehavior
+  = FormatAssertion      -- Formats are validation
+  | FormatAnnotation     -- Formats are annotations only
+  deriving (Eq, Show)
+```
+
+Standard dialects to implement:
+
+1. **Draft-04 Dialect** (`http://json-schema.org/draft-04/schema#`)
+2. **Draft-06 Dialect** (`http://json-schema.org/draft-06/schema#`)
+3. **Draft-07 Dialect** (`http://json-schema.org/draft-07/schema#`)
+4. **2019-09 Dialect** (`https://json-schema.org/draft/2019-09/schema`)
+5. **2020-12 Dialect** (`https://json-schema.org/draft/2020-12/schema`)
+
+#### 1.2.3 Vocabulary Registry
+
+The vocabulary registry manages all known vocabularies and provides lookup and composition functions.
+
+```haskell
+data VocabularyRegistry = VocabularyRegistry
+  { registeredVocabularies :: Map URI Vocabulary
+  , registeredDialects :: Map URI Dialect
+  , defaultDialect :: Dialect
+  }
+
+-- Registry operations
+emptyRegistry :: VocabularyRegistry
+registerVocabulary :: Vocabulary -> VocabularyRegistry -> VocabularyRegistry
+registerDialect :: Dialect -> VocabularyRegistry -> VocabularyRegistry
+lookupVocabulary :: URI -> VocabularyRegistry -> Maybe Vocabulary
+lookupDialect :: URI -> VocabularyRegistry -> Maybe Dialect
+
+-- Compose vocabularies into a dialect
+composeDialect
+  :: Text                    -- Dialect name
+  -> URI                     -- Dialect URI
+  -> [(URI, Bool)]           -- Vocabularies (URI, required?)
+  -> VocabularyRegistry
+  -> Either ComposeError Dialect
+
+-- Check vocabulary compatibility
+checkVocabularyCompatibility
+  :: Vocabulary
+  -> Vocabulary
+  -> Either CompatibilityError ()
+```
+
+#### 1.2.4 Creating Custom Vocabularies
+
+Example: Creating a business domain vocabulary
+
+```haskell
+-- Define custom keywords for business validation
+data CreditCardKeyword = CreditCardKeyword
+  { ccProvider :: Maybe Text  -- "visa", "mastercard", etc.
+  , ccLuhnCheck :: Bool
+  } deriving (Eq, Show, Typeable)
+
+data TaxIDKeyword = TaxIDKeyword
+  { taxIDCountry :: Text
+  , taxIDFormat :: Text
+  } deriving (Eq, Show, Typeable)
+
+-- Create the vocabulary
+businessVocabulary :: Vocabulary
+businessVocabulary = Vocabulary
+  { vocabularyURI = "https://example.com/vocabs/business/v1"
+  , vocabularyRequired = False
+  , vocabularyKeywords = Map.fromList
+      [ ("x-credit-card", creditCardKeywordDef)
+      , ("x-tax-id", taxIDKeywordDef)
+      , ("x-currency", currencyKeywordDef)
+      ]
+  , vocabularyValidator = Nothing
+  , vocabularyMetaSchema = Nothing
+  }
+
+-- Define credit card keyword
+creditCardKeywordDef :: KeywordDefinition
+creditCardKeywordDef = KeywordDefinition
+  { keywordName = "x-credit-card"
+  , keywordAppliesTo = StringSchemaOnly
+  , keywordParser = parseCreditCardKeyword
+  , keywordValidator = Just validateCreditCard
+  , keywordAnnotator = Just annotateCreditCard
+  , keywordPriority = 100
+  }
+
+parseCreditCardKeyword :: Value -> Either ParseError KeywordValue
+parseCreditCardKeyword = \case
+  Object o -> do
+    provider <- o .:? "provider"
+    luhnCheck <- o .:? "luhn-check" .!= True
+    pure $ KeywordValue $ CreditCardKeyword provider luhnCheck
+  Bool b -> pure $ KeywordValue $ CreditCardKeyword Nothing b
+  _ -> Left $ ParseError "x-credit-card must be object or boolean"
+
+validateCreditCard :: KeywordValidator
+validateCreditCard (KeywordValue (cc :: CreditCardKeyword)) value ctx =
+  case value of
+    String txt -> do
+      -- Validate credit card number
+      when (ccLuhnCheck cc && not (luhnValidate txt)) $
+        validationError "Credit card number fails Luhn check"
+
+      -- Validate provider if specified
+      forM_ (ccProvider cc) $ \provider -> do
+        let prefix = detectCardProvider txt
+        when (prefix /= provider) $
+          validationError $ "Credit card provider mismatch: expected "
+                         <> provider <> ", got " <> prefix
+
+      ValidationSuccess mempty
+    _ -> ValidationFailure $ ValidationError "Value must be a string"
+
+annotateCreditCard :: KeywordAnnotator
+annotateCreditCard (KeywordValue (cc :: CreditCardKeyword)) value =
+  Map.fromList
+    [ ("creditCardProvider", toJSON $ ccProvider cc)
+    , ("creditCardLuhnCheck", toJSON $ ccLuhnCheck cc)
+    ]
+```
+
+#### 1.2.5 Custom Dialect Example
+
+Creating a company-specific dialect:
+
+```haskell
+-- Company dialect combining standard + custom vocabularies
+acmeCorpDialect :: Dialect
+acmeCorpDialect = Dialect
+  { dialectURI = "https://acme.com/json-schema/2024"
+  , dialectName = "ACME Corp JSON Schema"
+  , dialectVersion = "2024.1"
+  , dialectVocabularies = Map.fromList
+      -- Standard vocabularies (all required)
+      [ ("https://json-schema.org/draft/2020-12/vocab/core", True)
+      , ("https://json-schema.org/draft/2020-12/vocab/applicator", True)
+      , ("https://json-schema.org/draft/2020-12/vocab/validation", True)
+      , ("https://json-schema.org/draft/2020-12/vocab/meta-data", True)
+      , ("https://json-schema.org/draft/2020-12/vocab/format-annotation", False)
+
+      -- Custom vocabularies
+      , ("https://acme.com/vocabs/business/v1", True)      -- Required
+      , ("https://acme.com/vocabs/security/v1", True)      -- Required
+      , ("https://acme.com/vocabs/codegen/v1", False)      -- Optional
+      ]
+  , dialectMetaSchema = acmeMetaSchema
+  , dialectDefaultFormat = FormatAnnotation
+  , dialectUnknownKeywords = WarnUnknown
+  }
+
+-- Security vocabulary with custom keywords
+securityVocabulary :: Vocabulary
+securityVocabulary = Vocabulary
+  { vocabularyURI = "https://acme.com/vocabs/security/v1"
+  , vocabularyRequired = True
+  , vocabularyKeywords = Map.fromList
+      [ ("x-sensitive", sensitiveKeywordDef)
+      , ("x-pii", piiKeywordDef)
+      , ("x-encryption-required", encryptionKeywordDef)
+      , ("x-access-level", accessLevelKeywordDef)
+      ]
+  , vocabularyValidator = Just validateSecurityConstraints
+  , vocabularyMetaSchema = Just securityMetaSchema
+  }
+
+-- Codegen vocabulary for type generation hints
+codegenVocabulary :: Vocabulary
+codegenVocabulary = Vocabulary
+  { vocabularyURI = "https://acme.com/vocabs/codegen/v1"
+  , vocabularyRequired = False  -- Optional - won't fail if unknown
+  , vocabularyKeywords = Map.fromList
+      [ ("x-haskell-type", haskellTypeKeywordDef)
+      , ("x-haskell-module", haskellModuleKeywordDef)
+      , ("x-haskell-deriving", haskellDerivingKeywordDef)
+      , ("x-haskell-newtype", haskellNewtypeKeywordDef)
+      ]
+  , vocabularyValidator = Nothing  -- Codegen keywords don't validate data
+  , vocabularyMetaSchema = Just codegenMetaSchema
+  }
+```
+
+#### 1.2.6 Vocabulary Composition and Inheritance
+
+Support vocabulary inheritance and composition:
+
+```haskell
+-- Extend a vocabulary with additional keywords
+extendVocabulary
+  :: Vocabulary                    -- Base vocabulary
+  -> [(Text, KeywordDefinition)]  -- Additional keywords
+  -> Vocabulary
+
+-- Compose multiple vocabularies (later ones override earlier)
+composeVocabularies
+  :: NonEmpty Vocabulary
+  -> Either ComposeError Vocabulary
+
+-- Create a vocabulary variant
+variantVocabulary
+  :: Vocabulary                    -- Base
+  -> (Vocabulary -> Vocabulary)    -- Modifications
+  -> Vocabulary
+```
+
+Example usage:
+
+```haskell
+-- Create a stricter version of the validation vocabulary
+strictValidationVocab :: Vocabulary
+strictValidationVocab = variantVocabulary standardValidationVocab $ \vocab ->
+  vocab { vocabularyRequired = True
+        , vocabularyKeywords = Map.adjust makeStrict "format" (vocabularyKeywords vocab)
+        }
+  where
+    makeStrict keywordDef = keywordDef
+      { keywordValidator = Just strictFormatValidator }
+```
+
+#### 1.2.7 Runtime Vocabulary Loading
+
+Support loading vocabularies at runtime:
+
+```haskell
+-- Load vocabulary from JSON/YAML definition
+loadVocabularyFromFile :: FilePath -> IO (Either LoadError Vocabulary)
+loadVocabularyFromURL :: String -> IO (Either LoadError Vocabulary)
+
+-- Vocabulary definition format (JSON/YAML)
+data VocabularyDefinition = VocabularyDefinition
+  { vocabDefURI :: Text
+  , vocabDefName :: Text
+  , vocabDefKeywords :: [KeywordDefinitionJSON]
+  , vocabDefMetaSchemaURI :: Maybe Text
+  }
+
+-- Register vocabulary plugin (for keyword implementations)
+type VocabularyPlugin = VocabularyDefinition -> Either PluginError Vocabulary
+
+registerVocabularyPlugin
+  :: URI                    -- Vocabulary URI
+  -> VocabularyPlugin
+  -> VocabularyRegistry
+  -> VocabularyRegistry
+```
+
+#### 1.2.8 Standard Vocabularies
+
+Implement all standard JSON Schema vocabularies:
+
+##### Core Vocabulary
+- `$schema`, `$id`, `$ref`, `$anchor`, `$dynamicRef`, `$dynamicAnchor`, `$vocabulary`, `$comment`, `$defs`
+
+##### Applicator Vocabulary
+- `prefixItems`, `items`, `contains`, `additionalProperties`, `properties`, `patternProperties`, `dependentSchemas`, `propertyNames`, `if`, `then`, `else`, `allOf`, `anyOf`, `oneOf`, `not`
+
+##### Unevaluated Vocabulary
+- `unevaluatedItems`, `unevaluatedProperties`
+
+##### Validation Vocabulary
+- Numeric: `multipleOf`, `maximum`, `exclusiveMaximum`, `minimum`, `exclusiveMinimum`
+- String: `maxLength`, `minLength`, `pattern`
+- Array: `maxItems`, `minItems`, `uniqueItems`, `maxContains`, `minContains`
+- Object: `maxProperties`, `minProperties`, `required`, `dependentRequired`
+- Generic: `type`, `enum`, `const`
+
+##### Format Vocabularies
+- Format Annotation: Treat `format` as annotation
+- Format Assertion: Treat `format` as validation
+
+##### Meta-Data Vocabulary
+- `title`, `description`, `default`, `deprecated`, `readOnly`, `writeOnly`, `examples`
+
+##### Content Vocabulary
+- `contentEncoding`, `contentMediaType`, `contentSchema`
+
+#### 1.2.9 Vocabulary Validation
+
+Validate vocabulary definitions and check for conflicts:
+
+```haskell
+validateVocabulary :: Vocabulary -> Either ValidationError ()
+validateVocabularyAgainstMetaSchema :: Vocabulary -> Either ValidationError ()
+
+-- Check for keyword conflicts between vocabularies
+detectKeywordConflicts
+  :: [Vocabulary]
+  -> Either ConflictError ()
+
+-- Conflict resolution strategies
+data ConflictResolution
+  = FirstWins      -- First vocabulary takes precedence
+  | LastWins       -- Last vocabulary takes precedence
+  | ErrorOnConflict -- Fail if conflicts detected
+  | MergeKeywords   -- Attempt to merge keyword definitions
+  deriving (Eq, Show)
+
+resolveVocabularyConflicts
+  :: ConflictResolution
+  -> [Vocabulary]
+  -> Either ConflictError Vocabulary
+```
+
+#### 1.2.10 Practical Example: Full Custom Schema
+
+Complete example using custom dialect:
+
+```json
+{
+  "$schema": "https://acme.com/json-schema/2024",
+  "type": "object",
+  "properties": {
+    "creditCard": {
+      "type": "string",
+      "x-credit-card": {
+        "provider": "visa",
+        "luhn-check": true
+      },
+      "x-sensitive": true,
+      "x-encryption-required": "AES-256",
+      "x-haskell-newtype": {
+        "constructor": "CreditCardNumber",
+        "module": "Acme.Payment.Types"
+      }
+    },
+    "ssn": {
+      "type": "string",
+      "x-tax-id": {
+        "country": "US",
+        "format": "XXX-XX-XXXX"
+      },
+      "x-pii": {
+        "category": "government-id",
+        "retention-days": 2555
+      },
+      "x-access-level": "confidential"
+    }
+  }
+}
+```
+
+This schema uses:
+- Standard 2020-12 core vocabularies
+- Custom business vocabulary (`x-credit-card`, `x-tax-id`)
+- Custom security vocabulary (`x-sensitive`, `x-pii`, `x-encryption-required`, `x-access-level`)
+- Custom codegen vocabulary (`x-haskell-newtype`)
+
+All vocabularies are validated, composed, and used for both validation and code generation.
 ### 1.3 Parser
 
 Parse JSON Schema from JSON/YAML with version detection:

@@ -47,6 +47,7 @@ library
                     , Fractal.OpenApi.JsonSchema.Renderer
                     , Fractal.OpenApi.JsonSchema.Validator
                     , Fractal.OpenApi.JsonSchema.Vocabulary
+                    , Fractal.OpenApi.JsonSchema.Dialect
                     , Fractal.OpenApi.JsonSchema.Metadata
 
                     -- OpenAPI Support
