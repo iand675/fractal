@@ -13,6 +13,11 @@ maintainer:         ian@iankduncan.com
 category:           Control
 build-type:         Simple
 
+source-repository head
+  type:     git
+  location: https://github.com/iand675/fractal
+  subdir:   fractal-layer
+
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
                  -Wincomplete-uni-patterns -Wmissing-home-modules
