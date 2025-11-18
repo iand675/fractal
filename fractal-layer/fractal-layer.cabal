@@ -35,17 +35,17 @@ library
     exposed-modules:  Fractal.Layer
                     , Fractal.Layer.Diagnostics
                     , Fractal.Layer.Interceptor
-    build-depends:    base >=4.17.0.0
+    build-depends:    base >= 4.17.0.0 && < 5
                     , resourcet >= 1.2 && < 2
                     , unliftio >= 0.2 && < 1
-                    , transformers
+                    , transformers >= 0.5 && < 0.7
                     , mtl >= 2.2 && < 3
                     , containers >= 0.6 && < 1
                     , hashable >= 1.4 && < 2
                     , unordered-containers >= 0.2 && < 1
-                    , vinyl
+                    , vinyl >= 0.14 && < 1
                     , profunctors >= 5.6 && < 6
-                    , selective
+                    , selective >= 0.5 && < 1
                     , aeson >= 2.0 && < 3
                     , text >= 2.0 && < 3
                     , time >= 1.12 && < 2
@@ -61,7 +61,7 @@ test-suite fractal-layer-test
     main-is:          Spec.hs
     other-modules:    Fractal.Layer.DiagnosticsSpec
     build-tool-depends: hspec-discover:hspec-discover >= 2.10 && < 3
-    build-depends:    base >=4.17.0.0
+    build-depends:    base >= 4.17.0.0 && < 5
                     , fractal-layer
                     , hspec >= 2.10 && < 3
                     , unliftio >= 0.2 && < 1
