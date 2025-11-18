@@ -41,6 +41,11 @@ module Fractal.Layer.Interceptor
     -- * Built-in Interceptors
     nullInterceptor,
     combineInterceptors,
+
+    -- * Helper Functions
+    simpleContext,
+    withType,
+    withMetadata,
   )
 where
 
