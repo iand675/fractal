@@ -12,6 +12,10 @@ maintainer:         ian@iankduncan.com
 category:           Database, Streaming
 build-type:         Simple
 
+source-repository head
+  type:     git
+  location: https://github.com/iand675/fractal
+
 common warnings
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates
                  -Wincomplete-uni-patterns -Wmissing-home-modules
@@ -42,12 +46,12 @@ library
                     , Fractal.Schema.Backend.PostgreSQL
                     , Fractal.Schema.Compatibility.Avro
                     , Fractal.Schema.Client
-                    , Fractal.Layer
-    build-depends:    base >=4.17.0.0
+    build-depends:    base >= 4.17.0.0 && < 5
+                    , fractal-layer
                     , aeson >= 2.0 && < 3
                     , async >= 2.2 && < 3
-                    , atomic-counter
-                    , atomic-primops
+                    , atomic-counter >= 0.1 && < 1
+                    , atomic-primops >= 0.8 && < 1
                     , auto-update >= 0.2 && < 1
                     , bytestring >= 0.11 && < 1
                     , containers >= 0.6 && < 1
@@ -57,12 +61,12 @@ library
                     , hasql >= 1.6 && < 2
                     , hasql-th >= 0.4 && < 1
                     , hasql-transaction >= 1.0.0 && < 2
-                    , http-client
-                    , http-client-tls
-                    , hs-opentelemetry-api
-                    , ki
+                    , http-client >= 0.7 && < 1
+                    , http-client-tls >= 0.3 && < 1
+                    , hs-opentelemetry-api >= 0.1 && < 1
+                    , ki >= 1.0 && < 2
                     , lens >= 5.0 && < 6
-                    , primitive
+                    , primitive >= 0.7 && < 1
                     , resourcet >= 1.2 && < 2
                     , mtl >= 2.2 && < 3
                     , stm >= 2.5 && < 3
@@ -72,23 +76,23 @@ library
                     , validation-selective >= 0.1 && < 1
                     , vector >= 0.13 && < 1
                     , unliftio >= 0.2 && < 1
-                    , contravariant-extras
-                    , selective
-                    , servant
-                    , servant-server
-                    , servant-client
-                    , servant-client-core
-                    , transformers
-                    , wai
-                    , warp
+                    , contravariant-extras >= 0.3 && < 1
+                    , selective >= 0.5 && < 1
+                    , servant >= 0.19 && < 1
+                    , servant-server >= 0.19 && < 1
+                    , servant-client >= 0.19 && < 1
+                    , servant-client-core >= 0.19 && < 1
+                    , transformers >= 0.5 && < 0.7
+                    , wai >= 3.2 && < 4
+                    , warp >= 3.3 && < 4
                     , hashable >= 1.4 && < 2
                     , unordered-containers >= 0.2 && < 1
                     , profunctors >= 5.6 && < 6
                     , random >= 1.2 && < 2
-                    , vinyl
-                    , yesod-core
+                    , vinyl >= 0.14 && < 1
+                    , yesod-core >= 1.6 && < 2
                     , free >= 5.1 && < 6
-                    , avro
+                    , avro >= 0.6 && < 1
 
     hs-source-dirs:   src
     default-language: Haskell2010
@@ -131,31 +135,31 @@ test-suite fractal-stream-test
     main-is:          Spec.hs
     other-modules:    Fractal.Schema.Compatibility.AvroSpec
                     , Fractal.Schema.ClientSpec
-    build-depends:    base >=4.17.0.0
-                    , http-client
-                    , http-client-tls
-                    , hasql
-                    , hasql-th
-                    , hasql-pool
-                    , mtl
-                    , time
-                    , vinyl
-                    , unliftio
+    build-depends:    base >= 4.17.0.0 && < 5
+                    , http-client >= 0.7 && < 1
+                    , http-client-tls >= 0.3 && < 1
+                    , hasql >= 1.6 && < 2
+                    , hasql-th >= 0.4 && < 1
+                    , hasql-pool >= 0.10 && < 1
+                    , mtl >= 2.2 && < 3
+                    , time >= 1.12 && < 2
+                    , vinyl >= 0.14 && < 1
+                    , unliftio >= 0.2 && < 1
                     , fractal-stream
                     , hspec >= 2.10 && < 3
                     , hspec-hedgehog >= 0.1.1 && < 0.2
                     , hedgehog >= 1.2 && < 1.3
                     , QuickCheck >= 2.14 && < 3
-                    , avro
-                    , text
-                    , unordered-containers
-                    , aeson
-                    , containers
+                    , avro >= 0.6 && < 1
+                    , text >= 2.0 && < 3
+                    , unordered-containers >= 0.2 && < 1
+                    , aeson >= 2.0 && < 3
+                    , containers >= 0.6 && < 1
                     , vector >= 0.13 && < 1
-                    , random
-                    , servant-client
-                    , servant-client-core
-                    , bytestring
-                    , atomic-counter
-                    , wai
-                    , warp
+                    , random >= 1.2 && < 2
+                    , servant-client >= 0.19 && < 1
+                    , servant-client-core >= 0.19 && < 1
+                    , bytestring >= 0.11 && < 1
+                    , atomic-counter >= 0.1 && < 1
+                    , wai >= 3.2 && < 4
+                    , warp >= 3.3 && < 4
