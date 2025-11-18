@@ -33,6 +33,7 @@ common extensions
 library
     import:           warnings, extensions
     exposed-modules:  Fractal.Layer
+                    , Fractal.Layer.Diagnostics
     build-depends:    base >=4.17.0.0
                     , resourcet >= 1.2 && < 2
                     , unliftio >= 0.2 && < 1
@@ -44,5 +45,9 @@ library
                     , vinyl
                     , profunctors >= 5.6 && < 6
                     , selective
+                    , aeson >= 2.0 && < 3
+                    , text >= 2.0 && < 3
+                    , time >= 1.12 && < 2
+                    , bytestring >= 0.11 && < 1
     hs-source-dirs:   src
     default-language: Haskell2010
