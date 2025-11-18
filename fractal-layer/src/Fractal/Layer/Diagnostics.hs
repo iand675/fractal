@@ -59,7 +59,7 @@ module Fractal.Layer.Diagnostics
 where
 
 import Control.Monad.IO.Class
-import Data.Aeson (ToJSON (..), object, (.=), Value)
+import Data.Aeson (ToJSON (..), FromJSON (..), object, (.=), (.:), Value, withObject, withText)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.IORef
@@ -178,6 +178,45 @@ instance ToJSON ResourceStatus where
     Initialized -> object ["status" .= ("initialized" :: Text)]
     Failed err -> object ["status" .= ("failed" :: Text), "error" .= err]
     SharedReference nodeId -> object ["status" .= ("shared" :: Text), "reference" .= nodeId]
+
+-- FromJSON instances for deserialization
+instance FromJSON LayerDiagnostics where
+  parseJSON = withObject "LayerDiagnostics" $ \v -> LayerDiagnostics
+    <$> v .: "root"
+    <*> v .: "totalDuration"
+    <*> v .: "totalResources"
+    <*> v .: "sharedResources"
+
+instance FromJSON LayerNode where
+  parseJSON = withObject "LayerNode" $ \v -> LayerNode
+    <$> v .: "id"
+    <*> v .: "name"
+    <*> v .: "type"
+    <*> pure Nothing  -- resourceType is serialized as String, skip for now
+    <*> v .: "status"
+    <*> v .: "duration"
+    <*> v .: "children"
+    <*> v .: "metadata"
+
+instance FromJSON LayerNodeType where
+  parseJSON = withText "LayerNodeType" $ \case
+    "resource" -> pure ResourceNode
+    "effect" -> pure EffectNode
+    "service" -> pure ServiceNode
+    "composed" -> pure ComposedNode
+    "parallel" -> pure ParallelNode
+    "sequential" -> pure SequentialNode
+    _ -> fail "Unknown layer node type"
+
+instance FromJSON ResourceStatus where
+  parseJSON = withObject "ResourceStatus" $ \v -> do
+    status <- v .: "status"
+    case status :: Text of
+      "initializing" -> pure Initializing
+      "initialized" -> pure Initialized
+      "failed" -> Failed <$> v .: "error"
+      "shared" -> SharedReference <$> v .: "reference"
+      _ -> fail "Unknown status"
 
 -------------------------------------------------------------------------------
 -- Diagnostics Collector (Interceptor-based)

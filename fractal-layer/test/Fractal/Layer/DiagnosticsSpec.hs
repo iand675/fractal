@@ -5,10 +5,11 @@
 
 module Fractal.Layer.DiagnosticsSpec (spec) where
 
+import Control.Applicative (liftA2)
+import Control.Category ((>>>))
 import Control.Monad (void)
 import Data.Aeson (encode, decode)
 import qualified Data.ByteString.Lazy as BSL
-import Data.IORef
 import qualified Data.Text as T
 import Fractal.Layer
 import Fractal.Layer.Diagnostics
@@ -17,6 +18,7 @@ import GHC.Generics (Generic)
 import Test.Hspec
 import UnliftIO
 import UnliftIO.Resource
+import Prelude hiding ((.), id)
 
 -- Test data types
 newtype Config = Config { configPort :: Int }

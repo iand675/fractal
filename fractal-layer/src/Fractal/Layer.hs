@@ -121,7 +121,8 @@
 -- safeSystem = dbLayer &&& webLayer  -- Both layers require Config
 -- @
 module Fractal.Layer
-  ( Layer,
+  ( Layer (..),
+    LayerEnv (..),
     build,
     runLayer,
     withLayer,
