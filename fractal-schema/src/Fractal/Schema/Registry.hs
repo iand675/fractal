@@ -286,7 +286,7 @@ app conn = genericServe $ schemaRegistryServer conn
 main :: IO ()
 main = do
   putStrLn "Starting Schema Registry on port 8081"
-  let settings = []
+  let settings = "host=localhost port=5432 dbname=schema_registry user=postgres"
   bracket (HC.acquire settings)
           (\case
             Right c -> HC.release c

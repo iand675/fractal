@@ -12,13 +12,13 @@ import Test.QuickCheck.Monadic
 import Fractal.Layer
 import Control.Category ((>>>), (<<<), id, (.))
 import Control.Arrow ((&&&), (***), arr, first, second, ArrowZero(..), ArrowPlus(..), app)
-import Control.Exception (SomeException, bracket, evaluate)
+import Control.Exception (SomeException, evaluate)
 import Control.Concurrent (threadDelay)
 import Control.Monad
 import Control.Monad.Reader
 import Control.Applicative
 import Data.Typeable
-import Data.Vinyl
+import Data.Vinyl hiding ((<+>))
 import Data.Functor.Identity
 import Data.Profunctor (first', second', left', right')
 import Data.Profunctor.Traversing (traverse')
