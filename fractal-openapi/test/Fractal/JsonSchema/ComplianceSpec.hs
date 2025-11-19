@@ -8,6 +8,7 @@ import Fractal.JsonSchema
 import Fractal.JsonSchema.Validator (validateValueWithRegistry)
 import Fractal.JsonSchema.ReferenceLoader
 import Fractal.JsonSchema.Types (buildRegistryWithExternalRefs)
+import qualified Data.Map.Strict as Map
 import Data.Aeson (Value, FromJSON(..), (.:), (.=), eitherDecodeFileStrict, object)
 import qualified Data.Aeson as Aeson
 import Data.Text (Text)
@@ -54,70 +55,68 @@ instance FromJSON TestCase where
     <*> o .: "data"
     <*> o .: "valid"
 
--- | Reference loader for test suite remote schemas
--- Maps http://localhost:1234/... to local files in test-suite/json-schema-test-suite/remotes/
+-- | Reference loader for test suite remote schemas  
+-- Uses the new registry-based approach for cleaner URI routing
 testSuiteLoader :: JsonSchemaVersion -> ReferenceLoader
-testSuiteLoader version uri
-  | T.isPrefixOf "http://localhost:1234/" uri = do
+testSuiteLoader version =
+  let registry = registerDefaultLoader (relativePath version)
+               $ registerScheme "http" (localhostLoader version)
+               $ emptyLoaderRegistry
+  in makeLoader registry
+
+-- | Loader for http://localhost:1234/... URIs (maps to local test suite files)
+localhostLoader :: JsonSchemaVersion -> ReferenceLoader
+localhostLoader version uri
+  | T.isPrefixOf "http://localhost:1234/" uri =
       let path = T.drop (T.length "http://localhost:1234/") uri
-          -- The path may already include the version directory (e.g., "draft2020-12/integer.json")
-          -- or it may be version-agnostic (e.g., "integer.json")
-          versionDir = case version of
-            Draft04 -> "draft4"
-            Draft06 -> "draft6"
-            Draft07 -> "draft7"
-            Draft201909 -> "draft2019-09"
-            Draft202012 -> "draft2020-12"
-          
-          -- If path already starts with a version directory, use it as-is
-          -- Otherwise, try both version-specific and common paths
-          commonPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack path
-          versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
-          
-          -- Check if path already includes version directory
-          pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") path) 
-            ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12"]
+      in loadFromRemotes version path
+  | otherwise =
+      metaschemaLoader uri  -- Check for metaschemas
+
+-- | Load from test-suite/json-schema-test-suite/remotes/ directory
+loadFromRemotes :: JsonSchemaVersion -> Text -> IO (Either Text Schema)
+loadFromRemotes version path = do
+  let versionDir = case version of
+        Draft04 -> "draft4"
+        Draft06 -> "draft6"
+        Draft07 -> "draft7"
+        Draft201909 -> "draft2019-09"
+        Draft202012 -> "draft2020-12"
       
-      -- If path includes version, just try common path; otherwise try version-specific first
-      if pathIncludesVersion
-        then fileLoaderWithVersion version commonPath
-        else do
-          versionResult <- fileLoaderWithVersion version versionPath
-          case versionResult of
-            Right schema -> pure $ Right schema
-            Left _ -> fileLoaderWithVersion version commonPath  -- Fall back to common
-  | normalizeMetaURI uri == Just "http://json-schema.org/draft-07/schema" =
+      -- Check if path already includes version directory
+      pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") path) 
+        ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12"]
+      
+      commonPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack path
+      versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
+  
+  -- If path includes version, just try common path; otherwise try version-specific first
+  if pathIncludesVersion
+    then fileLoaderWithVersion version commonPath
+    else do
+      versionResult <- fileLoaderWithVersion version versionPath
+      case versionResult of
+        Right schema -> pure $ Right schema
+        Left _ -> fileLoaderWithVersion version commonPath
+
+-- | Loader for relative paths (no scheme)
+relativePath :: JsonSchemaVersion -> ReferenceLoader
+relativePath version uri
+  | T.isPrefixOf "#" uri = noOpLoader uri  -- Fragment only, not a file reference
+  | otherwise = loadFromRemotes version uri
+
+-- | Loader for known metaschemas
+metaschemaLoader :: ReferenceLoader
+metaschemaLoader uri =
+  case normalizeMetaURI uri of
+    Just "http://json-schema.org/draft-07/schema" ->
       pure $ Right draft07MetaSchema
-  | normalizeMetaURI uri == Just "https://json-schema.org/draft/2020-12/schema" =
+    Just "https://json-schema.org/draft/2020-12/schema" ->
       pure $ Right draft202012MetaSchema
-  | normalizeMetaURI uri == Just "http://json-schema.org/draft/2019-09/schema" =
+    Just "http://json-schema.org/draft/2019-09/schema" ->
       pure $ Right draft201909MetaSchema
-  -- Handle relative file paths (non-URI paths used in test suite)
-  | not (T.isInfixOf "://" uri) && not (T.isPrefixOf "#" uri) = do
-      -- It's a relative file path, try loading from remotes directory
-      let versionDir = case version of
-            Draft04 -> "draft4"
-            Draft06 -> "draft6"
-            Draft07 -> "draft7"
-            Draft201909 -> "draft2019-09"
-            Draft202012 -> "draft2020-12"
-          
-          commonPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack uri
-          versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack uri
-          
-          -- Check if path already includes version directory
-          pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") uri) 
-            ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12"]
-      
-      -- If path includes version, just try common path; otherwise try version-specific first
-      if pathIncludesVersion
-        then fileLoaderWithVersion version commonPath
-        else do
-          versionResult <- fileLoaderWithVersion version versionPath
-          case versionResult of
-            Right schema -> pure $ Right schema
-            Left _ -> fileLoaderWithVersion version commonPath
-  | otherwise = noOpLoader uri
+    _ ->
+      pure $ Left $ "Unknown URI: " <> uri
   where
     normalizeMetaURI u =
       let base = T.takeWhile (/= '#') u

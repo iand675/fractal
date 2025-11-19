@@ -936,9 +936,14 @@ buildRegistryWithExternalRefs loader rootSchema = do
             Right schema -> do
               let registry' = registerSchemaInRegistry (Just uri) schema registry
                   info = schemaRegistrationInfo (Just uri) schema
+                  -- If the schema has no $id and wasn't registered with a key,
+                  -- explicitly register it with the URI we used to load it
+                  registry'' = if Map.member uri (registrySchemas registry')
+                              then registry'
+                              else registry' { registrySchemas = Map.insert uri schema (registrySchemas registry') }
                   newRefs = uniqueTexts $ collectExternalReferenceDocs (sriBaseURI info) schema
-                  unseen = [ref | ref <- newRefs, not (Set.member ref loaded), not (Map.member ref (registrySchemas registry'))]
-              loadExternal registry' (Set.insert uri loaded) (uris <> unseen)
+                  unseen = [ref | ref <- newRefs, not (Set.member ref loaded), not (Map.member ref (registrySchemas registry''))]
+              loadExternal registry'' (Set.insert uri loaded) (uris <> unseen)
 
     collectExternalReferenceDocs :: Maybe Text -> Schema -> [Text]
     collectExternalReferenceDocs parentBase schema =

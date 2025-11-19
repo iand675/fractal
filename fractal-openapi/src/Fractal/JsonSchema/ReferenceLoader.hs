@@ -14,10 +14,19 @@ module Fractal.JsonSchema.ReferenceLoader
   , cachedLoader
   , compositeLoader
   
+    -- * Scheme-based Routing
+  , LoaderRegistry
+  , emptyLoaderRegistry
+  , registerScheme
+  , registerDefaultLoader
+  , makeLoader
+  , mkSimpleLoaderRegistry
+  
     -- * Helper Functions
   , resolveRelativeURI
   , isHttpURI
   , isFileURI
+  , getUriScheme
   ) where
 
 import Fractal.JsonSchema.Types
@@ -148,6 +157,59 @@ compositeLoader loaders uri = tryLoaders loaders
         Right schema -> pure $ Right schema
         Left _ -> tryLoaders rest
 
+-- * Scheme-based Routing
+
+-- | Registry for URI scheme-based loader routing
+data LoaderRegistry = LoaderRegistry
+  { registrySchemeLoaders :: Map.Map Text ReferenceLoader
+    -- ^ Loaders registered for specific URI schemes (http, https, file, etc.)
+  , registryDefaultLoader :: ReferenceLoader
+    -- ^ Fallback loader when no scheme matches
+  }
+
+-- | Create an empty registry with a no-op default loader
+emptyLoaderRegistry :: LoaderRegistry
+emptyLoaderRegistry = LoaderRegistry
+  { registrySchemeLoaders = Map.empty
+  , registryDefaultLoader = noOpLoader
+  }
+
+-- | Register a loader for a specific URI scheme
+-- Example: @registerScheme "http" (httpLoader manager) registry@
+registerScheme :: Text -> ReferenceLoader -> LoaderRegistry -> LoaderRegistry
+registerScheme scheme loader registry =
+  registry { registrySchemeLoaders = Map.insert scheme loader (registrySchemeLoaders registry) }
+
+-- | Set the default loader (used when no scheme matches)
+registerDefaultLoader :: ReferenceLoader -> LoaderRegistry -> LoaderRegistry
+registerDefaultLoader loader registry =
+  registry { registryDefaultLoader = loader }
+
+-- | Convert a LoaderRegistry into a ReferenceLoader
+makeLoader :: LoaderRegistry -> ReferenceLoader
+makeLoader registry uri =
+  case getUriScheme uri of
+    Just scheme ->
+      case Map.lookup scheme (registrySchemeLoaders registry) of
+        Just loader -> loader uri
+        Nothing -> registryDefaultLoader registry uri
+    Nothing ->
+      -- No scheme, try default loader
+      registryDefaultLoader registry uri
+
+-- | Helper to create a simple registry with common schemes
+-- Example: @mkSimpleLoaderRegistry (httpLoader manager) fileLoader@
+mkSimpleLoaderRegistry :: ReferenceLoader -> ReferenceLoader -> LoaderRegistry
+mkSimpleLoaderRegistry httpLdr fileLdr =
+  emptyLoaderRegistry
+    { registrySchemeLoaders = Map.fromList
+        [ ("http", httpLdr)
+        , ("https", httpLdr)
+        , ("file", fileLdr)
+        ]
+    , registryDefaultLoader = fileLdr  -- Assume bare paths are files
+    }
+
 -- | Resolve a relative URI against a base URI
 resolveRelativeURI :: Text -> Text -> Either Text Text
 resolveRelativeURI base relative =
@@ -164,4 +226,15 @@ isHttpURI uri = T.isPrefixOf "http://" uri || T.isPrefixOf "https://" uri
 -- | Check if a URI is a file:// URI
 isFileURI :: Text -> Bool
 isFileURI uri = T.isPrefixOf "file://" uri
+
+-- | Extract the scheme from a URI (e.g., "http" from "http://example.com")
+getUriScheme :: Text -> Maybe Text
+getUriScheme uri =
+  case T.breakOn "://" uri of
+    (scheme, rest)
+      | not (T.null rest) && T.all isSchemeChar scheme -> Just scheme
+      | otherwise -> Nothing
+  where
+    isSchemeChar c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || 
+                     (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
 
