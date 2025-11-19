@@ -99,11 +99,11 @@ spec = do
 
     it "resource manages acquisition and release" $ do
       tracker <- newResourceTracker
-      let layer = trackedResource tracker "test-resource" "value"
+      let layer = trackedResource tracker "test-resource" ("value" :: String)
 
       -- Run the layer
       withLayer () layer $ \val -> liftIO do
-        val `shouldBe` "value"
+        val `shouldBe` ("value" :: String)
         acq <- readIORef (acquired tracker)
         acq `shouldBe` ["test-resource"]
         rel <- readIORef (released tracker)
@@ -114,9 +114,9 @@ spec = do
       rel `shouldBe` ["test-resource"]
 
     it "pureLayer creates a layer with no effects" $ do
-      let layer = pure @(Layer IO ()) "pure value"
+      let layer = pure @(Layer IO ()) ("pure value" :: String)
       result <- runLayer () layer
-      result `shouldBe` "pure value"
+      result `shouldBe` ("pure value" :: String)
 
   describe "Layer - Composition" $ do
     it "vertical composition with >>> works correctly" $ do
@@ -157,82 +157,82 @@ spec = do
 
   describe "Layer - Functor instance" $ do
     it "fmap transforms the output" $ do
-      let layer = fmap (*2) (effect $ \() -> pure 21)
+      let layer = fmap (*2) (effect $ \() -> pure (21 :: Int)) :: Layer IO () Int
       result <- runLayer () layer
-      result `shouldBe` 42
+      result `shouldBe` (42 :: Int)
 
     it "preserves resource management with fmap" $ do
       tracker <- newResourceTracker
-      let layer = fmap show (trackedResource tracker "mapped" 123)
+      let layer = fmap show (trackedResource tracker "mapped" (123 :: Int))
 
       withLayer () layer $ \val -> liftIO do
-        val `shouldBe` "123"
+        val `shouldBe` ("123" :: String)
 
       rel <- readIORef (released tracker)
       rel `shouldBe` ["mapped"]
 
   describe "Layer - Applicative instance" $ do
     it "pure creates a pure layer" $ do
-      let layer = pure @(Layer IO ()) 42
+      let layer = pure @(Layer IO ()) (42 :: Int)
       result <- runLayer () layer
-      result `shouldBe` 42
+      result `shouldBe` (42 :: Int)
 
     it "<*> combines layers applicatively" $ do
-      let funcLayer = pure @(Layer IO ()) (+10)
-      let valueLayer = pure @(Layer IO ()) 32
+      let funcLayer = pure @(Layer IO ()) ((+10) :: Int -> Int)
+      let valueLayer = pure @(Layer IO ()) (32 :: Int)
       let combined = funcLayer <*> valueLayer
       result <- runLayer () combined
-      result `shouldBe` 42
+      result `shouldBe` (42 :: Int)
 
     it "liftA2 works correctly" $ do
       tracker <- newResourceTracker
-      let layer1 = trackedResource tracker "res1" 10
-      let layer2 = trackedResource tracker "res2" 32
-      let combined = liftA2 (+) layer1 layer2
+      let layer1 = trackedResource tracker "res1" (10 :: Int)
+      let layer2 = trackedResource tracker "res2" (32 :: Int)
+      let combined = liftA2 ((+) :: Int -> Int -> Int) layer1 layer2
 
       result <- runLayer () combined
-      result `shouldBe` 42
+      result `shouldBe` (42 :: Int)
 
   describe "Layer - Monad instance" $ do
     it ">>= sequences operations correctly" $ do
       tracker <- newResourceTracker
       let layer = do
-            x <- trackedResource tracker "first" 10
-            y <- trackedResource tracker "second" (x + 5)
-            pure (x * y)
+            x <- trackedResource tracker "first" (10 :: Int)
+            y <- trackedResource tracker "second" (x + 5 :: Int)
+            pure (x * y :: Int)
 
       result <- runLayer () layer
-      result `shouldBe` 150
+      result `shouldBe` (150 :: Int)
 
       -- Check acquisition order
       acq <- readIORef (acquired tracker)
       reverse acq `shouldBe` ["first", "second"]
 
     it ">> discards first result" $ do
-      let layer = effect (\_ -> putStrLn "side effect") >> pure 42
+      let layer = effect (\_ -> putStrLn "side effect") >> pure (42 :: Int) :: Layer IO () Int
       result <- runLayer () layer
-      result `shouldBe` 42
+      result `shouldBe` (42 :: Int)
 
   describe "Layer - Arrow instance" $ do
     it "arr lifts pure functions" $ do
-      let layer = arr @(Layer IO) (*2)
-      result <- runLayer 21 layer
-      result `shouldBe` 42
+      let layer = arr @(Layer IO) ((*2) :: Int -> Int)
+      result <- runLayer (21 :: Int) layer
+      result `shouldBe` (42 :: Int)
 
     it "first applies to first component" $ do
-      let layer = first @(Layer IO) (arr @(Layer IO) @Int @Int (*2))
-      result <- runLayer (21, "test") layer
-      result `shouldBe` (42, "test")
+      let layer = first @(Layer IO) (arr @(Layer IO) @Int @Int ((*2) :: Int -> Int))
+      result <- runLayer ((21 :: Int), ("test" :: String)) layer
+      result `shouldBe` ((42 :: Int), ("test" :: String))
 
     it "second applies to second component" $ do
-      let layer = second @(Layer IO) (arr @(Layer IO) @Int @Int (*2))
-      result <- runLayer ("test", 21) layer
-      result `shouldBe` ("test", 42)
+      let layer = second @(Layer IO) (arr @(Layer IO) @Int @Int ((*2) :: Int -> Int))
+      result <- runLayer (("test" :: String), (21 :: Int)) layer
+      result `shouldBe` (("test" :: String), (42 :: Int))
 
     it "*** combines two arrows" $ do
-      let layer = arr (*2) *** arr (++ "!")
-      result <- runLayer (21, "test") layer
-      result `shouldBe` (42, "test!")
+      let layer = arr ((*2) :: Int -> Int) *** arr ((++ "!") :: String -> String)
+      result <- runLayer ((21 :: Int), ("test" :: String)) layer
+      result `shouldBe` ((42 :: Int), ("test!" :: String))
 
   describe "Layer - Alternative instance" $ do
     it "empty throws EmptyLayer exception" $ do
@@ -241,20 +241,20 @@ spec = do
 
     it "<|> provides fallback behavior" $ do
       let primary = empty :: Layer IO () String
-      let fallback = pure "fallback"
+      let fallback = pure ("fallback" :: String) :: Layer IO () String
       let combined = primary <|> fallback
 
       result <- runLayer () combined
-      result `shouldBe` "fallback"
+      result `shouldBe` ("fallback" :: String)
 
     it "<|> cleans up failed branch resources" $ do
       tracker <- newResourceTracker
-      let failing = trackedResource tracker "failing" () >> empty
-      let success = trackedResource tracker "success" "ok"
+      let failing = trackedResource tracker "failing" () >> empty :: Layer IO () String
+      let success = trackedResource tracker "success" ("ok" :: String)
       let combined = failing <|> success
 
       result <- runLayer () combined
-      result `shouldBe` "ok"
+      result `shouldBe` ("ok" :: String)
 
       -- Check that failing resource was cleaned up
       acq <- readIORef (acquired tracker)
@@ -301,7 +301,7 @@ spec = do
       tracker <- newResourceTracker
       let layer = do
             _ <- trackedResource tracker "resource" ()
-            effect $ \_ -> throwIO $ userError "boom"
+            effect $ \(_ :: ()) -> throwIO $ userError "boom" :: IO ()
 
       withLayer () layer (\_ -> pure ()) `shouldThrow` anyException
 
@@ -372,7 +372,7 @@ spec = do
     it "zipLayer handles concurrent failures correctly" $ do
       tracker <- newResourceTracker
       let layer1 = trackedResource tracker "res1" () >> delayedFailingLayer 50
-      let layer2 = trackedResource tracker "res2" "value"
+      let layer2 = trackedResource tracker "res2" ("value" :: String)
       let combined = zipLayer layer1 layer2
 
       runLayer ((), ()) combined `shouldThrow` anyException
@@ -438,7 +438,7 @@ spec = do
 
       -- Service should behave like a normal layer
       withLayer () (service svc) $ \val -> liftIO do
-        val `shouldBe` "service-value"
+        val `shouldBe` ("service-value" :: String)
 
       rel <- readIORef (released tracker)
       rel `shouldBe` ["test-service"]
@@ -455,7 +455,7 @@ spec = do
 
       -- First access should initialize
       result <- runLayer () (service svc)
-      result `shouldBe` "expensive result"
+      result `shouldBe` ("expensive result" :: String)
       count <- readIORef initCount
       count `shouldBe` 1
 
@@ -466,8 +466,8 @@ spec = do
       let expensiveLayer = resource
             (\_ -> do
               n <- atomicModifyIORef' initCount $ \n -> (n + 1, n + 1)
-              trackAcquire tracker ("init-" ++ show n)
-              pure $ ("result-" ++ show n :: String))
+              trackAcquire tracker (("init-" ++ show n) :: String)
+              pure $ (("result-" ++ show n) :: String))
             (\res -> trackRelease tracker res)
 
       let svc = mkService expensiveLayer
@@ -480,9 +480,9 @@ spec = do
             pure (r1, r2, r3)
 
       (res1, res2, res3) <- runLayer () multiAccessLayer
-      res1 `shouldBe` "result-1"
-      res2 `shouldBe` "result-1"  -- Same instance
-      res3 `shouldBe` "result-1"  -- Same instance
+      res1 `shouldBe` ("result-1" :: String)
+      res2 `shouldBe` ("result-1" :: String)  -- Same instance
+      res3 `shouldBe` ("result-1" :: String)  -- Same instance
 
       count <- readIORef initCount
       count `shouldBe` 1  -- Only initialized once
@@ -496,7 +496,7 @@ spec = do
               -- Wait for all threads to be ready
               threadDelay 50000  -- 50ms initialization
               n <- atomicModifyIORef' initCount $ \n -> (n + 1, n + 1)
-              pure $ ("concurrent-result-" ++ show n :: String))
+              pure $ (("concurrent-result-" ++ show n) :: String))
             (\_ -> pure ())
 
       let svc = mkService slowLayer
@@ -508,10 +508,10 @@ spec = do
       (r1, r2, r3, r4) <- runLayer () concurrentLayer
 
       -- All should get the same result
-      r1 `shouldBe` "concurrent-result-1"
-      r2 `shouldBe` "concurrent-result-1"
-      r3 `shouldBe` "concurrent-result-1"
-      r4 `shouldBe` "concurrent-result-1"
+      r1 `shouldBe` ("concurrent-result-1" :: String)
+      r2 `shouldBe` ("concurrent-result-1" :: String)
+      r3 `shouldBe` ("concurrent-result-1" :: String)
+      r4 `shouldBe` ("concurrent-result-1" :: String)
 
       count <- readIORef initCount
       count `shouldBe` 1  -- Only one initialization despite concurrent access
@@ -542,19 +542,19 @@ spec = do
       -- Layer that uses the service
       let consumerLayer1 = do
             shared <- service sharedService
-            trackedResource tracker ("consumer1-" ++ show shared) ("c1-" ++ show shared)
+            trackedResource tracker (("consumer1-" ++ show shared) :: String) (("c1-" ++ show shared) :: String)
 
       -- Another layer that uses the same service
       let consumerLayer2 = do
             shared <- service sharedService
-            trackedResource tracker ("consumer2-" ++ show shared) ("c2-" ++ show shared)
+            trackedResource tracker (("consumer2-" ++ show shared) :: String) (("c2-" ++ show shared) :: String)
 
       -- Compose them together
       let composedLayer = liftA2 (,) consumerLayer1 consumerLayer2
 
       (r1, r2) <- runLayer () composedLayer
-      r1 `shouldBe` "c1-42"
-      r2 `shouldBe` "c2-42"
+      r1 `shouldBe` ("c1-42" :: String)
+      r2 `shouldBe` ("c2-42" :: String)
 
       -- Check that shared service was only initialized once
       acq <- readIORef (acquired tracker)
@@ -567,7 +567,7 @@ spec = do
 
       -- Use service within a layer
       withLayer () (service svc) $ \val -> liftIO do
-        val `shouldBe` "value"
+        val `shouldBe` ("value" :: String)
         -- Service should be acquired
         acq <- readIORef (acquired tracker)
         "service" `elem` acq `shouldBe` True
@@ -585,19 +585,19 @@ spec = do
       let makeService name = mkService $ resource
             (\_ -> do
               n <- atomicModifyIORef' initCounter $ \n -> (n + 1, n)
-              pure $ (name ++ "-" ++ show n :: String))
+              pure $ ((name ++ "-" ++ show n) :: String))
             (\_ -> pure ())
 
-      let service1 = makeService "service1"
-      let service2 = makeService "service2"
+      let service1 = makeService ("service1" :: String)
+      let service2 = makeService ("service2" :: String)
 
       -- Use services in separate scopes
       result1 <- runLayer () (service service1)
       result2 <- runLayer () (service service2)
 
       -- Each scope gets its own cache
-      result1 `shouldBe` "service1-0"
-      result2 `shouldBe` "service2-1"
+      result1 `shouldBe` ("service1-0" :: String)
+      result2 `shouldBe` ("service2-1" :: String)
 
     it "service with monadic bind maintains caching" $ do
       initCount <- newIORef (0 :: Int)
@@ -615,10 +615,10 @@ spec = do
             z <- effect $ \_ -> do
               -- Even in nested effect
               runLayer () (service expensiveService)
-            pure (x + y + z)
+            pure ((x + y + z) :: Int)
 
       result <- runLayer () layer
-      result `shouldBe` 300
+      result `shouldBe` (300 :: Int)
 
       -- Should still only initialize once within the same layer scope
       count <- readIORef initCount
@@ -631,8 +631,8 @@ spec = do
       let badService :: Service IO () Int = mkService do
             () <- resource
               (\_ -> do
-                trackAcquire tracker "bad")
-              (\_ -> trackRelease tracker "bad")
+                trackAcquire tracker ("bad" :: String))
+              (\_ -> trackRelease tracker ("bad" :: String))
 
             effect $ \_ -> throwIO $ userError "Bad service"
 
@@ -655,14 +655,14 @@ spec = do
       released <- newIORef False
 
       let scopedBracket = \() use -> bracket
-            (writeIORef acquired True >> pure "resource")
+            (writeIORef acquired True >> pure ("resource" :: String))
             (\_ -> writeIORef released True)
             use
 
       let layer = bracketed scopedBracket
 
       withLayer () layer $ \res -> liftIO $ do
-        res `shouldBe` "resource"
+        res `shouldBe` ("resource" :: String)
         readIORef acquired >>= (`shouldBe` True)
         readIORef released >>= (`shouldBe` False)  -- Not yet released
 
@@ -694,7 +694,7 @@ spec = do
       released <- newIORef False
 
       let scopedBracket = \() use -> bracket
-            (writeIORef acquired True >> pure "resource")
+            (writeIORef acquired True >> pure ("resource" :: String))
             (\_ -> writeIORef released True)
             use
 
@@ -723,8 +723,11 @@ spec = do
       a `shouldNotBe` b
 
       -- Both should be released (counter doubled twice)
+      -- After acquiring both: counter = 2
+      -- After first release: counter = 2 * 2 = 4
+      -- After second release: counter = 4 * 2 = 8
       final <- readIORef counter
-      final `shouldBe` ((a + b) * 2)
+      final `shouldBe` 8
 
     it "resource survives beyond immediate scope" $ do
       resultRef <- newIORef ("" :: String)
@@ -736,23 +739,23 @@ spec = do
 
       let layer = bracketed scopedBracket
 
-      result <- runLayer "test-value" layer
-      result `shouldBe` "test-value"
+      result <- runLayer ("test-value" :: String) layer
+      result `shouldBe` ("test-value" :: String)
 
       -- Cleanup should have recorded the value
-      readIORef resultRef >>= (`shouldBe` "test-value")
+      readIORef resultRef >>= (`shouldBe` ("test-value" :: String))
 
     it "handles nested bracketed resources" $ do
       tracker <- newResourceTracker
 
       let bracket1 = \() use -> bracket
-            (trackAcquire tracker "outer" >> pure "outer")
-            (\_ -> trackRelease tracker "outer")
+            (trackAcquire tracker ("outer" :: String) >> pure ("outer" :: String))
+            (\_ -> trackRelease tracker ("outer" :: String))
             use
 
       let bracket2 = \() use -> bracket
-            (trackAcquire tracker "inner" >> pure "inner")
-            (\_ -> trackRelease tracker "inner")
+            (trackAcquire tracker ("inner" :: String) >> pure ("inner" :: String))
+            (\_ -> trackRelease tracker ("inner" :: String))
             use
 
       let layer = do
@@ -761,8 +764,8 @@ spec = do
             pure (outer, inner)
 
       (o, i) <- runLayer () layer
-      o `shouldBe` "outer"
-      i `shouldBe` "inner"
+      o `shouldBe` ("outer" :: String)
+      i `shouldBe` ("inner" :: String)
 
       -- Both should be acquired
       acq <- readIORef (acquired tracker)
@@ -775,28 +778,28 @@ spec = do
   describe "Layer - ArrowZero and ArrowPlus instances" $ do
     it "zeroArrow throws EmptyLayer exception" $ do
       let layer = zeroArrow :: Layer IO Int String
-      runLayer 42 layer `shouldThrow` anyException
+      runLayer (42 :: Int) layer `shouldThrow` anyException
 
     it "<+> provides fallback with zeroArrow" $ do
       tracker <- newResourceTracker
       let failing = zeroArrow :: Layer IO () String
-      let success = trackedResource tracker "success" "fallback-value"
+      let success = trackedResource tracker "success" ("fallback-value" :: String)
       let combined = failing <+> success
 
       result <- runLayer () combined
-      result `shouldBe` "fallback-value"
+      result `shouldBe` ("fallback-value" :: String)
 
       acq <- readIORef (acquired tracker)
       acq `shouldBe` ["success"]
 
     it "<+> tries first arrow before fallback" $ do
       tracker <- newResourceTracker
-      let primary = trackedResource tracker "primary" "primary-value"
-      let fallback = trackedResource tracker "fallback" "fallback-value"
+      let primary = trackedResource tracker "primary" ("primary-value" :: String)
+      let fallback = trackedResource tracker "fallback" ("fallback-value" :: String)
       let combined = primary <+> fallback
 
       result <- runLayer () combined
-      result `shouldBe` "primary-value"
+      result `shouldBe` ("primary-value" :: String)
 
       acq <- readIORef (acquired tracker)
       "primary" `elem` acq `shouldBe` True
@@ -804,12 +807,12 @@ spec = do
 
     it "<+> cleans up failed branch" $ do
       tracker <- newResourceTracker
-      let failing = trackedResource tracker "failing" () >> zeroArrow
-      let success = trackedResource tracker "success" "ok"
+      let failing = trackedResource tracker "failing" () >> zeroArrow :: Layer IO () String
+      let success = trackedResource tracker "success" ("ok" :: String)
       let combined = failing <+> success
 
       result <- runLayer () combined
-      result `shouldBe` "ok"
+      result `shouldBe` ("ok" :: String)
 
       acq <- readIORef (acquired tracker)
       rel <- readIORef (released tracker)
@@ -819,35 +822,35 @@ spec = do
     it "<+> chains multiple alternatives" $ do
       let opt1 = zeroArrow :: Layer IO () String
       let opt2 = zeroArrow :: Layer IO () String
-      let opt3 = pure "third-time-lucky"
+      let opt3 = pure ("third-time-lucky" :: String) :: Layer IO () String
       let combined = opt1 <+> opt2 <+> opt3
 
       result <- runLayer () combined
-      result `shouldBe` "third-time-lucky"
+      result `shouldBe` ("third-time-lucky" :: String)
 
   describe "Layer - ArrowApply instance" $ do
     it "app applies layer to input" $ do
-      let makeLayer n = arr (*n) :: Layer IO Int Int
+      let makeLayer n = arr ((*n) :: Int -> Int) :: Layer IO Int Int
       let dynamicLayer = app :: Layer IO (Layer IO Int Int, Int) Int
 
-      result <- runLayer (makeLayer 5, 7) dynamicLayer
-      result `shouldBe` 35
+      result <- runLayer (makeLayer (5 :: Int), (7 :: Int)) dynamicLayer
+      result `shouldBe` (35 :: Int)
 
     it "app works with resource-based layers" $ do
       tracker <- newResourceTracker
-      let layer = trackedResource tracker "dynamic" 100
+      let layer = trackedResource tracker "dynamic" (100 :: Int)
       let dynamicApply = app :: Layer IO (Layer IO () Int, ()) Int
 
       result <- runLayer (layer, ()) dynamicApply
-      result `shouldBe` 100
+      result `shouldBe` (100 :: Int)
 
       acq <- readIORef (acquired tracker)
       acq `shouldBe` ["dynamic"]
 
     it "app enables dynamic layer selection" $ do
       tracker <- newResourceTracker
-      let layer1 = trackedResource tracker "layer1" "option-a"
-      let layer2 = trackedResource tracker "layer2" "option-b"
+      let layer1 = trackedResource tracker "layer1" ("option-a" :: String)
+      let layer2 = trackedResource tracker "layer2" ("option-b" :: String)
 
       let selectLayer :: Bool -> Layer IO () String
           selectLayer True = layer1
@@ -855,15 +858,15 @@ spec = do
 
       -- Test with True
       result1 <- runLayer (selectLayer True, ()) app
-      result1 `shouldBe` "option-a"
+      result1 `shouldBe` ("option-a" :: String)
 
       -- Test with False
       result2 <- runLayer (selectLayer False, ()) app
-      result2 `shouldBe` "option-b"
+      result2 `shouldBe` ("option-b" :: String)
 
     it "app with complex arrow composition" $ do
-      let doubler = arr (*2) :: Layer IO Int Int
-      let adder = arr (+10) :: Layer IO Int Int
+      let doubler = arr ((*2) :: Int -> Int) :: Layer IO Int Int
+      let adder = arr ((+10) :: Int -> Int) :: Layer IO Int Int
 
       -- Create a layer that chooses which operation to apply
       let picker = arr (\(choice, val) ->
@@ -871,35 +874,35 @@ spec = do
 
       let pipeline = picker >>> app
 
-      result1 <- runLayer (True, 5) pipeline
-      result1 `shouldBe` 10  -- 5 * 2
+      result1 <- runLayer ((True, 5 :: Int) :: (Bool, Int)) pipeline
+      result1 `shouldBe` (10 :: Int)  -- 5 * 2
 
-      result2 <- runLayer (False, 5) pipeline
-      result2 `shouldBe` 15  -- 5 + 10
+      result2 <- runLayer ((False, 5 :: Int) :: (Bool, Int)) pipeline
+      result2 `shouldBe` (15 :: Int)  -- 5 + 10
 
   describe "Layer - Strong (Profunctor) instance" $ do
     it "first' processes first element of tuple" $ do
-      let layer = effect $ \n -> pure (n * 2)
+      let layer = effect $ \n -> pure ((n * 2) :: Int)
       let firstLayer = first' layer :: Layer IO (Int, String) (Int, String)
 
-      result <- runLayer (5, "test") firstLayer
-      result `shouldBe` (10, "test")
+      result <- runLayer ((5 :: Int), ("test" :: String)) firstLayer
+      result `shouldBe` ((10 :: Int), ("test" :: String))
 
     it "second' processes second element of tuple" $ do
-      let layer = effect $ \s -> pure (s ++ "!")
+      let layer = effect $ \s -> pure ((s ++ "!") :: String)
       let secondLayer = second' layer :: Layer IO (Int, String) (Int, String)
 
-      result <- runLayer (42, "hello") secondLayer
-      result `shouldBe` (42, "hello!")
+      result <- runLayer ((42 :: Int), ("hello" :: String)) secondLayer
+      result `shouldBe` ((42 :: Int), ("hello!" :: String))
 
     it "first' with resource management" $ do
       tracker <- newResourceTracker
-      let layer = trackedResource tracker "first-resource" 100
+      let layer = trackedResource tracker "first-resource" (100 :: Int)
       let firstLayer = first' layer
 
-      withLayer ((), "data") firstLayer $ \(val, str) -> liftIO $ do
-        val `shouldBe` 100
-        str `shouldBe` "data"
+      withLayer ((), ("data" :: String)) firstLayer $ \(val, str) -> liftIO $ do
+        val `shouldBe` (100 :: Int)
+        str `shouldBe` ("data" :: String)
         acq <- readIORef (acquired tracker)
         acq `shouldBe` ["first-resource"]
 
@@ -908,12 +911,12 @@ spec = do
 
     it "second' with resource management" $ do
       tracker <- newResourceTracker
-      let layer = trackedResource tracker "second-resource" "result"
+      let layer = trackedResource tracker "second-resource" ("result" :: String)
       let secondLayer = second' layer
 
-      withLayer ("data", ()) secondLayer $ \(str, val) -> liftIO $ do
-        str `shouldBe` "data"
-        val `shouldBe` "result"
+      withLayer (("data" :: String), ()) secondLayer $ \(str, val) -> liftIO $ do
+        str `shouldBe` ("data" :: String)
+        val `shouldBe` ("result" :: String)
 
       rel <- readIORef (released tracker)
       rel `shouldBe` ["second-resource"]
@@ -930,31 +933,31 @@ spec = do
       let layer = effect (\n -> pure (n * 2) :: IO Int) :: Layer IO Int Int
       let leftLayer = left' layer :: Layer IO (Either Int String) (Either Int String)
 
-      result <- runLayer (Right "test") leftLayer
-      result `shouldBe` Right "test"
+      result <- runLayer (Right ("test" :: String) :: Either Int String) leftLayer
+      result `shouldBe` (Right ("test" :: String) :: Either Int String)
 
     it "right' processes Right values" $ do
       let layer = effect (\s -> pure (s ++ "!") :: IO String) :: Layer IO String String
       let rightLayer = right' layer :: Layer IO (Either Int String) (Either Int String)
 
-      result <- runLayer (Right "hello") rightLayer
-      result `shouldBe` Right "hello!"
+      result <- runLayer (Right ("hello" :: String) :: Either Int String) rightLayer
+      result `shouldBe` (Right ("hello!" :: String) :: Either Int String)
 
     it "right' passes through Left values" $ do
       let layer = effect (\s -> pure (s ++ "!") :: IO String) :: Layer IO String String
       let rightLayer = right' layer :: Layer IO (Either Int String) (Either Int String)
 
-      result <- runLayer (Left 42) rightLayer
-      result `shouldBe` Left 42
+      result <- runLayer (Left (42 :: Int) :: Either Int String) rightLayer
+      result `shouldBe` (Left (42 :: Int) :: Either Int String)
 
     it "left' with resource management only for Left" $ do
       tracker <- newResourceTracker
-      let layer = trackedResource tracker "left-resource" 100
+      let layer = trackedResource tracker "left-resource" (100 :: Int)
       let leftLayer = left' layer
 
       -- Test with Left - should acquire resource
-      result1 <- runLayer (Left ()) leftLayer
-      result1 `shouldBe` Left 100
+      result1 <- runLayer (Left () :: Either () String) leftLayer
+      result1 `shouldBe` (Left (100 :: Int) :: Either Int String)
       acq1 <- readIORef (acquired tracker)
       acq1 `shouldBe` ["left-resource"]
 
@@ -963,8 +966,8 @@ spec = do
       writeIORef (released tracker) []
 
       -- Test with Right - should NOT acquire resource
-      result2 <- runLayer (Right "skip") leftLayer
-      result2 `shouldBe` Right "skip"
+      result2 <- runLayer (Right ("skip" :: String) :: Either () String) leftLayer
+      result2 `shouldBe` (Right ("skip" :: String) :: Either Int String)
       acq2 <- readIORef (acquired tracker)
       acq2 `shouldBe` []  -- No resource acquired
 
@@ -1000,14 +1003,14 @@ spec = do
       let layer = resource
             (\n -> do
               i <- atomicModifyIORef' counter $ \c -> (c+1, c)
-              trackAcquire tracker ("resource-" ++ show i)
-              pure (n * 2))
+              trackAcquire tracker (("resource-" ++ show i) :: String)
+              pure ((n * 2) :: Int))
             (\_ -> pure ())
 
       let travLayer = traverse' layer :: Layer IO [Int] [Int]
 
-      result <- runLayer [1, 2, 3] travLayer
-      result `shouldBe` [2, 4, 6]
+      result <- runLayer ([1, 2, 3] :: [Int]) travLayer
+      result `shouldBe` ([2, 4, 6] :: [Int])
 
       -- Should acquire multiple resources (one per list element)
       acq <- readIORef (acquired tracker)
@@ -1017,17 +1020,17 @@ spec = do
       let layer = effect (\s -> pure (length s) :: IO Int) :: Layer IO String Int
       let travLayer = traverse' layer :: Layer IO [String] [Int]
 
-      result <- runLayer ["a", "bb", "ccc"] travLayer
-      result `shouldBe` [1, 2, 3]
+      result <- runLayer (["a", "bb", "ccc"] :: [String]) travLayer
+      result `shouldBe` ([1, 2, 3] :: [Int])
 
   describe "Layer - Semigroup instance" $ do
     it "combines layers with <>" $ do
-      let layer1 = pure [1, 2, 3] :: Layer IO () [Int]
-      let layer2 = pure [4, 5, 6] :: Layer IO () [Int]
+      let layer1 = pure ([1, 2, 3] :: [Int]) :: Layer IO () [Int]
+      let layer2 = pure ([4, 5, 6] :: [Int]) :: Layer IO () [Int]
       let combined = layer1 <> layer2
 
       result <- runLayer () combined
-      result `shouldBe` [1, 2, 3, 4, 5, 6]
+      result `shouldBe` ([1, 2, 3, 4, 5, 6] :: [Int])
 
     it "respects semigroup associativity" $ property $ \(a :: Int) (b :: Int) (c :: Int) ->
       monadicIO $ do
@@ -1041,12 +1044,12 @@ spec = do
 
     it "combines with resource management" $ do
       tracker <- newResourceTracker
-      let layer1 = trackedResource tracker "res1" "hello"
-      let layer2 = trackedResource tracker "res2" " world"
-      let combined = liftA2 (<>) layer1 layer2
+      let layer1 = trackedResource tracker "res1" ("hello" :: String)
+      let layer2 = trackedResource tracker "res2" (" world" :: String)
+      let combined = liftA2 ((<>) :: String -> String -> String) layer1 layer2
 
       result <- runLayer () combined
-      result `shouldBe` "hello world"
+      result `shouldBe` ("hello world" :: String)
 
       acq <- readIORef (acquired tracker)
       length acq `shouldBe` 2
@@ -1094,14 +1097,14 @@ spec = do
   describe "Layer - Complex Alternative/MonadPlus chains" $ do
     it "deeply nested <|> chains work correctly" $ do
       tracker <- newResourceTracker
-      let opt1 = trackedResource tracker "opt1" () >> empty
-      let opt2 = trackedResource tracker "opt2" () >> empty
-      let opt3 = trackedResource tracker "opt3" () >> empty
+      let opt1 = trackedResource tracker "opt1" () >> empty :: Layer IO () String
+      let opt2 = trackedResource tracker "opt2" () >> empty :: Layer IO () String
+      let opt3 = trackedResource tracker "opt3" () >> empty :: Layer IO () String
       let opt4 = trackedResource tracker "opt4" ("success" :: String)
       let combined = opt1 <|> opt2 <|> opt3 <|> opt4
 
       result <- runLayer () combined
-      result `shouldBe` "success"
+      result `shouldBe` ("success" :: String)
 
       -- All failed options should be cleaned up
       rel <- readIORef (released tracker)
@@ -1113,11 +1116,11 @@ spec = do
 
     it "mplus behaves like <|>" $ do
       let failing = mzero :: Layer IO () String
-      let success = pure "fallback"
+      let success = pure ("fallback" :: String) :: Layer IO () String
       let combined = mplus failing success
 
       result <- runLayer () combined
-      result `shouldBe` "fallback"
+      result `shouldBe` ("fallback" :: String)
 
     it "Alternative with resource dependencies" $ do
       tracker <- newResourceTracker
@@ -1126,11 +1129,11 @@ spec = do
             empty :: Layer IO () String
       let fallback = do
             _ <- trackedResource tracker "fallback-dep" ()
-            pure "fallback-result"
+            pure ("fallback-result" :: String)
       let combined = primary <|> fallback
 
       result <- runLayer () combined
-      result `shouldBe` "fallback-result"
+      result `shouldBe` ("fallback-result" :: String)
 
       -- Primary dependency should be cleaned up before fallback runs
       acq <- readIORef (acquired tracker)
@@ -1198,17 +1201,17 @@ spec = do
       tracker <- newResourceTracker
       let layer1 = resource
             (\_ -> do
-              trackAcquire tracker "res1"
+              trackAcquire tracker ("res1" :: String)
               pure ("res1" :: String))
             (\_ -> do
-              trackRelease tracker "res1"
+              trackRelease tracker ("res1" :: String)
               throwIO $ userError "cleanup1 failed") :: Layer IO () String
 
       let layer2 = resource
             (\_ -> do
-              trackAcquire tracker "res2"
+              trackAcquire tracker ("res2" :: String)
               pure ("res2" :: String))
-            (\_ -> trackRelease tracker "res2") :: Layer IO () String
+            (\_ -> trackRelease tracker ("res2" :: String)) :: Layer IO () String
 
       let combined = liftA2 (,) layer1 layer2
 
@@ -1234,10 +1237,10 @@ spec = do
       tracker <- newResourceTracker
       let layer1 = do
             _ <- trackedResource tracker "res1" ()
-            (effect (\_ -> threadDelay 10000 >> throwIO (userError "error1")) :: Layer IO () String)
+            effect (\_ -> threadDelay 10000 >> throwIO (userError "error1")) :: Layer IO () String
       let layer2 = do
             _ <- trackedResource tracker "res2" ()
-            (effect (\_ -> threadDelay 10000 >> throwIO (userError "error2")) :: Layer IO () String)
+            effect (\_ -> threadDelay 10000 >> throwIO (userError "error2")) :: Layer IO () String
 
       let combined = zipLayer layer1 layer2
 
@@ -1254,7 +1257,7 @@ spec = do
     it "exception in one zipLayer branch cleans up both" $ do
       tracker <- newResourceTracker
       let successLayer = trackedResource tracker "success" ("ok" :: String)
-      let failingLayer = trackedResource tracker "failing" () >> (effect (\_ -> throwIO $ userError "boom") :: Layer IO () String)
+      let failingLayer = trackedResource tracker "failing" () >> effect (\_ -> throwIO $ userError "boom") :: Layer IO () String
 
       let combined = zipLayer successLayer failingLayer
 
