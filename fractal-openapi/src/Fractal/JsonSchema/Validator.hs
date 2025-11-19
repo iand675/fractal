@@ -46,6 +46,8 @@ import qualified Data.UUID as UUID
 import qualified Data.Time.Format.ISO8601 as Time
 import qualified Data.Time.Clock as Time
 import qualified Data.Time.Calendar as Time
+import qualified Text.Read as Read
+import qualified Data.Time.RFC3339 as RFC3339
 import qualified Text.Email.Validate as Email
 import qualified Network.URI as URI
 import qualified Data.IP as IP
@@ -1405,14 +1407,58 @@ isValidUUID text = case UUID.fromText text of
   Just _ -> True
   Nothing -> False
 
--- RFC3339 date-time validator (strict, no leap seconds allowed)
+-- RFC3339 date-time validator
+-- Validates according to RFC3339 as required by JSON Schema
+-- Uses the timerep library for strict RFC3339 parsing with additional checks
 isValidDateTime :: Text -> Bool
-isValidDateTime text = 
-  case Time.iso8601ParseM (T.unpack text) :: Maybe Time.UTCTime of
-    Just _ -> 
-      -- Additional check: reject leap seconds (60)
-      not (T.isInfixOf ":60" text)
+isValidDateTime text =
+  -- First check with RFC3339 parser
+  case RFC3339.parseTimeRFC3339 (T.unpack text) of
     Nothing -> False
+    Just _ ->
+      -- Additional validation for edge cases not caught by timerep:
+      -- 1. Leap seconds must be at XX:59:60 (not other minutes like :58:60)
+      -- 2. Leap seconds in UTC must be at 23:59:60
+      -- 3. Timezone offsets must be -23:59 to +23:59 (not -24:00 or +24:00)
+      let normalized = T.map (\c -> if c == 't' then 'T' else if c == 'z' then 'Z' else c) text
+          hasLeapSecond = T.isInfixOf ":60" normalized || T.isInfixOf ":60." normalized
+      in if hasLeapSecond
+        then
+          -- Check that leap second is at :59:60
+          let hasValidMinute = T.isInfixOf ":59:60" normalized
+              parts = T.splitOn "T" normalized
+          in if length parts /= 2 || not hasValidMinute
+            then False
+            else
+              let timePart = parts !! 1
+                  isUTC = T.isSuffixOf "Z" timePart
+                  timeStr = if isUTC
+                           then T.dropEnd 1 timePart
+                           else case T.breakOnEnd "+" timePart of
+                                  (before, after) | not (T.null after) ->
+                                    T.dropEnd (T.length after + 1) before
+                                  _ -> case T.breakOnEnd "-" timePart of
+                                         (before, after) | T.length after == 5 && T.elem ':' after ->
+                                           T.dropEnd 6 before
+                                         _ -> timePart
+                  hour = case T.splitOn ":" timeStr of
+                           (h:_) -> Read.readMaybe (T.unpack h) :: Maybe Int
+                           _ -> Nothing
+              in case (isUTC, hour) of
+                   (True, Just h) -> h == 23  -- UTC leap seconds must be at 23:59:60
+                   (False, _) -> True         -- Non-UTC can be at any XX:59:60
+                   _ -> False
+        else
+          -- Check for invalid timezone offsets (hour must be < 24)
+          let hasOffset = T.isInfixOf "+" normalized || (T.count "-" normalized > 2)
+          in if hasOffset && not (T.isSuffixOf "Z" normalized)
+            then
+              let offsetStr = T.takeEnd 6 normalized  -- e.g., "+24:00" or "-24:00"
+                  offsetHour = Read.readMaybe (T.unpack $ T.take 2 $ T.drop 1 offsetStr) :: Maybe Int
+              in case offsetHour of
+                   Just h -> h < 24
+                   Nothing -> True  -- Couldn't parse, let RFC3339 parser decision stand
+            else True
 
 -- RFC3339 date validator
 isValidDate :: Text -> Bool

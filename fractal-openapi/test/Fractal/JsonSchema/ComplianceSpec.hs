@@ -169,12 +169,12 @@ draft202012MetaSchema =
         ]
 
 -- | Run a single test case
-runTestCase :: JsonSchemaVersion -> TestGroup -> TestCase -> Expectation
-runTestCase version group testCase = do
+runTestCase :: JsonSchemaVersion -> FilePath -> TestGroup -> TestCase -> Expectation
+runTestCase version filePath group testCase = do
   -- Parse the schema
   case parseSchemaWithVersion version (groupSchema group) of
-    Left parseErr -> expectationFailure $ 
-      "Schema parse failed: " <> T.unpack (groupDescription group) 
+    Left parseErr -> expectationFailure $
+      "Schema parse failed: " <> T.unpack (groupDescription group)
       <> " - " <> show parseErr
     Right schema -> do
       -- Validate the test data (without external refs for now)
@@ -189,7 +189,12 @@ runTestCase version group testCase = do
               , "Error: " <> err
               ]
         Right registry -> do
-          let config = defaultValidationConfig { validationVersion = version }
+          -- Enable format assertion for optional/format tests
+          let isFormatTest = "optional/format" `T.isInfixOf` T.pack filePath
+              config = defaultValidationConfig
+                { validationVersion = version
+                , validationFormatAssertion = isFormatTest
+                }
               result = validateValueWithRegistry config registry schema (testData testCase)
               actualValid = isSuccess result
               expectedValid = testValid testCase
@@ -216,7 +221,7 @@ runTestFile version filePath = describe fileLabel $ do
         describe (T.unpack $ groupDescription group) $
           forM_ (groupTests group) $ \testCase ->
             it (T.unpack $ testDescription testCase) $
-              runTestCase version group testCase
+              runTestCase version filePath group testCase
   where
     suiteRoot = "test-suite/json-schema-test-suite/tests"
     fileLabel = makeRelative suiteRoot filePath
