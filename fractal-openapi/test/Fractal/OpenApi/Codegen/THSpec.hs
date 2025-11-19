@@ -241,9 +241,10 @@ spec = describe "Template Haskell Code Generation" $ do
 
   describe "Property-based Tests" $ do
     it "generates unique type names for different schemas" $ hedgehog $ do
-      -- Generate random schema titles
+      -- Generate random schema titles that will produce different type names
+      -- Note: We need to ensure the sanitized/capitalized versions differ
       title1 <- forAll $ Gen.text (Range.linear 1 20) Gen.alpha
-      title2 <- forAll $ Gen.filter (/= title1) $ Gen.text (Range.linear 1 20) Gen.alpha
+      title2 <- forAll $ Gen.filter (\t -> T.toUpper t /= T.toUpper title1) $ Gen.text (Range.linear 1 20) Gen.alpha
       
       let schema1Value = Aeson.object
             [ "type" Aeson..= String "object"

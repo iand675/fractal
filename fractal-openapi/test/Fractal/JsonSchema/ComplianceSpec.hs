@@ -76,6 +76,26 @@ testSuiteLoader version uri
         Left _ -> fileLoader commonPath  -- Fall back to common
   | normalizeMetaURI uri == Just "http://json-schema.org/draft-07/schema" =
       pure $ Right draft07MetaSchema
+  | normalizeMetaURI uri == Just "https://json-schema.org/draft/2020-12/schema" =
+      pure $ Right draft202012MetaSchema
+  | normalizeMetaURI uri == Just "http://json-schema.org/draft/2019-09/schema" =
+      pure $ Right draft201909MetaSchema
+  -- Handle relative file paths (non-URI paths used in test suite)
+  | not (T.isInfixOf "://" uri) && not (T.isPrefixOf "#" uri) = do
+      -- It's a relative file path, try loading from remotes directory
+      let versionDir = case version of
+            Draft04 -> "draft4"
+            Draft06 -> "draft6"
+            Draft07 -> "draft7"
+            Draft201909 -> "draft2019-09"
+            Draft202012 -> "draft2020-12"
+          versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack uri
+          commonPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack uri
+      
+      versionResult <- fileLoader versionPath
+      case versionResult of
+        Right schema -> pure $ Right schema
+        Left _ -> fileLoader commonPath
   | otherwise = noOpLoader uri
   where
     normalizeMetaURI u =
@@ -99,6 +119,32 @@ draft07MetaSchema =
                 , "minimum" .= (0 :: Int)
                 ]
             ]
+        , "additionalProperties" .= True
+        ]
+
+draft201909MetaSchema :: Schema
+draft201909MetaSchema =
+  case parseSchemaWithVersion Draft201909 metaValue of
+    Right schema -> schema
+    Left err -> error $ "Failed to build draft 2019-09 meta schema stub: " <> show err
+  where
+    metaValue =
+      object
+        [ "$id" .= ("http://json-schema.org/draft/2019-09/schema#" :: Text)
+        , "type" .= ("object" :: Text)
+        , "additionalProperties" .= True
+        ]
+
+draft202012MetaSchema :: Schema
+draft202012MetaSchema =
+  case parseSchemaWithVersion Draft202012 metaValue of
+    Right schema -> schema
+    Left err -> error $ "Failed to build draft 2020-12 meta schema stub: " <> show err
+  where
+    metaValue =
+      object
+        [ "$id" .= ("https://json-schema.org/draft/2020-12/schema#" :: Text)
+        , "type" .= ("object" :: Text)
         , "additionalProperties" .= True
         ]
 

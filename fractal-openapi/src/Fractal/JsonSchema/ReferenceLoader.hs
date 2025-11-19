@@ -23,19 +23,13 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Parser (parseSchema, ParseError(parseErrorMessage))
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy as BL
 import Network.HTTP.Client (Manager, httpLbs, parseRequest, responseBody, HttpException)
-import Network.HTTP.Client.TLS (newTlsManager)
-import Network.URI (URI, parseURI, parseURIReference, uriToString, relativeTo)
-import qualified Network.URI as URI
-import Control.Exception (try, Exception)
+import Network.URI (parseURI, parseURIReference, uriToString, relativeTo)
+import Control.Exception (try)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
-import System.IO.Unsafe (unsafePerformIO)
+import Data.IORef (newIORef, readIORef, modifyIORef')
 
 -- | No-op loader that always fails (for pure validation without external refs)
 noOpLoader :: ReferenceLoader
@@ -74,6 +68,15 @@ fileLoader uri
           Right schema -> pure $ Right schema
   | T.isPrefixOf "/" uri || T.isPrefixOf "./" uri || T.isPrefixOf "../" uri = do
       -- Relative or absolute file path
+      result <- try $ Aeson.eitherDecodeFileStrict (T.unpack uri)
+      case result of
+        Left (exc :: IOError) -> pure $ Left $ "File error: " <> T.pack (show exc)
+        Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
+        Right (Right value) -> case parseSchema value of
+          Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
+          Right schema -> pure $ Right schema
+  | not (T.any (== ':') uri) = do
+      -- Plain path without scheme (treat as file path)
       result <- try $ Aeson.eitherDecodeFileStrict (T.unpack uri)
       case result of
         Left (exc :: IOError) -> pure $ Left $ "File error: " <> T.pack (show exc)

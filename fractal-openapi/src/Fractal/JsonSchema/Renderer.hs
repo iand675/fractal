@@ -9,10 +9,6 @@ module Fractal.JsonSchema.Renderer
 
 import Fractal.JsonSchema.Types
 import Data.Aeson (Value(..), object, (.=))
-import qualified Data.Aeson as Aeson
-import Data.Text (Text)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 
 -- | Render schema to JSON Value
 renderSchema :: Schema -> Value

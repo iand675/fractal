@@ -15,7 +15,7 @@ module Fractal.JsonSchema.Parser
   ) where
 
 import Fractal.JsonSchema.Types
-import Data.Aeson (Value(..), Object, (.:), (.:?), (.!=))
+import Data.Aeson (Value(..), Object)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -24,16 +24,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.Yaml as Yaml
 import Data.Foldable (toList)
-import Data.Scientific (Scientific)
-import Numeric.Natural (Natural)
 import Control.Monad (when)
 
 -- | Error during schema parsing
@@ -69,8 +63,9 @@ parseSchemaWithVersion version val = case val of
     , schemaExtensions = Map.empty
     }
   Object obj -> do
-    -- Parse $id
-    let schemaId' = KeyMap.lookup "$id" obj >>= \case
+    -- Parse $id (draft-06+) or id (draft-04 only)
+    let idKey = if version >= Draft06 then "$id" else "id"
+    let schemaId' = KeyMap.lookup idKey obj >>= \case
           String t -> Just t
           _ -> Nothing
     
@@ -90,12 +85,12 @@ parseSchemaWithVersion version val = case val of
     --   3. Store in schemaCustomKeywords :: Map Text KeywordValue
     --   4. Truly unknown keywords stay in schemaExtensions
     let knownKeywords = Set.fromList
-          [ "$schema", "$id", "$ref", "$vocabulary", "$defs", "definitions"
+          [ "$schema", "$id", "id", "$ref", "$vocabulary", "$defs", "definitions"
           , "$comment", "$anchor", "$dynamicRef", "$dynamicAnchor"
           , "type", "enum", "const"
           , "allOf", "anyOf", "oneOf", "not"
           , "if", "then", "else"
-          , "title", "description", "default", "examples"
+          , "title", "description", "default"
           , "deprecated", "readOnly", "writeOnly"
           , "properties", "patternProperties", "additionalProperties"
           , "propertyNames", "required", "minProperties", "maxProperties"
@@ -286,7 +281,7 @@ parseValidationKeywords version obj = do
   let format' = KeyMap.lookup "format" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
   
   -- Array validation
-  let items' = KeyMap.lookup "items" obj >>= parseArrayItems version
+  let items' = parseArrayItems version obj
   let prefixItems' = if version >= Draft202012
                      then KeyMap.lookup "prefixItems" obj >>= parseArraySchemas version
                      else Nothing
@@ -300,6 +295,9 @@ parseValidationKeywords version obj = do
   let minContains = if version >= Draft201909
                     then KeyMap.lookup "minContains" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
                     else Nothing
+  let unevaluatedItems' = if version >= Draft201909
+                          then KeyMap.lookup "unevaluatedItems" obj >>= eitherToMaybe . parseSubschema version
+                          else Nothing
   
   -- Object validation
   let properties' = KeyMap.lookup "properties" obj >>= parsePropertySchemas version
@@ -346,6 +344,7 @@ parseValidationKeywords version obj = do
     , validationUniqueItems = uniqueItems
     , validationMaxContains = maxContains
     , validationMinContains = minContains
+    , validationUnevaluatedItems = unevaluatedItems'
     , validationProperties = properties'
     , validationPatternProperties = patternProperties'
     , validationAdditionalProperties = additionalProperties'
@@ -359,13 +358,21 @@ parseValidationKeywords version obj = do
     , validationDependencies = dependencies'
     }
 
-parseArrayItems :: JsonSchemaVersion -> Value -> Maybe ArrayItemsValidation
-parseArrayItems version v = case v of
-  Array arr -> do
-    let schemas = [schema | val <- toList arr, Right schema <- [parseSubschema version val]]
-    nonEmpty <- NE.nonEmpty schemas
-    pure $ ItemsTuple nonEmpty Nothing  -- TODO: Parse additionalItems
-  _ -> eitherToMaybe (parseSubschema version v) >>= Just . ItemsSchema
+parseArrayItems :: JsonSchemaVersion -> Object -> Maybe ArrayItemsValidation
+parseArrayItems version obj = do
+  itemsVal <- KeyMap.lookup "items" obj
+  case itemsVal of
+    Array arr -> do
+      -- Tuple-style items (array of schemas)
+      let schemas = [schema | val <- toList arr, Right schema <- [parseSubschema version val]]
+      nonEmpty <- NE.nonEmpty schemas
+      -- Parse additionalItems if present
+      let additionalItems' = KeyMap.lookup "additionalItems" obj >>= eitherToMaybe . parseSubschema version
+      pure $ ItemsTuple nonEmpty additionalItems'
+    _ -> do
+      -- Single schema for all items
+      schema <- eitherToMaybe (parseSubschema version itemsVal)
+      pure $ ItemsSchema schema
 
 -- | Parse non-empty array of schemas
 parseArraySchemas :: JsonSchemaVersion -> Value -> Maybe (NonEmpty Schema)

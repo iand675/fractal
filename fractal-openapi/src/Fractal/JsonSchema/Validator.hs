@@ -22,24 +22,33 @@ module Fractal.JsonSchema.Validator
   ) where
 
 import Fractal.JsonSchema.Types
+import qualified Fractal.JsonSchema.Parser as Parser
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
-import Data.Scientific (Scientific)
 import qualified Data.Scientific as Sci
-import Numeric.Natural (Natural)
 import Data.Foldable (toList)
+import Data.Maybe (fromJust, fromMaybe)
+import Data.Vector (Vector, (!), fromList)
 import Text.Regex.TDFA ((=~))
 import qualified Text.Regex.TDFA as Regex
+import qualified Data.UUID as UUID
+import qualified Data.Time.Format.ISO8601 as Time
+import qualified Data.Time.Clock as Time
+import qualified Data.Time.Calendar as Time
+import qualified Text.Email.Validate as Email
+import qualified Network.URI as URI
+import qualified Data.IP as IP
 
 -- | Error during validator compilation
 data CompileError = CompileError Text
@@ -81,6 +90,7 @@ validateValue config schema val =
         , contextEvaluatedProperties = Set.empty
         , contextEvaluatedItems = Set.empty
         , contextVisitedSchemas = Set.empty
+        , contextResolvingRefs = Set.empty
         }
   in validateValueWithContext ctx schema val
 
@@ -97,28 +107,33 @@ validateValueWithRegistry config registry schema val =
         , contextEvaluatedProperties = Set.empty
         , contextEvaluatedItems = Set.empty
         , contextVisitedSchemas = Set.empty
+        , contextResolvingRefs = Set.empty
         }
   in validateValueWithContext ctx schema val
 
 -- | Validate with explicit context
 validateValueWithContext :: ValidationContext -> Schema -> Value -> ValidationResult
 validateValueWithContext ctx schema val =
+  -- Note: Cycle detection is handled by contextResolvingRefs in validateAgainstObject
+  -- We don't use contextVisitedSchemas here because schemas can be legitimately
+  -- referenced multiple times (e.g., a schema referencing itself via $ref)
   let ctxWithBase = applySchemaContext ctx schema
   in case schemaCore schema of
-    BooleanSchema True -> ValidationSuccess mempty
-    BooleanSchema False -> ValidationFailure $ ValidationErrors $ pure $
-      ValidationError "schema" emptyPointer emptyPointer "Schema is 'false'" Nothing
-    ObjectSchema obj ->
-      -- First validate against standard keywords, then custom keywords
-      combineResults
-        [ validateAgainstObject ctx ctxWithBase obj val
-        , validateCustomKeywords ctxWithBase schema val
-        ]
+       BooleanSchema True -> ValidationSuccess mempty
+       BooleanSchema False -> ValidationFailure $ ValidationErrors $ pure $
+         ValidationError "schema" emptyPointer emptyPointer "Schema is 'false'" Nothing
+       ObjectSchema obj ->
+         -- First validate against standard keywords, then custom keywords
+         combineResults
+           [ validateAgainstObject ctx ctxWithBase obj val
+           , validateCustomKeywords ctxWithBase schema val
+           ]
   where
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
       in case failures of
-        [] -> ValidationSuccess mempty
+        [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
 -- | Apply schema-specific context updates (base URI, root schema)
@@ -142,28 +157,57 @@ compileValidator :: ValidationConfig -> Schema -> Either CompileError Validator
 compileValidator config schema =
   Right $ Validator $ \val -> validateValue config schema val
 
+-- | Create validation failure with error
+validationFailure :: Text -> Text -> ValidationResult
+validationFailure keyword message =
+  ValidationFailure $ ValidationErrors $ pure $
+    ValidationError keyword emptyPointer emptyPointer message Nothing
+
+-- | Create annotation for evaluated properties at current location
+annotateProperties :: Set Text -> ValidationAnnotations
+annotateProperties props =
+  if Set.null props
+    then mempty
+    else ValidationAnnotations $ Map.singleton emptyPointer $ 
+           Map.singleton "properties" (Aeson.Array $ fromList $ map Aeson.String $ Set.toList props)
+
+-- | Create annotation for evaluated array items at current location
+annotateItems :: Set Int -> ValidationAnnotations
+annotateItems indices =
+  if Set.null indices
+    then mempty
+    else ValidationAnnotations $ Map.singleton emptyPointer $
+           Map.singleton "items" (Aeson.Array $ fromList $ map (Aeson.Number . fromIntegral) $ Set.toList indices)
+
 -- | Validate against object schema
 validateAgainstObject :: ValidationContext -> ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateAgainstObject parentCtx ctx obj val =
   -- First handle $ref if present
   case schemaRef obj of
     Just ref ->
+      let refText = showReference ref
+      in
+      -- Check for reference cycle
+      if Set.member refText (contextResolvingRefs ctx)
+        then ValidationSuccess mempty  -- Break the cycle
+        else
       -- Resolve and validate against the referenced schema
-      case resolveReference ref refCtx of
+      let ctxWithRef = ctx { contextResolvingRefs = Set.insert refText (contextResolvingRefs ctx) }
+      in case resolveReference ref refCtx of
         Just (resolvedSchema, maybeBase) ->
           let ctxForRef = case maybeBase of
                 Just baseDoc ->
-                  let baseChanged = contextBaseURI ctx /= Just baseDoc
+                  let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
                       rootValue =
                         if baseChanged
                           then Just resolvedSchema
-                          else case contextRootSchema ctx of
+                          else case contextRootSchema ctxWithRef of
                                  Just existing -> Just existing
                                  Nothing -> Just resolvedSchema
-                  in ctx { contextBaseURI = Just baseDoc
-                         , contextRootSchema = rootValue
-                         }
-                Nothing -> ctx
+                  in ctxWithRef { contextBaseURI = Just baseDoc
+                                , contextRootSchema = rootValue
+                                }
+                Nothing -> ctxWithRef
           in validateValueWithContext ctxForRef resolvedSchema val
         Nothing ->
           -- Reference not found - this is an error
@@ -175,13 +219,42 @@ validateAgainstObject parentCtx ctx obj val =
       -- No $ref, check for $dynamicRef (2020-12+)
       case schemaDynamicRef obj of
         Just dynRef ->
+          let dynRefText = showReference dynRef
+          in
+          -- Check for reference cycle
+          if Set.member dynRefText (contextResolvingRefs ctx)
+            then ValidationSuccess mempty  -- Break the cycle
+            else
+          let ctxWithRef = ctx { contextResolvingRefs = Set.insert dynRefText (contextResolvingRefs ctx) }
+          in
           -- Try to resolve $dynamicRef using dynamic scope
-          case resolveDynamicRef dynRef ctx of
-            Just resolvedSchema -> validateValueWithContext ctx resolvedSchema val
+          case resolveDynamicRef dynRef ctxWithRef of
+            Just resolvedSchema -> 
+              validateValueWithContext ctxWithRef resolvedSchema val
             Nothing ->
-              -- Fallback: treat as regular reference
-              -- For now, just continue with normal validation
-              validateObjectSchemaContent ctx obj val
+              -- Fallback: treat as regular $ref (resolve statically)
+              case resolveReference dynRef refCtx of
+                Just (resolvedSchema, maybeBase) ->
+                  let ctxForRef = case maybeBase of
+                        Just baseDoc ->
+                          let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
+                              rootValue =
+                                if baseChanged
+                                  then Just resolvedSchema
+                                  else case contextRootSchema ctxWithRef of
+                                         Just existing -> Just existing
+                                         Nothing -> Just resolvedSchema
+                          in ctxWithRef { contextBaseURI = Just baseDoc
+                                        , contextRootSchema = rootValue
+                                        }
+                        Nothing -> ctxWithRef
+                  in validateValueWithContext ctxForRef resolvedSchema val
+                Nothing ->
+                  -- Reference not found - this is an error
+                  ValidationFailure $ ValidationErrors $ pure $
+                    ValidationError "$dynamicRef" emptyPointer emptyPointer
+                      ("Unable to resolve dynamic reference: " <> showReference dynRef)
+                      Nothing
         Nothing ->
           validateObjectSchemaContent ctx obj val
   where
@@ -199,7 +272,7 @@ validateAgainstObject parentCtx ctx obj val =
     validateObjectSchemaContent ctx' obj' val' =
       -- Update context with dynamic anchor if present
       let ctx'' = case schemaDynamicAnchor obj' of
-            Just anchor ->
+            Just _ ->
               -- Push current schema onto dynamic scope
               let schema' = Schema
                     { schemaVersion = Just (validationVersion $ contextConfig ctx')
@@ -227,8 +300,9 @@ validateAgainstObject parentCtx ctx obj val =
     combineResults :: [ValidationResult] -> ValidationResult
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
       in case failures of
-        [] -> ValidationSuccess mempty
+        [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
 -- | Validate type constraint
@@ -291,28 +365,31 @@ validateComposition ctx obj val =
   where
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
       in case failures of
-        [] -> ValidationSuccess mempty
+        [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
     
     validateAllOf ctx' v schemas =
       let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
           failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
       in case failures of
-        [] -> ValidationSuccess mempty
+        [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
     
     validateAnyOf ctx' v schemas =
       let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-      in if any isSuccess results
-        then ValidationSuccess mempty
-        else validationFailure "anyOf" "Value does not match any schema in anyOf"
+          successes = [anns | ValidationSuccess anns <- results]
+      in if null successes
+        then validationFailure "anyOf" "Value does not match any schema in anyOf"
+        else ValidationSuccess $ mconcat successes
     
     validateOneOf ctx' v schemas =
       let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-          successes = filter isSuccess results
+          successes = [anns | ValidationSuccess anns <- results]
       in case length successes of
-        1 -> ValidationSuccess mempty
+        1 -> ValidationSuccess $ head successes
         0 -> validationFailure "oneOf" "Value does not match any schema in oneOf"
         _ -> validationFailure "oneOf" "Value matches more than one schema in oneOf"
     
@@ -327,11 +404,16 @@ validateConditional ctx obj val = case schemaIf obj of
   Nothing -> ValidationSuccess mempty  -- No conditional
   Just ifSchema ->
     case validateValueWithContext ctx ifSchema val of
-      ValidationSuccess _ ->
-        -- If validates, apply then
-        maybe (ValidationSuccess mempty) (\thenSchema -> validateValueWithContext ctx thenSchema val) (schemaThen obj)
+      ValidationSuccess ifAnns ->
+        -- If validates, apply then (if present) and combine annotations
+        case schemaThen obj of
+          Just thenSchema ->
+            case validateValueWithContext ctx thenSchema val of
+              ValidationSuccess thenAnns -> ValidationSuccess (ifAnns <> thenAnns)
+              ValidationFailure errs -> ValidationFailure errs
+          Nothing -> ValidationSuccess ifAnns  -- No then, keep if annotations
       ValidationFailure _ ->
-        -- If fails, apply else
+        -- If fails, apply else (if present)
         maybe (ValidationSuccess mempty) (\elseSchema -> validateValueWithContext ctx elseSchema val) (schemaElse obj)
 
 -- | Validate numeric constraints
@@ -352,15 +434,33 @@ validateNumericConstraints obj (Number n) =
         (e:es) -> ValidationFailure $ foldl (<>) e es
     
     checkMultipleOf num divisor =
-      -- Avoid Scientific arithmetic - convert to Double for modulo check
-      -- This handles repeating decimals that can't be represented in Scientific
+      -- Special case: if the number is an integer and divisor <= 1, any integer is a multiple
+      -- This handles overflow cases like 1e308 / 0.5
       let numDouble = Sci.toRealFloat num :: Double
           divisorDouble = Sci.toRealFloat divisor :: Double
-          remainder = numDouble - (fromIntegral (floor (numDouble / divisorDouble) :: Integer) * divisorDouble)
-          epsilon = 1e-10  -- Tolerance for floating point comparison
-      in if abs remainder < epsilon || abs (remainder - divisorDouble) < epsilon
-        then ValidationSuccess mempty
-        else validationFailure "multipleOf" $ "Value is not a multiple of " <> T.pack (show divisor)
+          isIntegerValue = numDouble == fromIntegral (round numDouble :: Integer)
+      in if isIntegerValue && divisorDouble > 0 && divisorDouble <= 1
+        then
+          -- For integers with divisor <= 1, check if 1/divisor is an integer
+          -- e.g., 0.5 -> 2, 0.25 -> 4, etc.
+          let reciprocal = 1 / divisorDouble
+              isValidDivisor = reciprocal == fromIntegral (round reciprocal :: Integer)
+          in if isValidDivisor
+             then ValidationSuccess mempty
+             else 
+               -- Fall back to standard check
+               let remainder = numDouble - (fromIntegral (floor (numDouble / divisorDouble) :: Integer) * divisorDouble)
+                   epsilon = 1e-10
+               in if abs remainder < epsilon || abs (remainder - divisorDouble) < epsilon
+                  then ValidationSuccess mempty
+                  else validationFailure "multipleOf" $ "Value is not a multiple of " <> T.pack (show divisor)
+        else
+          -- Standard check for non-integer or divisor > 1
+          let remainder = numDouble - (fromIntegral (floor (numDouble / divisorDouble) :: Integer) * divisorDouble)
+              epsilon = 1e-10
+          in if abs remainder < epsilon || abs (remainder - divisorDouble) < epsilon
+            then ValidationSuccess mempty
+            else validationFailure "multipleOf" $ "Value is not a multiple of " <> T.pack (show divisor)
     
     -- Check maximum with exclusiveMaximum handling (draft-04 vs draft-06+)
     checkMaximumWithExclusive num validation' =
@@ -458,26 +558,40 @@ validateArrayConstraints :: ValidationContext -> SchemaObject -> Value -> Valida
 validateArrayConstraints ctx obj (Array arr) =
   let validation = schemaValidation obj
       arrLength = length arr
-  in combineResults
-    [ maybe (ValidationSuccess mempty) (\max' ->
-        if fromIntegral arrLength <= max'
-          then ValidationSuccess mempty
-          else validationFailure "maxItems" "Array length exceeds maxItems"
-      ) (validationMaxItems validation)
-    , maybe (ValidationSuccess mempty) (\min' ->
-        if fromIntegral arrLength >= min'
-          then ValidationSuccess mempty
-          else validationFailure "minItems" "Array length below minItems"
-      ) (validationMinItems validation)
-    , validateItems ctx obj arr
-    , validateContains ctx obj arr
-    , validateUniqueItems obj arr
-    ]
+      -- First run item validators to collect annotations
+      itemValidations =
+        [ maybe (ValidationSuccess mempty) (\max' ->
+            if fromIntegral arrLength <= max'
+              then ValidationSuccess mempty
+              else validationFailure "maxItems" "Array length exceeds maxItems"
+          ) (validationMaxItems validation)
+        , maybe (ValidationSuccess mempty) (\min' ->
+            if fromIntegral arrLength >= min'
+              then ValidationSuccess mempty
+              else validationFailure "minItems" "Array length below minItems"
+          ) (validationMinItems validation)
+        , validateItems ctx obj arr
+        , validateContains ctx obj arr
+        , validateUniqueItems obj arr
+        ]
+      -- Combine results to get annotations from item validators
+      itemResult = combineResults itemValidations
+      -- Then run unevaluatedItems with those annotations
+      unevaluatedResult = case itemResult of
+        ValidationSuccess anns ->
+          validateUnevaluatedItems ctx obj arr anns
+        ValidationFailure _ -> ValidationSuccess mempty  -- If items failed, skip unevaluated check
+  in case (itemResult, unevaluatedResult) of
+    (ValidationFailure errs, _) -> ValidationFailure errs
+    (ValidationSuccess anns, ValidationSuccess unevalAnns) -> 
+      ValidationSuccess (anns <> unevalAnns)
+    (ValidationSuccess _, ValidationFailure errs) -> ValidationFailure errs
   where
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
       in case failures of
-        [] -> ValidationSuccess mempty
+        [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
     
     validateItems ctx' schemaObj array =
@@ -487,16 +601,24 @@ validateArrayConstraints ctx obj (Array arr) =
           -- 2020-12+ mode: prefixItems validates positional items
           let prefixResults = zipWith (validateValueWithContext ctx') (NE.toList prefixSchemas) (toList array)
               prefixFailures = [errs | ValidationFailure errs <- prefixResults]
+              prefixIndices = Set.fromList [0 .. length prefixSchemas - 1]
               -- In 2020-12, "items" applies to items beyond prefixItems
               additionalItemsFromPrefix = drop (length prefixSchemas) (toList array)
-              additionalResults = case validationItems (schemaValidation schemaObj) of
+              additionalStartIdx = length prefixSchemas
+              (additionalResults, additionalIndices) = case validationItems (schemaValidation schemaObj) of
                 Just (ItemsSchema itemSchema) ->
-                  [validateValueWithContext ctx' itemSchema item | item <- additionalItemsFromPrefix]
-                _ -> []
+                  let results = [validateValueWithContext ctx' itemSchema item | item <- additionalItemsFromPrefix]
+                      indices = if null additionalItemsFromPrefix 
+                                then Set.empty 
+                                else Set.fromList [additionalStartIdx .. length array - 1]
+                  in (results, indices)
+                _ -> ([], Set.empty)  -- No items schema, don't annotate additional items
               additionalFailures = [errs | ValidationFailure errs <- additionalResults]
               allFailures = prefixFailures <> additionalFailures
+              allIndices = prefixIndices <> additionalIndices
+              allAnnotations = [anns | ValidationSuccess anns <- prefixResults <> additionalResults]
           in case allFailures of
-            [] -> ValidationSuccess mempty
+            [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
             (e:es) -> ValidationFailure $ foldl (<>) e es
         Nothing ->
           -- Pre-2020-12 mode: use old items behavior
@@ -506,34 +628,69 @@ validateArrayConstraints ctx obj (Array arr) =
               -- All items must validate against the schema
               let results = [validateValueWithContext ctx' itemSchema item | item <- toList array]
                   failures = [errs | ValidationFailure errs <- results]
+                  allIndices = Set.fromList [0 .. length array - 1]
+                  annotations = [anns | ValidationSuccess anns <- results]
               in case failures of
-                [] -> ValidationSuccess mempty
+                [] -> ValidationSuccess $ annotateItems allIndices <> mconcat annotations
                 (e:es) -> ValidationFailure $ foldl (<>) e es
             Just (ItemsTuple tupleSchemas maybeAdditional) ->
               -- Positional validation + optional additional items
               let tupleResults = zipWith (validateValueWithContext ctx') (NE.toList tupleSchemas) (toList array)
                   tupleFailures = [errs | ValidationFailure errs <- tupleResults]
+                  tupleIndices = Set.fromList [0 .. length tupleSchemas - 1]
                   -- Handle additional items beyond tuple length
                   additionalItems = drop (length tupleSchemas) (toList array)
-                  additionalResults = case (maybeAdditional, additionalItems) of
-                    (Just addlSchema, items) -> [validateValueWithContext ctx' addlSchema item | item <- items]
-                    (Nothing, []) -> []
-                    (Nothing, _) -> [ValidationFailure $ ValidationErrors $ pure $
-                                     ValidationError "items" emptyPointer emptyPointer "Additional items not allowed" Nothing]
+                  additionalStartIdx = length tupleSchemas
+                  -- In draft 2019-09/2020-12, additional items are allowed by default when items is an array
+                  -- They are only rejected if additionalItems is explicitly false
+                  (additionalResults, additionalIndices) = case maybeAdditional of
+                    Just addlSchema ->
+                      -- additionalItems is explicitly set, validate against it
+                      let results = [validateValueWithContext ctx' addlSchema item | item <- additionalItems]
+                          indices = Set.fromList [additionalStartIdx .. length array - 1]
+                      in (results, if null additionalItems then Set.empty else indices)
+                    Nothing ->
+                      -- additionalItems not specified - don't validate or annotate (let unevaluatedItems handle it)
+                      ([], Set.empty)
                   additionalFailures = [errs | ValidationFailure errs <- additionalResults]
                   allFailures = tupleFailures <> additionalFailures
+                  allIndices = tupleIndices <> additionalIndices
+                  allAnnotations = [anns | ValidationSuccess anns <- tupleResults <> additionalResults]
               in case allFailures of
-                [] -> ValidationSuccess mempty
+                [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
                 (e:es) -> ValidationFailure $ foldl (<>) e es
     
-    validateContains ctx' schemaObj array = case validationContains (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just containsSchema ->
-        let results = [validateValueWithContext ctx' containsSchema item | item <- toList array]
-            anyMatch = any isSuccess results
-        in if anyMatch || null (toList array)  -- Empty array passes unless minContains set
-          then ValidationSuccess mempty
-          else validationFailure "contains" "No array items match the contains schema"
+    validateContains ctx' schemaObj array =
+      let validation = schemaValidation schemaObj
+          maybeContains = validationContains validation
+          maybeMinContains = validationMinContains validation
+          maybeMaxContains = validationMaxContains validation
+      in case maybeContains of
+        Nothing ->
+          -- No contains constraint, but check for standalone minContains/maxContains
+          case maybeMinContains of
+            Nothing -> ValidationSuccess mempty
+            Just minC -> 
+              -- Standalone minContains without contains is valid if minC <= array length
+              if fromIntegral (length array) >= minC
+                then ValidationSuccess mempty
+                else validationFailure "minContains" $ 
+                  "Array has " <> T.pack (show (length array)) <> " items, but minContains requires " <> T.pack (show minC)
+        Just containsSchema ->
+          let results = [validateValueWithContext ctx' containsSchema item | item <- toList array]
+              matchCount = length (filter isSuccess results)
+              -- When contains is present, minContains defaults to 1 (not 0)
+              minRequired = maybe 1 fromIntegral maybeMinContains
+              maxAllowed = fmap fromIntegral maybeMaxContains
+              minCheck = matchCount >= minRequired
+              maxCheck = maybe True (matchCount <=) maxAllowed
+          in if not minCheck
+            then validationFailure "contains" $ 
+              "Array has " <> T.pack (show matchCount) <> " items matching contains, but minContains requires " <> T.pack (show minRequired)
+            else if not maxCheck
+              then validationFailure "maxContains" $ 
+                "Array has " <> T.pack (show matchCount) <> " items matching contains, but maxContains allows at most " <> T.pack (show (fromJust maxAllowed))
+              else ValidationSuccess mempty
     
     validateUniqueItems schemaObj array = case validationUniqueItems (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
@@ -555,28 +712,43 @@ validateObjectConstraints :: ValidationContext -> SchemaObject -> Value -> Valid
 validateObjectConstraints ctx obj (Object objMap) =
   let validation = schemaValidation obj
       objSize = KeyMap.size objMap
-  in combineResults
-    [ maybe (ValidationSuccess mempty) (\max' ->
-        if fromIntegral objSize <= max'
-          then ValidationSuccess mempty
-          else validationFailure "maxProperties" "Object has too many properties"
-      ) (validationMaxProperties validation)
-    , maybe (ValidationSuccess mempty) (\min' ->
-        if fromIntegral objSize >= min'
-          then ValidationSuccess mempty
-          else validationFailure "minProperties" "Object has too few properties"
-      ) (validationMinProperties validation)
-    , validateRequired obj objMap
-    , validateProperties ctx obj objMap
-    , validateAdditionalProperties ctx obj objMap
-    , validateDependentRequired validation objMap
-    , validateDependentSchemas ctx validation objMap
-    ]
+      -- First run all property validators to collect annotations
+      propertyValidations =
+        [ maybe (ValidationSuccess mempty) (\max' ->
+            if fromIntegral objSize <= max'
+              then ValidationSuccess mempty
+              else validationFailure "maxProperties" "Object has too many properties"
+          ) (validationMaxProperties validation)
+        , maybe (ValidationSuccess mempty) (\min' ->
+            if fromIntegral objSize >= min'
+              then ValidationSuccess mempty
+              else validationFailure "minProperties" "Object has too few properties"
+          ) (validationMinProperties validation)
+        , validateRequired obj objMap
+        , validatePropertyNames ctx obj objMap
+        , validateProperties ctx obj objMap
+        , validateAdditionalProperties ctx obj objMap
+        , validateDependentRequired validation objMap
+        , validateDependentSchemas ctx validation objMap
+        ]
+      -- Combine results to get annotations from property validators
+      propertyResult = combineResults propertyValidations
+      -- Then run unevaluatedProperties with those annotations
+      unevaluatedResult = case propertyResult of
+        ValidationSuccess anns ->
+          validateUnevaluatedProperties ctx obj objMap anns
+        ValidationFailure _ -> ValidationSuccess mempty  -- If properties failed, skip unevaluated check
+  in case (propertyResult, unevaluatedResult) of
+    (ValidationFailure errs, _) -> ValidationFailure errs
+    (ValidationSuccess anns, ValidationSuccess unevalAnns) -> 
+      ValidationSuccess (anns <> unevalAnns)
+    (ValidationSuccess _, ValidationFailure errs) -> ValidationFailure errs
   where
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
       in case failures of
-        [] -> ValidationSuccess mempty
+        [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
     
     validateRequired schemaObj om = case validationRequired (schemaValidation schemaObj) of
@@ -591,13 +763,42 @@ validateObjectConstraints ctx obj (Object objMap) =
               ("Missing required properties: " <> T.intercalate ", " (Set.toList missingProps))
               Nothing
     
+    validatePropertyNames ctx' schemaObj om = case validationPropertyNames (schemaValidation schemaObj) of
+      Nothing -> ValidationSuccess mempty
+      Just nameSchema ->
+        -- Validate each property name (as a string) against the schema
+        let propNames = [Key.toText k | k <- KeyMap.keys om]
+            results = [validateValueWithContext ctx' nameSchema (Aeson.String propName) | propName <- propNames]
+            failures = [errs | ValidationFailure errs <- results]
+        in case failures of
+          [] -> ValidationSuccess mempty
+          (e:es) -> ValidationFailure $ foldl (<>) e es
+    
     validateProperties ctx' schemaObj om = case validationProperties (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
       Just propSchemas ->
-        let results = [ validateValueWithContext ctx' propSchema propValue
+        let -- Validate properties that are present
+            evaluatedProps = Set.fromList
+              [ propName
+              | propName <- Map.keys propSchemas
+              , KeyMap.member (Key.fromText propName) om
+              ]
+            results = [ validateValueWithContext ctx' propSchema propValue
                       | (propName, propSchema) <- Map.toList propSchemas
                       , Just propValue <- [KeyMap.lookup (Key.fromText propName) om]
                       ]
+            -- Also check pattern properties
+            patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
+              Nothing -> Set.empty
+              Just patternSchemas -> Set.fromList
+                [ Key.toText k
+                | k <- KeyMap.keys om
+                , let propName = Key.toText k
+                , (Regex pattern, _) <- Map.toList patternSchemas
+                , case compileRegex pattern of
+                    Right regex -> matchRegex regex propName
+                    Left _ -> False
+                ]
             patternResults = case validationPatternProperties (schemaValidation schemaObj) of
               Nothing -> []
               Just patternSchemas ->
@@ -610,9 +811,11 @@ validateObjectConstraints ctx obj (Object objMap) =
                     Left _ -> False
                 ]
             allResults = results <> patternResults
+            allEvaluatedProps = evaluatedProps <> patternCoveredProps
             failures = [errs | ValidationFailure errs <- allResults]
+            annotations = [anns | ValidationSuccess anns <- allResults]
         in case failures of
-          [] -> ValidationSuccess mempty
+          [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat annotations
           (e:es) -> ValidationFailure $ foldl (<>) e es
     
     validateAdditionalProperties ctx' schemaObj om = case validationAdditionalProperties (schemaValidation schemaObj) of
@@ -636,14 +839,95 @@ validateObjectConstraints ctx obj (Object objMap) =
             
             -- Additional properties are those not covered by either
             allCoveredProps = definedProps <> patternCoveredProps
-            additionalProps = [(k, v) | (k, v) <- KeyMap.toList om
+            additionalPropsList = [(k, v) | (k, v) <- KeyMap.toList om
                               , not $ Set.member (Key.toText k) allCoveredProps]
-            results = [validateValueWithContext ctx' addlSchema v | (_, v) <- additionalProps]
+            additionalPropNames = Set.fromList [Key.toText k | (k, _) <- additionalPropsList]
+            results = [validateValueWithContext ctx' addlSchema v | (_, v) <- additionalPropsList]
             failures = [errs | ValidationFailure errs <- results]
+            annotations = [anns | ValidationSuccess anns <- results]
         in case failures of
-          [] -> ValidationSuccess mempty
+          [] -> ValidationSuccess $ annotateProperties additionalPropNames <> mconcat annotations
           (e:es) -> ValidationFailure $ foldl (<>) e es
 validateObjectConstraints _ _ _ = ValidationSuccess mempty
+
+-- | Validate unevaluatedProperties (2019-09+)
+-- Properties that weren't evaluated by properties, patternProperties, additionalProperties,
+-- or any applicator keywords must validate against this schema
+validateUnevaluatedProperties :: ValidationContext -> SchemaObject -> KeyMap.KeyMap Value -> ValidationAnnotations -> ValidationResult
+validateUnevaluatedProperties ctx obj objMap collectedAnnotations = 
+  case validationUnevaluatedProperties (schemaValidation obj) of
+    Nothing -> ValidationSuccess mempty
+    Just unevalSchema ->
+      let -- Extract evaluated properties from annotations
+          evaluatedProps = extractEvaluatedProperties collectedAnnotations
+          -- All properties in the object
+          allProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+          -- Unevaluated properties are those not in the evaluated set
+          unevaluatedProps = Set.difference allProps evaluatedProps
+          -- Validate unevaluated properties against the schema
+          results = 
+            [ validateValueWithContext ctx unevalSchema propValue
+            | propName <- Set.toList unevaluatedProps
+            , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
+            ]
+          failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
+      in case failures of
+        [] -> ValidationSuccess $ annotateProperties unevaluatedProps <> mconcat annotations
+        (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Extract evaluated properties from collected annotations
+extractEvaluatedProperties :: ValidationAnnotations -> Set Text
+extractEvaluatedProperties (ValidationAnnotations annMap) =
+  Set.unions
+    [ case Map.lookup "properties" innerMap of
+        Just (Aeson.Array arr) -> Set.fromList
+          [ txt
+          | Aeson.String txt <- toList arr
+          ]
+        _ -> Set.empty
+    | innerMap <- Map.elems annMap
+    ]
+
+-- | Validate unevaluatedItems (2019-09+)
+-- Array items that weren't evaluated by items, prefixItems, or contains
+-- must validate against this schema
+validateUnevaluatedItems :: ValidationContext -> SchemaObject -> Vector Value -> ValidationAnnotations -> ValidationResult
+validateUnevaluatedItems ctx obj arr collectedAnnotations =
+  case validationUnevaluatedItems (schemaValidation obj) of
+    Nothing -> ValidationSuccess mempty
+    Just unevalSchema ->
+      let -- Extract evaluated item indices from annotations
+          evaluatedIndices = extractEvaluatedItems collectedAnnotations
+          -- All item indices
+          allIndices = Set.fromList [0 .. length arr - 1]
+          -- Unevaluated items are those not in the evaluated set
+          unevaluatedIndices = Set.difference allIndices evaluatedIndices
+          -- Validate unevaluated items against the schema
+          results =
+            [ validateValueWithContext ctx unevalSchema (arr ! idx)
+            | idx <- Set.toList unevaluatedIndices
+            , idx < length arr  -- Safety check
+            ]
+          failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
+      in case failures of
+        [] -> ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
+        (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Extract evaluated items indices from collected annotations
+extractEvaluatedItems :: ValidationAnnotations -> Set Int
+extractEvaluatedItems (ValidationAnnotations annMap) =
+  Set.unions
+    [ case Map.lookup "items" innerMap of
+        Just (Aeson.Array arr) -> Set.fromList
+          [ idx
+          | Aeson.Number n <- toList arr
+          , Just idx <- [Sci.toBoundedInteger n]
+          ]
+        _ -> Set.empty
+    | innerMap <- Map.elems annMap
+    ]
 
 -- | Validate dependentRequired (2019-09+)
 -- If a property exists, then the properties in the value set must also exist
@@ -687,8 +971,9 @@ validateDependentSchemas ctx validation objMap = case validationDependentSchemas
           | (propName, depSchema) <- Map.toList depSchemaMap
           ]
         failures = [errs | ValidationFailure errs <- results]
+        annotations = [anns | ValidationSuccess anns <- results]
     in case failures of
-      [] -> ValidationSuccess mempty
+      [] -> ValidationSuccess $ mconcat annotations
       (e:es) -> ValidationFailure $ foldl (<>) e es
 
 -- | Resolve a $ref reference using the schema registry and base URI
@@ -712,27 +997,34 @@ resolveReference (Reference refText) ctx
       in resolvePointerInCurrentSchema pointer ctx >>= \schema ->
            Just (schema, contextBaseURI ctx)
   | T.isPrefixOf "#" refText =
-      -- Anchor reference (#foo)
+      -- Anchor reference (#foo) or JSON Pointer in compact form
       let anchorName = T.drop 1 refText
           baseURI = contextBaseURI ctx
           registry = contextSchemaRegistry ctx
-      in case baseURI of
-           Just uri ->
-             -- Try with explicit base URI first
-             case Map.lookup (uri, anchorName) (registryAnchors registry) of
-               Just s -> Just (s, Just uri)
-               Nothing ->
-                 -- Fallback: try with empty string base (for fragment-only $id)
-                 case Map.lookup ("", anchorName) (registryAnchors registry) of
-                   Just s -> Just (s, Nothing)
-                   Nothing -> lookupAnyAnchor anchorName registry
-           Nothing ->
-             -- No base URI, try with empty string base first
-             case Map.lookup ("", anchorName) (registryAnchors registry) of
-               Just s -> Just (s, Nothing)
-               Nothing ->
-                 -- Fallback: try looking up with any base
-                 lookupAnyAnchor anchorName registry
+          -- First try as an anchor
+          tryAnchor = case baseURI of
+            Just uri ->
+              -- Try with explicit base URI first
+              case Map.lookup (uri, anchorName) (registryAnchors registry) of
+                Just s -> Just (s, Just uri)
+                Nothing ->
+                  -- Fallback: try with empty string base (for fragment-only $id)
+                  case Map.lookup ("", anchorName) (registryAnchors registry) of
+                    Just s -> Just (s, Nothing)
+                    Nothing -> lookupAnyAnchor anchorName registry
+            Nothing ->
+              -- No base URI, try with empty string base first
+              case Map.lookup ("", anchorName) (registryAnchors registry) of
+                Just s -> Just (s, Nothing)
+                Nothing ->
+                  -- Fallback: try looking up with any base
+                  lookupAnyAnchor anchorName registry
+          -- If not found as anchor, try as JSON Pointer (without leading slash)
+          tryPointer = resolvePointerInCurrentSchema ("/" <> anchorName) ctx >>= \schema ->
+            Just (schema, contextBaseURI ctx)
+      in case tryAnchor of
+        Just result -> Just result
+        Nothing -> tryPointer
   | T.any (== '#') refText =
       -- URI with fragment
       let (uriPart, fragment) = T.breakOn "#" refText
@@ -798,10 +1090,10 @@ resolvePointerInSchema pointer schema =
     followPointer [] s = Just s
     followPointer (seg:rest) s = case schemaCore s of
       BooleanSchema _ -> Nothing
-      ObjectSchema obj -> navigateObject seg rest obj
+      ObjectSchema obj -> navigateObject seg rest s obj
     
-    navigateObject :: Text -> [Text] -> SchemaObject -> Maybe Schema
-    navigateObject seg rest obj
+    navigateObject :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Schema
+    navigateObject seg rest parentSchema obj
       -- Navigate into $defs or definitions
       | seg == "$defs" || seg == "definitions" =
           case rest of
@@ -826,8 +1118,8 @@ resolvePointerInSchema pointer schema =
             (patternKey:remaining) ->
               case validationPatternProperties (schemaValidation obj) of
                 Just patterns ->
-                  case [(schema, pat) | (Regex pat, schema) <- Map.toList patterns, pat == patternKey] of
-                    ((schema, _):_) -> followPointer remaining schema
+                  case [(patSchema, pat) | (Regex pat, patSchema) <- Map.toList patterns, pat == patternKey] of
+                    ((patSchema, _):_) -> followPointer remaining patSchema
                     [] -> Nothing
                 Nothing -> Nothing
             [] -> Nothing
@@ -840,7 +1132,7 @@ resolvePointerInSchema pointer schema =
       | seg == "items" =
           case validationItems (schemaValidation obj) of
             Just (ItemsSchema itemSchema) -> followPointer rest itemSchema
-            Just (ItemsTuple schemas maybeAdditional) ->
+            Just (ItemsTuple schemas _) ->
               case rest of
                 (idx:remaining) ->
                   case reads (T.unpack idx) :: [(Int, String)] of
@@ -930,7 +1222,27 @@ resolvePointerInSchema pointer schema =
       | seg == "unevaluatedProperties" =
           validationUnevaluatedProperties (schemaValidation obj) >>= followPointer rest
       
-      | otherwise = Nothing  -- Unknown segment
+      -- Fallback: check schemaExtensions for arbitrary keywords
+      | otherwise =
+          case Map.lookup seg (schemaExtensions parentSchema) of
+            Just val ->
+              -- Try to parse the value as a schema
+              let version = fromMaybe Draft07 (schemaVersion parentSchema)
+              in case Parser.parseSchemaWithVersion version val of
+                Right schema -> followPointer rest schema
+                Left _ ->
+                  -- Not a schema - check if we need array indexing
+                  case (val, rest) of
+                    (Aeson.Array arr, (idx:remaining)) ->
+                      case reads (T.unpack idx) :: [(Int, String)] of
+                        [(n, "")] | n >= 0 && n < length arr ->
+                          -- Try to parse the array element as a schema
+                          case Parser.parseSchemaWithVersion version (arr ! n) of
+                            Right schema -> followPointer remaining schema
+                            Left _ -> Nothing
+                        _ -> Nothing
+                    _ -> Nothing
+            Nothing -> Nothing
 
 -- | Show a reference for error messages
 showReference :: Reference -> Text
@@ -957,11 +1269,6 @@ resolveDynamicRef (Reference refText) ctx
           _ -> findSchemaWithDynamicAnchor anchor rest
       _ -> findSchemaWithDynamicAnchor anchor rest
 
--- | Helper to create validation failure
-validationFailure :: Text -> Text -> ValidationResult
-validationFailure keyword msg = ValidationFailure $ ValidationErrors $ pure $
-  ValidationError keyword emptyPointer emptyPointer msg Nothing
-
 -- | Compile regex pattern
 compileRegex :: Text -> Either Text (Regex.Regex)
 compileRegex pattern =
@@ -980,6 +1287,9 @@ validateFormatValue Email text
 validateFormatValue URI text
   | isValidURI text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid URI format"
+validateFormatValue URIRef text
+  | isValidURIReference text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid URI reference"
 validateFormatValue IPv4 text
   | isValidIPv4 text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid IPv4 address"
@@ -995,46 +1305,131 @@ validateFormatValue DateTime text
 validateFormatValue Date text
   | isValidDate text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid date format"
+validateFormatValue Time text
+  | isValidTime text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid time format"
+validateFormatValue Duration text
+  | isValidDuration text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid ISO 8601 duration"
 validateFormatValue Hostname text
   | isValidHostname text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid hostname"
+validateFormatValue IDNHostname text
+  | isValidHostname text = ValidationSuccess mempty  -- Simplified: accept ASCII hostnames
+  | otherwise = validationFailure "format" "Invalid IDN hostname"
+validateFormatValue JSONPointerFormat text
+  | isValidJSONPointer text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid JSON Pointer"
+validateFormatValue RelativeJSONPointerFormat text
+  | isValidRelativeJSONPointer text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid relative JSON Pointer"
+validateFormatValue RegexFormat text
+  | isValidRegex text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid ECMA-262 regex"
 validateFormatValue _ _ = ValidationSuccess mempty  -- Other formats: annotation only or not implemented
 
--- Format validators (simplified implementations)
+-- Format validators using proper libraries
 isValidEmail :: Text -> Bool
-isValidEmail text = T.length text > 0 && T.any (== '@') text && T.any (== '.') text
+isValidEmail text = Email.isValid (T.encodeUtf8 text)
 
 isValidURI :: Text -> Bool
-isValidURI text = T.isPrefixOf "http://" text || T.isPrefixOf "https://" text || T.isPrefixOf "/" text
+isValidURI text = case URI.parseURI (T.unpack text) of
+  Just _ -> True
+  Nothing -> False
 
 isValidIPv4 :: Text -> Bool
 isValidIPv4 text = 
   let parts = T.splitOn "." text
+      isValidOctet part = case reads (T.unpack part) :: [(Int, String)] of
+        [(n, "")] -> n >= 0 && n <= 255
+        _ -> False
   in length parts == 4 && all isValidOctet parts
-  where
-    isValidOctet part = case reads (T.unpack part) :: [(Int, String)] of
-      [(n, "")] -> n >= 0 && n <= 255
-      _ -> False
 
 isValidIPv6 :: Text -> Bool
-isValidIPv6 text = T.any (== ':') text && T.length text >= 2
+isValidIPv6 text =
+  let str = T.unpack text
+  in case reads str :: [(IP.IPv6, String)] of
+    [(_, "")] -> True
+    _ -> False
 
 isValidUUID :: Text -> Bool
-isValidUUID text = 
-  T.length text == 36 && 
-  T.index text 8 == '-' && 
-  T.index text 13 == '-' && 
-  T.index text 18 == '-' && 
-  T.index text 23 == '-'
+isValidUUID text = case UUID.fromText text of
+  Just _ -> True
+  Nothing -> False
 
+-- RFC3339 date-time validator (strict, no leap seconds allowed)
 isValidDateTime :: Text -> Bool
-isValidDateTime text = T.any (== 'T') text || T.any (== ' ') text
+isValidDateTime text = 
+  case Time.iso8601ParseM (T.unpack text) :: Maybe Time.UTCTime of
+    Just _ -> 
+      -- Additional check: reject leap seconds (60)
+      not (T.isInfixOf ":60" text)
+    Nothing -> False
 
+-- RFC3339 date validator
 isValidDate :: Text -> Bool
-isValidDate text = T.length text == 10 && T.count "-" text == 2
+isValidDate text = 
+  case Time.iso8601ParseM (T.unpack text) :: Maybe Time.Day of
+    Just _ -> True
+    Nothing -> False
 
+-- Hostname validator (RFC 1123)
 isValidHostname :: Text -> Bool
-isValidHostname text = T.length text > 0 && T.all (\c -> c == '.' || c == '-' || c `elem` ['a'..'z'] || c `elem` ['A'..'Z'] || c `elem` ['0'..'9']) text
+isValidHostname text = 
+  let labels = T.splitOn "." text
+      validLabel lbl = 
+        not (T.null lbl) &&
+        T.length lbl <= 63 &&
+        not (T.isPrefixOf "-" lbl) &&
+        not (T.isSuffixOf "-" lbl) &&
+        T.all (\c -> c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) lbl
+  in not (null labels) &&
+     T.length text <= 253 &&
+     all validLabel labels
+
+-- URI Reference validator (allows relative references)
+isValidURIReference :: Text -> Bool
+isValidURIReference text = case URI.parseURIReference (T.unpack text) of
+  Just _ -> True
+  Nothing -> False
+
+-- Time validator (RFC3339 time format)
+isValidTime :: Text -> Bool
+isValidTime text = 
+  -- Simple check for HH:MM:SS or HH:MM:SS.sss format with optional timezone
+  let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?$" :: String
+  in text =~ timePattern && not (T.isInfixOf ":60" text)  -- Reject leap seconds
+
+-- ISO 8601 Duration validator
+isValidDuration :: Text -> Bool
+isValidDuration text = 
+  -- Simple regex for ISO 8601 duration: P[nY][nM][nD][T[nH][nM][nS]]
+  let durationPattern = "^P(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?)?$" :: String
+  in T.isPrefixOf "P" text && text =~ durationPattern
+
+-- JSON Pointer validator (RFC 6901)
+isValidJSONPointer :: Text -> Bool
+isValidJSONPointer text =
+  -- Either empty string or starts with /
+  T.null text || T.isPrefixOf "/" text
+
+-- Relative JSON Pointer validator
+isValidRelativeJSONPointer :: Text -> Bool
+isValidRelativeJSONPointer text =
+  case T.uncons text of
+    Just (c, _) | c >= '0' && c <= '9' ->
+      -- Starts with a digit, followed by optional # or JSON pointer
+      let (digits, remainder) = T.span (\x -> x >= '0' && x <= '9') text
+      in not (T.null digits) &&
+         (T.null remainder || T.isPrefixOf "#" remainder || T.isPrefixOf "/" remainder)
+    _ -> False
+
+-- ECMA-262 Regex validator
+isValidRegex :: Text -> Bool
+isValidRegex text =
+  case compileRegex text of
+    Right _ -> True
+    Left _ -> False
 
 -- | Validate custom keywords from schema extensions
 -- Executes user-provided validators for keywords not in the standard vocabulary

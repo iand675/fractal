@@ -66,7 +66,7 @@ module Fractal.JsonSchema.Types
   , validationError
   ) where
 
-import Data.Aeson (Value, ToJSON(..), FromJSON(..), object, (.=), (.:), (.:?), (.!=))
+import Data.Aeson (Value, ToJSON(..), FromJSON(..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -79,7 +79,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Vector (Vector, fromList)
+import Data.Vector (fromList)
 import Data.Foldable (toList)
 import Data.Scientific (Scientific)
 import Data.Hashable (Hashable)
@@ -370,6 +370,9 @@ data SchemaValidation = SchemaValidation
   
   , validationMinContains :: Maybe Natural
     -- ^ Minimum items matching 'contains' (2019-09+)
+  
+  , validationUnevaluatedItems :: Maybe Schema
+    -- ^ Schema for unevaluated items (2019-09+)
 
     -- === Object Validation ===
   , validationProperties :: Maybe (Map Text Schema)
@@ -700,7 +703,7 @@ uniqueAnchors :: [(Text, Text)] -> [(Text, Text)]
 uniqueAnchors = go Set.empty
   where
     go _ [] = []
-    go seen (x@(baseUri, anchorName) : xs)
+    go seen (x : xs)
       | Set.member x seen = go seen xs
       | otherwise = x : go (Set.insert x seen) xs
 
@@ -890,7 +893,7 @@ registerSchemaInRegistry baseURI schema registry =
           reg13 = case validationItems validation of
             Just (ItemsSchema s) -> registerSchemaInRegistry uri s reg12
             Just (ItemsTuple schemas maybeAdditional) ->
-              let r = foldr (\s r -> registerSchemaInRegistry uri s r) reg12 (NE.toList schemas)
+              let r = foldr (\s acc -> registerSchemaInRegistry uri s acc) reg12 (NE.toList schemas)
               in maybe r (\s -> registerSchemaInRegistry uri s r) maybeAdditional
             Nothing -> reg12
           reg14 = maybe reg13 (\schemas -> foldr (\s r -> registerSchemaInRegistry uri s r) reg13 (NE.toList schemas))
@@ -1048,6 +1051,9 @@ data ValidationContext = ValidationContext
   
   , contextVisitedSchemas :: Set SchemaFingerprint
     -- ^ Schemas visited (for cycle detection)
+  
+  , contextResolvingRefs :: Set Text
+    -- ^ References currently being resolved (for detecting reference cycles)
   }
   deriving (Generic)
 
@@ -1076,6 +1082,7 @@ instance FromJSON SchemaValidation where
     , validationUniqueItems = Nothing
     , validationMaxContains = Nothing
     , validationMinContains = Nothing
+    , validationUnevaluatedItems = Nothing
     , validationProperties = Nothing
     , validationPatternProperties = Nothing
     , validationAdditionalProperties = Nothing
@@ -1146,6 +1153,7 @@ instance FromJSON SchemaObject where
         , validationPatternProperties = Nothing
         , validationAdditionalProperties = Nothing
         , validationUnevaluatedProperties = Nothing
+        , validationUnevaluatedItems = Nothing
         , validationPropertyNames = Nothing
         , validationMaxProperties = Nothing
         , validationMinProperties = Nothing
