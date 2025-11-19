@@ -10,6 +10,7 @@ module Fractal.JsonSchema.ReferenceLoader
   , noOpLoader
   , httpLoader
   , fileLoader
+  , fileLoaderWithVersion
   , cachedLoader
   , compositeLoader
   
@@ -20,7 +21,7 @@ module Fractal.JsonSchema.ReferenceLoader
   ) where
 
 import Fractal.JsonSchema.Types
-import Fractal.JsonSchema.Parser (parseSchema, ParseError(parseErrorMessage))
+import Fractal.JsonSchema.Parser (parseSchema, parseSchemaWithVersion, ParseError(parseErrorMessage))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
@@ -82,6 +83,39 @@ fileLoader uri
         Left (exc :: IOError) -> pure $ Left $ "File error: " <> T.pack (show exc)
         Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
         Right (Right value) -> case parseSchema value of
+          Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
+          Right schema -> pure $ Right schema
+  | otherwise = pure $ Left $ "Not a file URI: " <> uri
+
+-- | Version-aware file system loader
+-- Like fileLoader but parses schemas with a specific version if they don't have $schema
+fileLoaderWithVersion :: JsonSchemaVersion -> Text -> IO (Either Text Schema)
+fileLoaderWithVersion version uri
+  | isFileURI uri = do
+      let path = T.unpack $ T.drop 7 uri  -- Remove "file://"
+      result <- try $ Aeson.eitherDecodeFileStrict path
+      case result of
+        Left (exc :: IOError) -> pure $ Left $ "File error loading " <> uri <> ": " <> T.pack (show exc)
+        Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
+        Right (Right value) -> case parseSchemaWithVersion version value of
+          Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
+          Right schema -> pure $ Right schema
+  | T.isPrefixOf "/" uri || T.isPrefixOf "./" uri || T.isPrefixOf "../" uri = do
+      -- Relative or absolute file path
+      result <- try $ Aeson.eitherDecodeFileStrict (T.unpack uri)
+      case result of
+        Left (exc :: IOError) -> pure $ Left $ "File error: " <> T.pack (show exc)
+        Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
+        Right (Right value) -> case parseSchemaWithVersion version value of
+          Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
+          Right schema -> pure $ Right schema
+  | not (T.any (== ':') uri) = do
+      -- Plain path without scheme (treat as file path)
+      result <- try $ Aeson.eitherDecodeFileStrict (T.unpack uri)
+      case result of
+        Left (exc :: IOError) -> pure $ Left $ "File error: " <> T.pack (show exc)
+        Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
+        Right (Right value) -> case parseSchemaWithVersion version value of
           Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
           Right schema -> pure $ Right schema
   | otherwise = pure $ Left $ "Not a file URI: " <> uri

@@ -14,9 +14,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.List (sort)
 import GHC.Generics (Generic)
-import System.Directory (listDirectory, doesFileExist, doesDirectoryExist)
+import System.Directory (listDirectory, doesFileExist, doesDirectoryExist, getCurrentDirectory)
 import System.FilePath ((</>), takeExtension, makeRelative)
 import Control.Monad (forM, forM_, when)
+import System.IO (hPutStrLn, stderr)
 
 -- | Test suite file format
 data TestSuiteFile = TestSuiteFile [TestGroup]
@@ -59,21 +60,32 @@ testSuiteLoader :: JsonSchemaVersion -> ReferenceLoader
 testSuiteLoader version uri
   | T.isPrefixOf "http://localhost:1234/" uri = do
       let path = T.drop (T.length "http://localhost:1234/") uri
-          -- Try version-specific directory first, then fall back to common remotes
+          -- The path may already include the version directory (e.g., "draft2020-12/integer.json")
+          -- or it may be version-agnostic (e.g., "integer.json")
           versionDir = case version of
             Draft04 -> "draft4"
             Draft06 -> "draft6"
             Draft07 -> "draft7"
             Draft201909 -> "draft2019-09"
             Draft202012 -> "draft2020-12"
-          versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
+          
+          -- If path already starts with a version directory, use it as-is
+          -- Otherwise, try both version-specific and common paths
           commonPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack path
+          versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
+          
+          -- Check if path already includes version directory
+          pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") path) 
+            ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12"]
       
-      -- Try version-specific path first
-      versionResult <- fileLoader versionPath
-      case versionResult of
-        Right schema -> pure $ Right schema
-        Left _ -> fileLoader commonPath  -- Fall back to common
+      -- If path includes version, just try common path; otherwise try version-specific first
+      if pathIncludesVersion
+        then fileLoaderWithVersion version commonPath
+        else do
+          versionResult <- fileLoaderWithVersion version versionPath
+          case versionResult of
+            Right schema -> pure $ Right schema
+            Left _ -> fileLoaderWithVersion version commonPath  -- Fall back to common
   | normalizeMetaURI uri == Just "http://json-schema.org/draft-07/schema" =
       pure $ Right draft07MetaSchema
   | normalizeMetaURI uri == Just "https://json-schema.org/draft/2020-12/schema" =
@@ -89,13 +101,22 @@ testSuiteLoader version uri
             Draft07 -> "draft7"
             Draft201909 -> "draft2019-09"
             Draft202012 -> "draft2020-12"
-          versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack uri
+          
           commonPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack uri
+          versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack uri
+          
+          -- Check if path already includes version directory
+          pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") uri) 
+            ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12"]
       
-      versionResult <- fileLoader versionPath
-      case versionResult of
-        Right schema -> pure $ Right schema
-        Left _ -> fileLoader commonPath
+      -- If path includes version, just try common path; otherwise try version-specific first
+      if pathIncludesVersion
+        then fileLoaderWithVersion version commonPath
+        else do
+          versionResult <- fileLoaderWithVersion version versionPath
+          case versionResult of
+            Right schema -> pure $ Right schema
+            Left _ -> fileLoaderWithVersion version commonPath
   | otherwise = noOpLoader uri
   where
     normalizeMetaURI u =
