@@ -102,6 +102,7 @@ library
     -std=c11
     -O2
     -DCONFIG_VERSION=\"2024-01-13\"
+    -DCONFIG_ALL_UNICODE
     -D_GNU_SOURCE
 
   -- Disable some warnings from the C code

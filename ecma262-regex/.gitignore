@@ -27,3 +27,6 @@ cabal.project.local~
 *.swo
 *~
 .DS_Store
+
+# Test executables
+test-*

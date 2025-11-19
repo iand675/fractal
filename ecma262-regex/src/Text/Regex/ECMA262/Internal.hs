@@ -163,10 +163,12 @@ getGroupNames ptr = do
 
 -- | Execute regex against a subject string
 -- Returns Nothing if no match, Just (startIdx, endIdx, captures) if match
+-- Note: libregexp's capture_count INCLUDES the full match at index 0
 execRegex :: RegexPtr -> BS.ByteString -> Int -> IO (Maybe (Int, Int, [(Int, Int)]))
 execRegex ptr subject startIdx = do
   captureCount <- getCaptureCount ptr
-  let captureArraySize = (captureCount + 1) * 2
+  -- captureCount already includes the full match, so no need to add 1
+  let captureArraySize = captureCount * 2
 
   BSU.unsafeUseAsCStringLen subject $ \(subjectStr, subjectLen) -> do
     allocaArray captureArraySize $ \captureArray -> do
@@ -175,8 +177,8 @@ execRegex ptr subject startIdx = do
 
       if result == 1
         then do
-          -- Match found, extract captures
-          captures <- extractCaptures captureArray (captureCount + 1) (castPtr subjectStr)
+          -- Match found, extract captures (including full match at index 0)
+          captures <- extractCaptures captureArray captureCount (castPtr subjectStr)
           case captures of
             ((start, end):rest) -> return $ Just (start, end, rest)
             [] -> return Nothing

@@ -167,9 +167,12 @@ matchAll regex subject = go 0
               return (m : rest)
 
 -- | Get the number of capture groups in a compiled regex
+-- Returns the count of explicit capture groups (not including the full match)
 getCaptureCount :: Regex -> IO Int
-getCaptureCount (Regex fptr _ _) =
-  withForeignPtr fptr I.getCaptureCount
+getCaptureCount (Regex fptr _ _) = do
+  count <- withForeignPtr fptr I.getCaptureCount
+  -- libregexp includes the full match in its count, subtract 1
+  return (count - 1)
 
 -- | Get the flags used to compile the regex
 getFlags :: Regex -> IO [RegexFlag]
