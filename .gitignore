@@ -11,6 +11,7 @@ devenv.local.nix
 # Haskell bits
 dist-newstyle/
 .stack-work/
+.stack-work-root/
 
 
 # AI bits
