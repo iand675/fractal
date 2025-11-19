@@ -32,8 +32,13 @@ data ValidationError = ValidationError
 -- This uses the ecma262-regex package which provides full ECMAScript 2023
 -- regex compliance, matching the JSON Schema specification requirements.
 --
--- Per JSON Schema spec, patterns use Unicode semantics for Unicode-aware features.
--- We enable Unicode mode for patterns that need it based on their content.
+-- Per ECMA-262 spec, the Unicode flag (u) must be explicitly enabled via syntax
+-- for Unicode-aware features. We enable it automatically for patterns containing:
+-- - Unicode property escapes (\p{}, \P{})
+-- - Unicode codepoint escapes (\u{})
+--
+-- Note: Without the Unicode flag, \d, \w, \s match only ASCII per ECMA-262 spec.
+-- This is correct behavior - JSON Schema defers to ECMA-262 for regex semantics.
 validatePattern :: Text -> Text -> Either Text Bool
 validatePattern pattern value =
   unsafePerformIO $ do
