@@ -130,6 +130,7 @@ test-suite fractal-openapi-test
     other-modules:    Fractal.OpenApi.JsonSchema.ParserSpec
                     , Fractal.OpenApi.JsonSchema.ValidatorSpec
                     , Fractal.OpenApi.JsonSchema.VocabularySpec
+                    , Fractal.OpenApi.JsonSchema.PatternSpec
                     , Fractal.OpenApi.Codegen.THSpec
     build-tool-depends: hspec-discover:hspec-discover >= 2.10 && < 3
     build-depends:    base >= 4.17.0.0 && < 5
