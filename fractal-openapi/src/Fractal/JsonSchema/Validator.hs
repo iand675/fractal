@@ -41,6 +41,7 @@ import Data.Foldable (toList)
 import Data.Maybe (fromJust, fromMaybe)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
+import qualified Text.Regex.ECMA262 as R
 import qualified Data.UUID as UUID
 import qualified Data.Time.Format.ISO8601 as Time
 import qualified Data.Time.Clock as Time
@@ -727,6 +728,7 @@ validateObjectConstraints ctx obj (Object objMap) =
         , validatePropertyNames ctx obj objMap
         , validateProperties ctx obj objMap
         , validateAdditionalProperties ctx obj objMap
+        , validateDependencies ctx validation objMap
         , validateDependentRequired validation objMap
         , validateDependentSchemas ctx validation objMap
         ]
@@ -968,6 +970,39 @@ validateDependentSchemas ctx validation objMap = case validationDependentSchemas
                 -- Property is present, validate entire object against dependent schema
                 validateValueWithContext ctx depSchema (Object objMap)
           | (propName, depSchema) <- Map.toList depSchemaMap
+          ]
+        failures = [errs | ValidationFailure errs <- results]
+        annotations = [anns | ValidationSuccess anns <- results]
+    in case failures of
+      [] -> ValidationSuccess $ mconcat annotations
+      (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Validate dependencies (draft-04 through draft-07)
+-- Combines property dependencies and schema dependencies in one keyword
+validateDependencies :: ValidationContext -> SchemaValidation -> KeyMap.KeyMap Value -> ValidationResult
+validateDependencies ctx validation objMap = case validationDependencies validation of
+  Nothing -> ValidationSuccess mempty
+  Just depsMap ->
+    let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+        results =
+          [ case KeyMap.lookup (Key.fromText propName) objMap of
+              Nothing -> ValidationSuccess mempty  -- Property not present, rule doesn't apply
+              Just _ ->
+                case dep of
+                  -- Property dependency: check if required properties are present
+                  DependencyProperties requiredDeps ->
+                    let missingDeps = Set.difference requiredDeps presentProps
+                    in if Set.null missingDeps
+                      then ValidationSuccess mempty
+                      else ValidationFailure $ ValidationErrors $ pure $
+                        ValidationError "dependencies" emptyPointer emptyPointer
+                          ("Property '" <> propName <> "' requires these properties: " <>
+                           T.intercalate ", " (Set.toList missingDeps))
+                          Nothing
+                  -- Schema dependency: validate entire object against the schema
+                  DependencySchema depSchema ->
+                    validateValueWithContext ctx depSchema (Object objMap)
+          | (propName, dep) <- Map.toList depsMap
           ]
         failures = [errs | ValidationFailure errs <- results]
         annotations = [anns | ValidationSuccess anns <- results]
@@ -1269,11 +1304,24 @@ resolveDynamicRef (Reference refText) ctx
       _ -> findSchemaWithDynamicAnchor anchor rest
 
 -- | Compile regex pattern
+-- Automatically adds Unicode flag if pattern contains Unicode property escapes
 compileRegex :: Text -> Either Text (Regex.Regex)
 compileRegex pattern =
-  case Regex.compileText pattern [] of
-    Left err -> Left $ T.pack $ "Invalid regex: " <> err
-    Right regex -> Right regex
+  let flags = if needsUnicodeMode pattern then [R.Unicode] else []
+  in case Regex.compileText pattern flags of
+      Left err -> Left $ T.pack $ "Invalid regex: " <> err
+      Right regex -> Right regex
+
+-- | Check if a pattern needs Unicode mode
+-- Unicode property escapes (\p{...} or \P{...}) require Unicode mode
+needsUnicodeMode :: Text -> Bool
+needsUnicodeMode pattern =
+  -- Check for \p{...} or \P{...} patterns (after JSON parsing, these are single backslashes)
+  -- We need to match against the actual text, which has the backslash
+  let hasUnicodeProperty = any (`T.isInfixOf` pattern) ["\\p{", "\\P{"]
+      -- Also check for lowercase variants which are case-sensitive in ECMA262
+      hasLowerProperty = T.isInfixOf "\\p{" pattern
+  in hasUnicodeProperty
 
 -- | Match text against regex
 matchRegex :: Regex.Regex -> Text -> Bool
