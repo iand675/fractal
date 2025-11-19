@@ -44,7 +44,7 @@ import qualified Data.Vector as V
 import GHC.Generics (Generic)
 
 import Hasql.Connection (Connection)
-import Hasql.Session (Session, SessionError)
+import Hasql.Session (Session, QueryError)
 import qualified Hasql.Session as Session
 import Hasql.Statement (Statement)
 import qualified Hasql.Statement as Statement
@@ -188,7 +188,7 @@ updateRetryStatement = Statement.Statement sql encoder Decoders.noResult True
       (Encoders.param $ Encoders.nonNullable Encoders.text)
 
 -- Database operations
-createOutboxTable :: MonadIO m => Connection -> m (Either SessionError ())
+createOutboxTable :: MonadIO m => Connection -> m (Either QueryError ())
 createOutboxTable conn = liftIO $ do
   let transaction = do
         statement () createOutboxTableStatement
@@ -197,7 +197,7 @@ createOutboxTable conn = liftIO $ do
   Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
 writeToOutbox :: (MonadIO m, ToJSON e) =>
-                 Connection -> Text -> Maybe Text -> EventEnvelope e -> m (Either SessionError ())
+                 Connection -> Text -> Maybe Text -> EventEnvelope e -> m (Either QueryError ())
 writeToOutbox conn topic key envelope = liftIO $ do
   now <- getCurrentTime
   let outboxEvent = OutboxEvent
@@ -215,18 +215,18 @@ writeToOutbox conn topic key envelope = liftIO $ do
   let transaction = statement outboxEvent insertOutboxEventStatement
   Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
-getUnprocessedEvents :: MonadIO m => Connection -> Int32 -> m (Either SessionError (Vector OutboxEvent))
+getUnprocessedEvents :: MonadIO m => Connection -> Int32 -> m (Either QueryError (Vector OutboxEvent))
 getUnprocessedEvents conn limit = liftIO $ do
   let transaction = statement limit getUnprocessedEventsStatement
   Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
-markAsProcessed :: MonadIO m => Connection -> UUID -> m (Either SessionError ())
+markAsProcessed :: MonadIO m => Connection -> UUID -> m (Either QueryError ())
 markAsProcessed conn eid = liftIO $ do
   now <- getCurrentTime
   let transaction = statement (eid, now) markAsProcessedStatement
   Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
 
-updateOutboxEvent :: MonadIO m => Connection -> UUID -> Int32 -> Text -> m (Either SessionError ())
+updateOutboxEvent :: MonadIO m => Connection -> UUID -> Int32 -> Text -> m (Either QueryError ())
 updateOutboxEvent conn eid retries errorMsg = liftIO $ do
   let transaction = statement (eid, retries, errorMsg) updateRetryStatement
   Session.run (TransactionSessions.transaction TransactionSessions.ReadCommitted TransactionSessions.Write transaction) conn
@@ -301,5 +301,5 @@ handleRetry config event err = do
       liftIO $ putStrLn $ "Event permanently failed after " <> show retries <> " retries: " <> show (outboxEventId event)
 
 -- Session helper for transactions
-outboxSession :: Connection -> Session a -> IO (Either SessionError a)
+outboxSession :: Connection -> Session a -> IO (Either QueryError a)
 outboxSession = flip Session.run

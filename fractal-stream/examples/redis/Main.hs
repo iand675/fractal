@@ -125,7 +125,7 @@ main = do
   redisEnv <- createRedisStreamEnv defaultConnectInfo
 
   -- Initialize database connection for outbox
-  dbConnResult <- Connection.acquire []
+  dbConnResult <- Connection.acquire "host=localhost port=5432 dbname=outbox user=postgres"
   case dbConnResult of
     Left err -> error $ "Failed to connect to database: " <> show err
     Right dbConn -> do

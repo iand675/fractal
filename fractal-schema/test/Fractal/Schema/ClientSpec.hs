@@ -40,7 +40,6 @@ import Network.Wai.Handler.Warp (run)
 import Fractal.Schema.Registry (app, schemaRegistryServer)
 import Fractal.Schema.Backend.PostgreSQL (HasqlStore(..), runHasqlStore)
 import qualified Hasql.Session as HS
-import qualified Hasql.Connection.Setting as HCS
 
 import Fractal.Schema.Client
 import Fractal.Schema.Types hiding (SchemaRegistryRoutes(..))
@@ -181,7 +180,7 @@ withTestEnvironment action = do
   manager <- newManager tlsManagerSettings
 
   -- Create database connection for server
-  bracket (HC.acquire [])
+  bracket (HC.acquire "host=localhost port=5432 dbname=schema_registry_test user=postgres")
           (\conn -> case conn of
               Right c -> HC.release c
               Left _ -> pure ())
@@ -200,7 +199,7 @@ withTestEnvironment action = do
                 takeMVar serverStarted
 
                 -- Create database connection for client
-                bracket (HC.acquire [])
+                bracket (HC.acquire "host=localhost port=5432 dbname=schema_registry_test user=postgres")
                         (\conn -> case conn of
                             Right c -> HC.release c
                             Left _ -> pure ())
