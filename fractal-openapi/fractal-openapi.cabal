@@ -40,7 +40,7 @@ common extensions
 
 library
     import:           warnings, extensions
-    exposed-modules:  -- JSON Schema Core
+    exposed-modules:
                       Fractal.OpenApi.JsonSchema
                     , Fractal.OpenApi.JsonSchema.Types
                     , Fractal.OpenApi.JsonSchema.Parser
@@ -49,15 +49,11 @@ library
                     , Fractal.OpenApi.JsonSchema.Vocabulary
                     , Fractal.OpenApi.JsonSchema.Dialect
                     , Fractal.OpenApi.JsonSchema.Metadata
-
-                    -- OpenAPI Support
                     , Fractal.OpenApi
                     , Fractal.OpenApi.Types
                     , Fractal.OpenApi.Parser
                     , Fractal.OpenApi.Renderer
                     , Fractal.OpenApi.Validator
-
-                    -- Code Generation
                     , Fractal.OpenApi.Codegen
                     , Fractal.OpenApi.Codegen.Core
                     , Fractal.OpenApi.Codegen.TH
@@ -87,7 +83,7 @@ library
                     -- Parsing
                     , yaml >= 0.11 && < 1
                     , uri-bytestring >= 0.3 && < 1
-                    , regex-tdfa >= 1.3 && < 2
+                    , ecma262-regex
 
                     -- Template Haskell
                     , template-haskell >= 2.19 && < 3
