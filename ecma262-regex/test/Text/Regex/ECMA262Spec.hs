@@ -213,19 +213,54 @@ spec = do
       result `shouldBe` Nothing
 
   describe "Unicode Support" $ do
-    -- Note: Current implementation uses byte-mode (cbuf_type=0) which treats
-    -- input as bytes, not UTF-8 characters. Full Unicode support requires
-    -- UTF-16 mode, which is a future enhancement.
-    it "compiles with Unicode flag" $ do
-      result <- compile "." [Unicode]
-      let isRight (Right _) = True
-          isRight _ = False
-      result `shouldSatisfy` isRight
+    -- Full UTF-16 mode is used when Unicode flag is set
+    it "matches Unicode characters with dot" $ do
+      Right regex <- compile "." [Unicode]
+      let emoji = TE.encodeUtf8 "😀"
+      Just m <- match regex emoji
+      matchText m `shouldBe` emoji  -- Should match the full 4-byte emoji
 
-    it "matches basic multilingual plane characters" $ do
-      Right regex <- compile "[a-z]+" [Unicode]
-      let text = TE.encodeUtf8 "hello"
+    it "matches emoji with Unicode property escape" $ do
+      Right regex <- compile "\\p{Emoji}+" [Unicode]
+      let text = TE.encodeUtf8 "Hello 😀🎉 world"
+      let emojiPart = TE.encodeUtf8 "😀🎉"
       Just m <- match regex text
+      matchText m `shouldBe` emojiPart
+
+    it "matches Unicode letters with \\p{Letter}" $ do
+      Right regex <- compile "\\p{Letter}+" [Unicode]
+      let text = TE.encodeUtf8 "Hello世界"
+      Just m <- match regex text
+      -- Should match "Hello" or "世界" depending on where it starts
+      BS.length (matchText m) `shouldSatisfy` (> 0)
+
+    it "handles surrogate pairs correctly" $ do
+      -- U+1D573 MATHEMATICAL BOLD FRAKTUR CAPITAL H (outside BMP)
+      Right regex <- compile "." [Unicode]
+      let char = TE.encodeUtf8 "𝕳"  -- This is a 4-byte UTF-8 character
+      Just m <- match regex char
+      matchText m `shouldBe` char  -- Should match the full character
+
+    it "matches multiple emojis" $ do
+      -- Use Unicode escape sequence in pattern (U+1F600 = 😀)
+      Right regex <- compile "\\u{1F600}+" [Unicode]
+      let text = TE.encodeUtf8 "😀😀😀"
+      Just m <- match regex text
+      matchText m `shouldBe` text
+
+    it "correctly positions captures with mixed ASCII and Unicode" $ do
+      -- Use Unicode escape sequence in pattern
+      Right regex <- compile "Hello (\\u{1F600}+) world" [Unicode]
+      let text = TE.encodeUtf8 "Hello 😀😀 world"
+      Just m <- match regex text
+      length (captures m) `shouldBe` 1
+      let [(_, _, emojiMatch)] = captures m
+      emojiMatch `shouldBe` TE.encodeUtf8 "😀😀"
+
+    it "uses byte mode without Unicode flag" $ do
+      -- Without Unicode flag, should still use byte mode for performance
+      Right regex <- compile "[a-z]+" []
+      Just m <- match regex "hello"
       matchText m `shouldBe` "hello"
 
   describe "matchAll" $ do

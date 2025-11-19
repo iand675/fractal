@@ -88,6 +88,7 @@ library
   -- C sources from QuickJS libregexp
   c-sources:
     cbits/ecma262_regex_wrapper.c
+    cbits/utf8_utf16.c
     cbits/libregexp.c
     cbits/cutils.c
     cbits/libunicode.c
@@ -97,6 +98,7 @@ library
     libregexp.h
     cutils.h
     libunicode.h
+    utf8_utf16.h
 
   cc-options:
     -std=c11

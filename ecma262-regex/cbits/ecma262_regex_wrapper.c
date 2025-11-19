@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libregexp.h"
+#include "utf8_utf16.h"
 
 /* Callback implementations required by libregexp */
 
@@ -104,9 +105,66 @@ int ecma262_regex_exec(ecma262_regex_t *regex, const uint8_t *subject,
                        int start_index, int subject_len, uint8_t **captures) {
     if (!regex || !regex->bytecode) return -1;
 
-    /* cbuf_type: 0 = 8-bit characters, 1 = 16-bit characters */
-    return lre_exec(captures, regex->bytecode, subject, start_index,
-                   subject_len, 0, NULL);
+    /* Check if Unicode mode is required */
+    int re_flags = lre_get_flags(regex->bytecode);
+    int use_unicode = (re_flags & (LRE_FLAG_UNICODE | LRE_FLAG_UNICODE_SETS)) != 0;
+
+    if (!use_unicode) {
+        /* Byte mode (cbuf_type=0): Fast path for ASCII/byte-oriented matching */
+        return lre_exec(captures, regex->bytecode, subject, start_index,
+                       subject_len, 0, NULL);
+    }
+
+    /* UTF-16 mode (cbuf_type=2): Full Unicode support */
+
+    /* Convert UTF-8 to UTF-16 */
+    int utf16_len = 0;
+    uint16_t *subject_utf16 = utf8_to_utf16(subject, subject_len, &utf16_len);
+    if (!subject_utf16) {
+        return -1; /* Conversion failed */
+    }
+
+    /* Convert start index from UTF-8 byte offset to UTF-16 code unit offset */
+    int start_index_utf16 = utf8_offset_to_utf16(subject, start_index);
+    if (start_index_utf16 < 0) {
+        free(subject_utf16);
+        return -1;
+    }
+
+    /* Allocate capture array for UTF-16 pointers */
+    int num_captures = regex->capture_count * 2;
+    uint16_t **captures_utf16 = (uint16_t **)malloc(num_captures * sizeof(uint16_t *));
+    if (!captures_utf16) {
+        free(subject_utf16);
+        return -1;
+    }
+
+    /* Execute with UTF-16 mode */
+    int result = lre_exec((uint8_t **)captures_utf16, regex->bytecode,
+                         (uint8_t *)subject_utf16, start_index_utf16,
+                         utf16_len, 2, NULL);
+
+    if (result == 1) {
+        /* Match found - convert capture positions from UTF-16 offsets to UTF-8 byte offsets */
+        for (int i = 0; i < num_captures; i += 2) {
+            /* Calculate UTF-16 offsets relative to the start of subject_utf16 */
+            int utf16_start = (int)(captures_utf16[i] - subject_utf16);
+            int utf16_end = (int)(captures_utf16[i + 1] - subject_utf16);
+
+            /* Convert to UTF-8 byte offsets */
+            int utf8_start = utf16_offset_to_utf8(subject, subject_len, utf16_start);
+            int utf8_end = utf16_offset_to_utf8(subject, subject_len, utf16_end);
+
+            /* Store as pointers into the original UTF-8 subject */
+            captures[i] = (uint8_t *)(subject + utf8_start);
+            captures[i + 1] = (uint8_t *)(subject + utf8_end);
+        }
+    }
+
+    free(captures_utf16);
+    free(subject_utf16);
+
+    return result;
 }
 
 /* Check if compilation was successful */

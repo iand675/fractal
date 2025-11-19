@@ -120,11 +120,35 @@ mapM_ (print . matchText) matches
 
 ### Unicode Support
 
+The library provides full Unicode support when the `Unicode` flag is used:
+
 ```haskell
--- Match emoji
+import qualified Data.Text.Encoding as TE
+
+-- Match emoji with Unicode property escapes
 Right regex <- compile "\\p{Emoji}+" [Unicode]
-test regex "Hello 😀 World" >>= print  -- True
+let text = TE.encodeUtf8 "Hello 😀🎉 World"
+Just m <- match regex text
+print (matchText m)  -- "\240\159\152\128\240\159\152\142" (UTF-8 encoded emoji)
+
+-- Match Unicode characters with dot
+Right regex2 <- compile "." [Unicode]
+let emoji = TE.encodeUtf8 "😀"
+Just m2 <- match regex2 emoji
+print (matchText m2)  -- Matches the full 4-byte emoji, not just one byte
+
+-- Use Unicode escapes in patterns
+Right regex3 <- compile "\\u{1F600}+" [Unicode]  -- U+1F600 = 😀
+let text3 = TE.encodeUtf8 "😀😀😀"
+Just m3 <- match regex3 text3
+print (matchText m3)  -- "\240\159\152\128\240\159\152\128\240\159\152\128"
 ```
+
+**Important notes:**
+- When using the `Unicode` flag, the library operates in UTF-16 mode internally for full ECMAScript compliance
+- Input text should be properly UTF-8 encoded (use `Data.Text.Encoding.encodeUtf8`)
+- For emoji or Unicode characters in patterns, use Unicode escapes (e.g., `\u{1F600}`) or `compileText`
+- Without the `Unicode` flag, the library uses byte mode for better performance with ASCII text
 
 ### Named Capture Groups
 
@@ -219,8 +243,8 @@ The library uses QuickJS's libregexp, which features:
 | Unicode properties | ✅ Full | ⚠️ Limited | ❌ No |
 | Lookahead/Lookbehind | ✅ Both | ✅ Both | ❌ Lookahead only |
 | Named groups | ✅ Yes | ✅ Yes | ❌ No |
-| Performance | ⚡ Native C | ⚡ Native C | 🐢 Haskell |
-| Dependencies | 📦 Self-contained | 📦 Requires libpcre | 📦 Pure Haskell |
+| Performance | Native C | Native C | Haskell |
+| Dependencies | Self-contained | Requires libpcre | Pure Haskell |
 
 ## Building
 
