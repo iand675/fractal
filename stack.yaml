@@ -5,6 +5,7 @@ packages:
   - fractal-schema
   - fractal-stream
   - fractal-openapi
+  - ecma262-regex
 
 # Allow newer versions of dependencies
 allow-newer: true

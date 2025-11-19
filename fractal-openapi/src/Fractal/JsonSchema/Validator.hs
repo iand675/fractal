@@ -29,7 +29,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
+import qualified Data.Text.Encoding as TE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -40,8 +40,7 @@ import qualified Data.Scientific as Sci
 import Data.Foldable (toList)
 import Data.Maybe (fromJust, fromMaybe)
 import Data.Vector (Vector, (!), fromList)
-import Text.Regex.TDFA ((=~))
-import qualified Text.Regex.TDFA as Regex
+import qualified Fractal.JsonSchema.Regex as Regex
 import qualified Data.UUID as UUID
 import qualified Data.Time.Format.ISO8601 as Time
 import qualified Data.Time.Clock as Time
@@ -1272,12 +1271,13 @@ resolveDynamicRef (Reference refText) ctx
 -- | Compile regex pattern
 compileRegex :: Text -> Either Text (Regex.Regex)
 compileRegex pattern =
-  -- regex-tdfa's makeRegex never fails, it returns a regex
-  Right $ Regex.makeRegex (T.unpack pattern :: String)
+  case Regex.compileText pattern [] of
+    Left err -> Left $ T.pack $ "Invalid regex: " <> err
+    Right regex -> Right regex
 
 -- | Match text against regex
 matchRegex :: Regex.Regex -> Text -> Bool
-matchRegex regex text = Regex.match regex (T.unpack text)
+matchRegex regex text = Regex.test regex (TE.encodeUtf8 text)
 
 -- | Validate format values
 validateFormatValue :: Format -> Text -> ValidationResult
@@ -1330,7 +1330,7 @@ validateFormatValue _ _ = ValidationSuccess mempty  -- Other formats: annotation
 
 -- Format validators using proper libraries
 isValidEmail :: Text -> Bool
-isValidEmail text = Email.isValid (T.encodeUtf8 text)
+isValidEmail text = Email.isValid (TE.encodeUtf8 text)
 
 isValidURI :: Text -> Bool
 isValidURI text = case URI.parseURI (T.unpack text) of
@@ -1395,17 +1395,23 @@ isValidURIReference text = case URI.parseURIReference (T.unpack text) of
 
 -- Time validator (RFC3339 time format)
 isValidTime :: Text -> Bool
-isValidTime text = 
+isValidTime text =
   -- Simple check for HH:MM:SS or HH:MM:SS.sss format with optional timezone
-  let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?$" :: String
-  in text =~ timePattern && not (T.isInfixOf ":60" text)  -- Reject leap seconds
+  let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?$"
+      matches = case Regex.compileText timePattern [] of
+                  Left _ -> False
+                  Right regex -> Regex.test regex (TE.encodeUtf8 text)
+  in matches && not (T.isInfixOf ":60" text)  -- Reject leap seconds
 
 -- ISO 8601 Duration validator
 isValidDuration :: Text -> Bool
-isValidDuration text = 
+isValidDuration text =
   -- Simple regex for ISO 8601 duration: P[nY][nM][nD][T[nH][nM][nS]]
-  let durationPattern = "^P(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?)?$" :: String
-  in T.isPrefixOf "P" text && text =~ durationPattern
+  let durationPattern = "^P(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?)?$"
+      matches = case Regex.compileText durationPattern [] of
+                  Left _ -> False
+                  Right regex -> Regex.test regex (TE.encodeUtf8 text)
+  in T.isPrefixOf "P" text && matches
 
 -- JSON Pointer validator (RFC 6901)
 isValidJSONPointer :: Text -> Bool

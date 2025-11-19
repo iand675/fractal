@@ -57,15 +57,8 @@ library
                     , Fractal.JsonSchema.Dialect
                     , Fractal.JsonSchema.Vocabulary
                     , Fractal.JsonSchema.ReferenceLoader
+                    , Fractal.JsonSchema.Regex
                     , Fractal.OpenApi
-                    , Fractal.OpenApi.JsonSchema
-                    , Fractal.OpenApi.JsonSchema.Types
-                    , Fractal.OpenApi.JsonSchema.Parser
-                    , Fractal.OpenApi.JsonSchema.Renderer
-                    , Fractal.OpenApi.JsonSchema.Validator
-                    , Fractal.OpenApi.JsonSchema.Vocabulary
-                    , Fractal.OpenApi.JsonSchema.Dialect
-                    , Fractal.OpenApi.JsonSchema.Metadata
                     , Fractal.OpenApi.Types
                     , Fractal.OpenApi.Parser
                     , Fractal.OpenApi.Renderer
@@ -115,10 +108,6 @@ test-suite fractal-openapi-test
                     , Fractal.JsonSchema.ComplianceSpec
                     , Fractal.JsonSchema.IntegrationSpec
                     , Fractal.JsonSchema.JSONPointerSpec
-                    , Fractal.OpenApi.JsonSchema.ParserSpec
-                    , Fractal.OpenApi.JsonSchema.ValidatorSpec
-                    , Fractal.OpenApi.JsonSchema.VocabularySpec
-                    , Fractal.OpenApi.JsonSchema.PatternSpec
                     , Fractal.OpenApi.ParserSpec
                     , Fractal.OpenApi.ValidatorSpec
                     , Fractal.OpenApi.Codegen.THSpec
