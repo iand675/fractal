@@ -1,0 +1,17 @@
+resolver: lts-22.39  # GHC 9.6.6 (closest stable to 9.8)
+
+packages:
+  - fractal-layer
+  - fractal-schema
+  - fractal-stream
+  - fractal-openapi
+
+# Allow newer versions of dependencies
+allow-newer: true
+
+# Extra dependencies not in resolver
+extra-deps: []
+
+# System dependencies
+# system-ghc: false
+

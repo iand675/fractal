@@ -1,0 +1,1190 @@
+{-# LANGUAGE DeriveLift #-}
+{-# LANGUAGE TemplateHaskellQuotes #-}
+
+-- | Core types for JSON Schema representation
+--
+-- This module defines the complete AST for JSON Schema (draft-04 through 2020-12)
+-- with support for all standard keywords and extensible vocabulary system.
+--
+-- Key types:
+--
+-- * 'Schema' - Top-level schema with version and metadata
+-- * 'SchemaCore' - Boolean shorthand or full object schema
+-- * 'SchemaObject' - Complete schema object with all keyword groups
+-- * 'SchemaValidation' - All validation keywords grouped by type
+-- * 'ValidationResult' - Success with annotations or failure with errors
+module Fractal.JsonSchema.Types
+  ( -- * Core Schema Types
+    Schema(..)
+  , JsonSchemaVersion(..)
+  , SchemaCore(..)
+  , SchemaObject(..)
+  , SchemaType(..)
+  , OneOrMany(..)
+  
+    -- * Validation Keywords
+  , SchemaValidation(..)
+  , ArrayItemsValidation(..)
+  , Dependency(..)
+  , Format(..)
+  , Regex(..)
+  
+    -- * Annotations and Metadata
+  , SchemaAnnotations(..)
+  , CodegenAnnotations(..)
+  , NewtypeSpec(..)
+  
+    -- * References and Pointers
+  , Reference(..)
+  , JSONPointer(..)
+  , emptyPointer
+  , (/.)
+  , renderPointer
+  , parsePointer
+  
+    -- * Validation Types
+  , ValidationResult(..)
+  , ValidationSuccess
+  , ValidationAnnotations(..)
+  , ValidationErrors(..)
+  , ValidationError(..)
+  , ValidationContext(..)
+  , ValidationConfig(..)
+  , SchemaRegistry(..)
+  , emptyRegistry
+  , registerSchemaInRegistry
+  , buildRegistryWithExternalRefs
+  , schemaEffectiveBase
+  , resolveAgainstBaseURI
+  , SchemaFingerprint(..)
+  , CustomValidator
+  , ReferenceLoader
+  
+    -- * Helper Functions
+  , isSuccess
+  , isFailure
+  , validationError
+  ) where
+
+import Data.Aeson (Value, ToJSON(..), FromJSON(..), object, (.=), (.:), (.:?), (.!=))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.ByteString (ByteString)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
+import Data.Vector (Vector, fromList)
+import Data.Foldable (toList)
+import Data.Scientific (Scientific)
+import Data.Hashable (Hashable)
+import GHC.Generics (Generic)
+import Numeric.Natural (Natural)
+import Language.Haskell.TH.Syntax (Lift)
+import Network.URI (parseURIReference, uriScheme, uriToString, relativeTo, unEscapeString)
+
+-- | JSON Pointer (RFC 6901) for identifying locations in JSON documents
+newtype JSONPointer = JSONPointer [Text]
+  deriving (Eq, Show, Ord, Generic)
+  deriving newtype (Semigroup, Monoid, ToJSON, FromJSON, Hashable)
+  deriving stock Lift
+
+-- | Empty JSON Pointer (root)
+emptyPointer :: JSONPointer
+emptyPointer = JSONPointer []
+
+-- | Append a segment to a JSON Pointer
+(/.) :: JSONPointer -> Text -> JSONPointer
+(JSONPointer segments) /. seg = JSONPointer (segments <> [seg])
+
+-- | Render JSON Pointer to standard string format (RFC 6901)
+renderPointer :: JSONPointer -> Text
+renderPointer (JSONPointer []) = ""
+renderPointer (JSONPointer segments) = "/" <> T.intercalate "/" (map escapeSegment segments)
+  where
+    -- IMPORTANT: Must escape ~ before / to avoid double-escaping
+    -- First: ~ → ~0
+    -- Then: / → ~1
+    escapeSegment seg = T.replace "/" "~1" $ T.replace "~" "~0" seg
+
+-- | Parse JSON Pointer from string (RFC 6901)
+-- Also handles URL-encoded pointers (e.g., %25 → %)
+parsePointer :: Text -> Either Text JSONPointer
+parsePointer "" = Right emptyPointer
+parsePointer txt
+  | T.head txt /= '/' = Left "JSON Pointer must start with /"
+  | otherwise = Right $ JSONPointer $ map unescapeSegment $ T.splitOn "/" (T.tail txt)
+  where
+    -- IMPORTANT: Must unescape ~1 before ~0 to avoid double-unescaping
+    -- First: URL decode (if pointer was in a URI fragment)
+    -- Then: ~1 → /
+    -- Finally: ~0 → ~
+    unescapeSegment seg = 
+      let urlDecoded = urlDecode seg
+          step1 = T.replace "~1" "/" urlDecoded
+          step2 = T.replace "~0" "~" step1
+      in step2
+    
+    -- URL decode percent-encoded sequences
+    urlDecode s = T.pack $ unEscapeString (T.unpack s)
+
+-- | Reference to another schema ($ref, $dynamicRef)
+newtype Reference = Reference Text
+  deriving (Eq, Show, Ord, Generic)
+  deriving newtype (ToJSON, FromJSON, Hashable)
+  deriving stock Lift
+
+-- | Regular expression pattern
+newtype Regex = Regex Text
+  deriving (Eq, Show, Ord, Generic)
+  deriving newtype (ToJSON, FromJSON, Hashable)
+  deriving stock Lift
+
+-- | JSON Schema specification versions
+data JsonSchemaVersion
+  = Draft04        -- ^ http://json-schema.org/draft-04/schema#
+  | Draft06        -- ^ http://json-schema.org/draft-06/schema#
+  | Draft07        -- ^ http://json-schema.org/draft-07/schema#
+  | Draft201909    -- ^ https://json-schema.org/draft/2019-09/schema
+  | Draft202012    -- ^ https://json-schema.org/draft/2020-12/schema
+  deriving (Eq, Show, Ord, Enum, Bounded, Generic)
+  deriving stock Lift
+
+instance ToJSON JsonSchemaVersion where
+  toJSON Draft04 = "http://json-schema.org/draft-04/schema#"
+  toJSON Draft06 = "http://json-schema.org/draft-06/schema#"
+  toJSON Draft07 = "http://json-schema.org/draft-07/schema#"
+  toJSON Draft201909 = "https://json-schema.org/draft/2019-09/schema"
+  toJSON Draft202012 = "https://json-schema.org/draft/2020-12/schema"
+
+instance FromJSON JsonSchemaVersion where
+  parseJSON = Aeson.withText "JsonSchemaVersion" $ \case
+    "http://json-schema.org/draft-04/schema#" -> pure Draft04
+    "http://json-schema.org/draft-06/schema#" -> pure Draft06
+    "http://json-schema.org/draft-07/schema#" -> pure Draft07
+    "https://json-schema.org/draft/2019-09/schema" -> pure Draft201909
+    "https://json-schema.org/draft/2020-12/schema" -> pure Draft202012
+    other -> fail $ "Unknown schema version: " <> T.unpack other
+
+-- | One or many values (for type unions)
+data OneOrMany a
+  = One a
+  | Many (NonEmpty a)
+  deriving (Eq, Show, Ord, Functor, Foldable, Traversable, Generic)
+  deriving stock Lift
+
+-- | JSON Schema primitive types
+data SchemaType
+  = NullType
+  | BooleanType
+  | ObjectType
+  | ArrayType
+  | NumberType
+  | StringType
+  | IntegerType
+  deriving (Eq, Show, Ord, Enum, Bounded, Generic)
+  deriving stock Lift
+
+instance ToJSON SchemaType where
+  toJSON NullType = "null"
+  toJSON BooleanType = "boolean"
+  toJSON ObjectType = "object"
+  toJSON ArrayType = "array"
+  toJSON NumberType = "number"
+  toJSON StringType = "string"
+  toJSON IntegerType = "integer"
+
+instance FromJSON SchemaType where
+  parseJSON = Aeson.withText "SchemaType" $ \case
+    "null" -> pure NullType
+    "boolean" -> pure BooleanType
+    "object" -> pure ObjectType
+    "array" -> pure ArrayType
+    "number" -> pure NumberType
+    "string" -> pure StringType
+    "integer" -> pure IntegerType
+    other -> fail $ "Unknown schema type: " <> T.unpack other
+
+-- | Semantic format specifiers
+data Format
+  = DateTime | Date | Time | Duration
+  | Email | IDNEmail
+  | Hostname | IDNHostname
+  | IPv4 | IPv6
+  | URI | URIRef | IRI | IRIRef
+  | URITemplate
+  | JSONPointerFormat | RelativeJSONPointerFormat
+  | RegexFormat
+  | UUID
+  | CustomFormat Text
+  deriving (Eq, Show, Ord, Generic)
+  deriving stock Lift
+
+instance ToJSON Format where
+  toJSON DateTime = "date-time"
+  toJSON Date = "date"
+  toJSON Time = "time"
+  toJSON Duration = "duration"
+  toJSON Email = "email"
+  toJSON IDNEmail = "idn-email"
+  toJSON Hostname = "hostname"
+  toJSON IDNHostname = "idn-hostname"
+  toJSON IPv4 = "ipv4"
+  toJSON IPv6 = "ipv6"
+  toJSON URI = "uri"
+  toJSON URIRef = "uri-reference"
+  toJSON IRI = "iri"
+  toJSON IRIRef = "iri-reference"
+  toJSON URITemplate = "uri-template"
+  toJSON JSONPointerFormat = "json-pointer"
+  toJSON RelativeJSONPointerFormat = "relative-json-pointer"
+  toJSON RegexFormat = "regex"
+  toJSON UUID = "uuid"
+  toJSON (CustomFormat t) = Aeson.String t
+
+instance FromJSON Format where
+  parseJSON = Aeson.withText "Format" $ \case
+    "date-time" -> pure DateTime
+    "date" -> pure Date
+    "time" -> pure Time
+    "duration" -> pure Duration
+    "email" -> pure Email
+    "idn-email" -> pure IDNEmail
+    "hostname" -> pure Hostname
+    "idn-hostname" -> pure IDNHostname
+    "ipv4" -> pure IPv4
+    "ipv6" -> pure IPv6
+    "uri" -> pure URI
+    "uri-reference" -> pure URIRef
+    "iri" -> pure IRI
+    "iri-reference" -> pure IRIRef
+    "uri-template" -> pure URITemplate
+    "json-pointer" -> pure JSONPointerFormat
+    "relative-json-pointer" -> pure RelativeJSONPointerFormat
+    "regex" -> pure RegexFormat
+    "uuid" -> pure UUID
+    other -> pure (CustomFormat other)
+
+-- | Array items validation (version-dependent)
+data ArrayItemsValidation
+  = ItemsSchema Schema
+    -- ^ All items must match this schema
+  | ItemsTuple (NonEmpty Schema) (Maybe Schema)
+    -- ^ Tuple: positional schemas + optional additional items schema
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+instance ToJSON ArrayItemsValidation where
+  toJSON (ItemsSchema schema) = toJSON schema
+  toJSON (ItemsTuple schemas Nothing) = Aeson.Array $ fromList $ map toJSON $ NE.toList schemas
+  toJSON (ItemsTuple schemas (Just additional)) = Aeson.object
+    [ "items" .= NE.toList schemas
+    , "additionalItems" .= additional
+    ]
+
+instance FromJSON ArrayItemsValidation where
+  parseJSON v@(Aeson.Object _) = ItemsSchema <$> parseJSON v
+  parseJSON (Aeson.Array arr) = do
+    schemas <- traverse parseJSON (toList arr)
+    case NE.nonEmpty schemas of
+      Just ne -> pure $ ItemsTuple ne Nothing
+      Nothing -> fail "items array cannot be empty"
+  parseJSON _ = fail "items must be object or array"
+
+-- | Dependency specification (draft-04 through draft-07, deprecated in 2019-09+)
+data Dependency
+  = DependencyProperties (Set Text)
+    -- ^ If property exists, these properties must exist
+  | DependencySchema Schema
+    -- ^ If property exists, this schema must validate
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+instance ToJSON Dependency where
+  toJSON (DependencyProperties props) = toJSON $ Set.toList props
+  toJSON (DependencySchema schema) = toJSON schema
+
+instance FromJSON Dependency where
+  parseJSON v@(Aeson.Object _) = DependencySchema <$> parseJSON v
+  parseJSON (Aeson.Array arr) = DependencyProperties . Set.fromList <$> traverse parseJSON (toList arr)
+  parseJSON _ = fail "dependency must be object or array"
+
+-- | Schema validation keywords grouped by category
+data SchemaValidation = SchemaValidation
+  { -- === Numeric Validation ===
+    validationMultipleOf :: Maybe Scientific
+    -- ^ Number must be multiple of this value (must be > 0)
+  
+  , validationMaximum :: Maybe Scientific
+    -- ^ Maximum value (inclusive unless exclusiveMaximum set)
+  
+  , validationExclusiveMaximum :: Maybe (Either Bool Scientific)
+    -- ^ Left Bool: draft-04 (modifies maximum)
+    -- ^ Right Scientific: draft-06+ (standalone constraint)
+  
+  , validationMinimum :: Maybe Scientific
+    -- ^ Minimum value (inclusive unless exclusiveMinimum set)
+  
+  , validationExclusiveMinimum :: Maybe (Either Bool Scientific)
+    -- ^ Left Bool: draft-04, Right Scientific: draft-06+
+
+    -- === String Validation ===
+  , validationMaxLength :: Maybe Natural
+    -- ^ Maximum string length (in Unicode characters)
+  
+  , validationMinLength :: Maybe Natural
+    -- ^ Minimum string length (in Unicode characters)
+  
+  , validationPattern :: Maybe Regex
+    -- ^ Regular expression pattern (ECMA-262)
+  
+  , validationFormat :: Maybe Format
+    -- ^ Semantic format (email, uri, date-time, etc.)
+
+    -- === Array Validation ===
+  , validationItems :: Maybe ArrayItemsValidation
+    -- ^ Items validation (version-dependent structure)
+  
+  , validationPrefixItems :: Maybe (NonEmpty Schema)
+    -- ^ Tuple validation (2020-12+)
+  
+  , validationContains :: Maybe Schema
+    -- ^ At least one item must match
+  
+  , validationMaxItems :: Maybe Natural
+    -- ^ Maximum array length
+  
+  , validationMinItems :: Maybe Natural
+    -- ^ Minimum array length
+  
+  , validationUniqueItems :: Maybe Bool
+    -- ^ All items must be unique
+  
+  , validationMaxContains :: Maybe Natural
+    -- ^ Maximum items matching 'contains' (2019-09+)
+  
+  , validationMinContains :: Maybe Natural
+    -- ^ Minimum items matching 'contains' (2019-09+)
+
+    -- === Object Validation ===
+  , validationProperties :: Maybe (Map Text Schema)
+    -- ^ Property-specific schemas
+  
+  , validationPatternProperties :: Maybe (Map Regex Schema)
+    -- ^ Regex pattern matching for property names
+  
+  , validationAdditionalProperties :: Maybe Schema
+    -- ^ Schema for additional properties
+  
+  , validationUnevaluatedProperties :: Maybe Schema
+    -- ^ Schema for unevaluated properties (2019-09+)
+  
+  , validationPropertyNames :: Maybe Schema
+    -- ^ Schema that property names must satisfy
+  
+  , validationMaxProperties :: Maybe Natural
+    -- ^ Maximum number of properties
+  
+  , validationMinProperties :: Maybe Natural
+    -- ^ Minimum number of properties
+  
+  , validationRequired :: Maybe (Set Text)
+    -- ^ Set of required property names
+  
+  , validationDependentRequired :: Maybe (Map Text (Set Text))
+    -- ^ Property dependencies for required fields (2019-09+)
+  
+  , validationDependentSchemas :: Maybe (Map Text Schema)
+    -- ^ Property dependencies with schemas (2019-09+)
+  
+  , validationDependencies :: Maybe (Map Text Dependency)
+    -- ^ Property dependencies (draft-04/06/07, deprecated in 2019-09+)
+  }
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Code generation annotations (custom vocabulary)
+data CodegenAnnotations = CodegenAnnotations
+  { codegenTypeName :: Maybe Text
+    -- ^ Override generated type name
+  
+  , codegenNewtype :: Maybe NewtypeSpec
+    -- ^ Generate newtype instead of type alias
+  
+  , codegenFieldMapping :: Maybe (Map Text Text)
+    -- ^ Map JSON field names to Haskell field names
+  
+  , codegenOmitEmpty :: Maybe Bool
+    -- ^ Omit null/empty values in ToJSON
+  
+  , codegenStrictFields :: Maybe Bool
+    -- ^ Use strict fields (BangPatterns)
+  
+  , codegenCustomStrategy :: Maybe Text
+    -- ^ Name of custom generation strategy
+  
+  , codegenImports :: [Text]
+    -- ^ Additional imports needed for generated code
+  }
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Newtype generation specification
+data NewtypeSpec = NewtypeSpec
+  { newtypeConstructor :: Text
+    -- ^ Constructor name (must be valid Haskell identifier)
+  
+  , newtypeModule :: Maybe Text
+    -- ^ Module to generate newtype in
+  
+  , newtypeValidation :: Maybe Text
+    -- ^ Validation function name
+  
+  , newtypeInstances :: [Text]
+    -- ^ Additional typeclass instances to derive
+  }
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Schema annotations and metadata
+data SchemaAnnotations = SchemaAnnotations
+  { annotationTitle :: Maybe Text
+    -- ^ Short description
+  
+  , annotationDescription :: Maybe Text
+    -- ^ Detailed description (may be Markdown)
+  
+  , annotationDefault :: Maybe Value
+    -- ^ Default value for this schema
+  
+  , annotationExamples :: [Value]
+    -- ^ Example values
+  
+  , annotationDeprecated :: Maybe Bool
+    -- ^ Whether this schema is deprecated (2019-09+)
+  
+  , annotationReadOnly :: Maybe Bool
+    -- ^ Property is read-only
+  
+  , annotationWriteOnly :: Maybe Bool
+    -- ^ Property is write-only (invariant: not both readOnly and writeOnly)
+  
+  , annotationComment :: Maybe Text
+    -- ^ Comments for schema authors ($comment, draft-07+)
+
+    -- === Custom Codegen Annotations ===
+  , annotationCodegen :: Maybe CodegenAnnotations
+    -- ^ Code generation hints (custom extension)
+  }
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Core schema structure: boolean shorthand or full object
+data SchemaCore
+  = BooleanSchema Bool
+    -- ^ true = allow all, false = allow none
+  | ObjectSchema SchemaObject
+    -- ^ Full schema object with keywords
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Complete schema object with all keyword groups
+data SchemaObject = SchemaObject
+  { -- === Type Keywords ===
+    schemaType :: Maybe (OneOrMany SchemaType)
+    -- ^ Type constraint (single type or union)
+  
+  , schemaEnum :: Maybe (NonEmpty Value)
+    -- ^ Enumeration of allowed values (at least one)
+  
+  , schemaConst :: Maybe Value
+    -- ^ Single allowed value (draft-06+)
+
+    -- === Reference Keywords ===
+  , schemaRef :: Maybe Reference
+    -- ^ Reference to another schema ($ref)
+  
+  , schemaDynamicRef :: Maybe Reference
+    -- ^ Dynamic reference (2020-12+)
+  
+  , schemaAnchor :: Maybe Text
+    -- ^ Named anchor for references ($anchor, 2019-09+)
+  
+  , schemaDynamicAnchor :: Maybe Text
+    -- ^ Dynamic anchor (2020-12+)
+
+    -- === Composition Keywords ===
+  , schemaAllOf :: Maybe (NonEmpty Schema)
+    -- ^ Must satisfy all subschemas
+  
+  , schemaAnyOf :: Maybe (NonEmpty Schema)
+    -- ^ Must satisfy at least one subschema
+  
+  , schemaOneOf :: Maybe (NonEmpty Schema)
+    -- ^ Must satisfy exactly one subschema
+  
+  , schemaNot :: Maybe Schema
+    -- ^ Must NOT satisfy this subschema
+
+    -- === Conditional Keywords (draft-07+) ===
+  , schemaIf :: Maybe Schema
+    -- ^ Condition schema
+  
+  , schemaThen :: Maybe Schema
+    -- ^ Applied if 'if' validates successfully
+  
+  , schemaElse :: Maybe Schema
+    -- ^ Applied if 'if' validates unsuccessfully
+
+    -- === Validation Substructure ===
+  , schemaValidation :: SchemaValidation
+    -- ^ All validation keywords
+
+    -- === Annotation/Metadata ===
+  , schemaAnnotations :: SchemaAnnotations
+    -- ^ Annotations (title, description, examples, etc.)
+
+    -- === Definition Storage ===
+  , schemaDefs :: Map Text Schema
+    -- ^ Local schema definitions ($defs or definitions)
+  }
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Top-level JSON Schema document
+data Schema = Schema
+  { schemaVersion :: Maybe JsonSchemaVersion
+    -- ^ Schema version from $schema keyword. Nothing means latest version.
+  
+  , schemaId :: Maybe Text
+    -- ^ Unique identifier for this schema ($id keyword)
+    -- Invariant: Must be absolute URI if present
+  
+  , schemaCore :: SchemaCore
+    -- ^ Core schema structure (boolean or object schema)
+  
+  , schemaVocabulary :: Maybe (Map Text Bool)
+    -- ^ Vocabularies and whether they're required ($vocabulary keyword)
+    -- Only valid for 2019-09+
+    -- Invariant: All required vocabularies must be understood
+  
+  , schemaExtensions :: Map Text Value
+    -- ^ Unknown keywords collected during parsing
+  }
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Collected annotations from validation
+newtype ValidationAnnotations = ValidationAnnotations 
+  { unAnnotations :: Map JSONPointer (Map Text Value) }
+  deriving (Eq, Show, Generic)
+
+instance Semigroup ValidationAnnotations where
+  ValidationAnnotations a <> ValidationAnnotations b =
+    ValidationAnnotations (Map.unionWith (<>) a b)
+
+instance Monoid ValidationAnnotations where
+  mempty = ValidationAnnotations Map.empty
+
+-- Custom ToJSON/FromJSON using JSONPointer as text keys
+instance ToJSON ValidationAnnotations where
+  toJSON (ValidationAnnotations m) =
+    Aeson.Object $ KeyMap.fromList [(Key.fromText $ renderPointer k, toJSON v) | (k, v) <- Map.toList m]
+
+instance FromJSON ValidationAnnotations where
+  parseJSON = Aeson.withObject "ValidationAnnotations" $ \obj -> do
+    pairs <- sequence
+      [ case parsePointer (Key.toText k) of
+          Right ptr -> do
+            innerMap <- parseJSON v
+            pure (ptr, innerMap)
+          Left err -> fail $ T.unpack err
+      | (k, v) <- KeyMap.toList obj
+      ]
+    pure $ ValidationAnnotations $ Map.fromList pairs
+
+-- | Non-empty list of validation errors
+newtype ValidationErrors = ValidationErrors 
+  { unErrors :: NonEmpty ValidationError }
+  deriving (Eq, Show, Generic)
+  deriving newtype (Semigroup)
+
+-- | Single validation error with context
+data ValidationError = ValidationError
+  { errorKeyword :: Text
+    -- ^ Keyword that failed (e.g., "minimum", "pattern")
+  
+  , errorSchemaPath :: JSONPointer
+    -- ^ Path to the failing keyword in the schema
+  
+  , errorInstancePath :: JSONPointer
+    -- ^ Path to the failing value in the instance
+  
+  , errorMessage :: Text
+    -- ^ Human-readable error message
+  
+  , errorDetails :: Maybe Value
+    -- ^ Additional context (actual value, expected constraint, etc.)
+  }
+  deriving (Eq, Show, Generic)
+
+instance ToJSON ValidationError where
+  toJSON err = object
+    [ "keyword" .= errorKeyword err
+    , "schemaPath" .= renderPointer (errorSchemaPath err)
+    , "instancePath" .= renderPointer (errorInstancePath err)
+    , "message" .= errorMessage err
+    , "details" .= errorDetails err
+    ]
+
+-- | Result of validation: success with annotations or failure with errors
+data ValidationResult
+  = ValidationSuccess ValidationAnnotations
+    -- ^ Validation succeeded, collected annotations
+  | ValidationFailure ValidationErrors
+    -- ^ Validation failed with one or more errors
+  deriving (Eq, Show, Generic)
+
+-- | Type alias for successful validation
+type ValidationSuccess = ValidationAnnotations
+
+-- | Check if validation succeeded
+isSuccess :: ValidationResult -> Bool
+isSuccess (ValidationSuccess _) = True
+isSuccess _ = False
+
+-- | Check if validation failed
+isFailure :: ValidationResult -> Bool
+isFailure = not . isSuccess
+
+-- | Create a simple validation error
+validationError :: Text -> ValidationError
+validationError msg = ValidationError
+  { errorKeyword = "validation"
+  , errorSchemaPath = emptyPointer
+  , errorInstancePath = emptyPointer
+  , errorMessage = msg
+  , errorDetails = Nothing
+  }
+
+-- | Schema fingerprint for cycle detection
+newtype SchemaFingerprint = SchemaFingerprint ByteString
+  deriving (Eq, Ord, Show, Generic)
+  deriving newtype (Hashable)
+
+-- | Split a URI into its document part and optional fragment (without the '#')
+splitUriFragment :: Text -> (Text, Maybe Text)
+splitUriFragment uriText =
+  let (docPart, fragmentWithHash) = T.breakOn "#" uriText
+  in if T.null fragmentWithHash
+        then (uriText, Nothing)
+        else (docPart, let fragment = T.drop 1 fragmentWithHash
+                       in if T.null fragment then Nothing else Just fragment)
+
+-- | Ensure a list of texts has no duplicates while preserving original order
+uniqueTexts :: [Text] -> [Text]
+uniqueTexts = go Set.empty
+  where
+    go _ [] = []
+    go seen (x:xs)
+      | Set.member x seen = go seen xs
+      | otherwise = x : go (Set.insert x seen) xs
+
+-- | Ensure a list of anchor pairs has no duplicates while preserving order
+uniqueAnchors :: [(Text, Text)] -> [(Text, Text)]
+uniqueAnchors = go Set.empty
+  where
+    go _ [] = []
+    go seen (x@(baseUri, anchorName) : xs)
+      | Set.member x seen = go seen xs
+      | otherwise = x : go (Set.insert x seen) xs
+
+-- | Resolve a URI against an optional base according to RFC 3986
+resolveAgainstBaseURI :: Maybe Text -> Text -> Text
+resolveAgainstBaseURI parentBase refText =
+  case parseURIReference (T.unpack refText) of
+    Nothing -> refText
+    Just refUri
+      | not (null (uriScheme refUri)) -> refText  -- Already absolute
+      | otherwise ->
+          case parentBase of
+            Nothing -> refText
+            Just baseText ->
+              let (baseDoc, _) = splitUriFragment baseText
+              in case parseURIReference (T.unpack baseDoc) of
+                   Nothing -> refText
+                   Just baseUri ->
+                     T.pack $ uriToString id (refUri `relativeTo` baseUri) ""
+
+-- | Registration metadata computed for a schema relative to a parent base URI
+data SchemaRegistrationInfo = SchemaRegistrationInfo
+  { sriBaseURI :: Maybe Text
+  , sriSchemaKeys :: [Text]
+  , sriAnchors :: [(Text, Text)]
+  }
+
+schemaRegistrationInfo :: Maybe Text -> Schema -> SchemaRegistrationInfo
+schemaRegistrationInfo parentBase schema =
+  case schemaId schema of
+    Nothing ->
+      mk parentBase [] []
+    Just idText
+      | T.isPrefixOf "#" idText ->
+          let anchorName = T.drop 1 idText
+              baseForAnchor = maybe "" id parentBase
+              schemaKeys =
+                case parentBase of
+                  Just baseUri | not (T.null anchorName) -> [baseUri <> "#" <> anchorName]
+                  _ -> []
+              anchors =
+                if T.null anchorName
+                  then []
+                  else [(baseForAnchor, anchorName)]
+          in mk parentBase schemaKeys anchors
+      | otherwise ->
+          let resolved = resolveAgainstBaseURI parentBase idText
+              (docUri, maybeFragment) = splitUriFragment resolved
+              canonical =
+                if T.null docUri
+                  then resolved
+                  else docUri
+              baseUri =
+                if T.null canonical
+                  then Nothing
+                  else Just canonical
+              schemaKeys =
+                if T.null canonical
+                  then []
+                  else [canonical]
+              anchorsFromId =
+                case maybeFragment of
+                  Just fragmentName | not (T.null fragmentName) ->
+                    [(canonical, fragmentName)]
+                  _ -> []
+          in mk baseUri schemaKeys anchorsFromId
+  where
+    mk base keys anchors = SchemaRegistrationInfo
+      { sriBaseURI = base
+      , sriSchemaKeys = uniqueTexts keys
+      , sriAnchors = uniqueAnchors anchors
+      }
+
+-- | Effective base URI for a schema relative to a parent base URI
+schemaEffectiveBase :: Maybe Text -> Schema -> Maybe Text
+schemaEffectiveBase parentBase schema =
+  sriBaseURI (schemaRegistrationInfo parentBase schema)
+
+-- | Registry of schemas for reference resolution
+data SchemaRegistry = SchemaRegistry
+  { registrySchemas :: Map Text Schema
+    -- ^ URI -> Schema mapping
+  
+  , registryAnchors :: Map (Text, Text) Schema
+    -- ^ (Base URI, anchor name) -> Schema mapping
+  
+  , registryDynamicAnchors :: Map (Text, Text) Schema
+    -- ^ Dynamic anchors (2020-12+)
+  }
+  deriving (Eq, Show, Generic)
+
+instance Semigroup SchemaRegistry where
+  r1 <> r2 = SchemaRegistry
+    { registrySchemas = registrySchemas r1 <> registrySchemas r2
+    , registryAnchors = registryAnchors r1 <> registryAnchors r2
+    , registryDynamicAnchors = registryDynamicAnchors r1 <> registryDynamicAnchors r2
+    }
+
+instance Monoid SchemaRegistry where
+  mempty = emptyRegistry
+
+-- | Empty schema registry
+emptyRegistry :: SchemaRegistry
+emptyRegistry = SchemaRegistry
+  { registrySchemas = Map.empty
+  , registryAnchors = Map.empty
+  , registryDynamicAnchors = Map.empty
+  }
+
+-- | Register a schema and all its sub-schemas in the registry
+-- Walks the schema tree and registers:
+-- - Schemas with $id (both absolute and fragment-only)
+-- - Schemas with $anchor
+-- - Schemas with $dynamicAnchor (2020-12+)
+registerSchemaInRegistry :: Maybe Text -> Schema -> SchemaRegistry -> SchemaRegistry
+registerSchemaInRegistry baseURI schema registry =
+  let info = schemaRegistrationInfo baseURI schema
+      currentBase = sriBaseURI info
+      registryWithSchemas =
+        foldr insertSchemaKey registry (sriSchemaKeys info)
+      registryWithAnchors =
+        foldr insertAnchorPair registryWithSchemas (sriAnchors info)
+  in case schemaCore schema of
+       BooleanSchema _ -> registryWithAnchors
+       ObjectSchema obj ->
+         let anchorBase =
+               maybe "" id $
+                 case currentBase of
+                   Just uri -> Just uri
+                   Nothing -> baseURI
+             registryWithExplicitAnchors =
+               let regWithAnchor =
+                     maybe registryWithAnchors
+                       (\anchorName -> insertAnchor anchorBase anchorName registryWithAnchors)
+                       (schemaAnchor obj)
+                   regWithDynamic =
+                     maybe regWithAnchor
+                       (\dynAnchor -> insertDynamicAnchor anchorBase dynAnchor regWithAnchor)
+                       (schemaDynamicAnchor obj)
+               in regWithDynamic
+         in registerObjectSubSchemas currentBase obj registryWithExplicitAnchors
+  where
+    insertSchemaKey key reg =
+      reg { registrySchemas = Map.insert key schema (registrySchemas reg) }
+
+    insertAnchorPair (baseKey, anchorName) reg =
+      reg { registryAnchors = Map.insert (baseKey, anchorName) schema (registryAnchors reg) }
+
+    insertAnchor baseKey anchorName reg =
+      reg { registryAnchors = Map.insert (baseKey, anchorName) schema (registryAnchors reg) }
+
+    insertDynamicAnchor baseKey anchorName reg =
+      reg { registryDynamicAnchors = Map.insert (baseKey, anchorName) schema (registryDynamicAnchors reg) }
+
+    registerObjectSubSchemas :: Maybe Text -> SchemaObject -> SchemaRegistry -> SchemaRegistry
+    registerObjectSubSchemas uri obj reg =
+      let -- Register definitions
+          reg1 = foldr (\defSchema r -> registerSchemaInRegistry uri defSchema r) 
+                      reg (Map.elems $ schemaDefs obj)
+          
+          -- Register composition schemas
+          reg2 = maybe reg1 (\schemas -> foldr (\s r -> registerSchemaInRegistry uri s r) reg1 (NE.toList schemas)) 
+                      (schemaAllOf obj)
+          reg3 = maybe reg2 (\schemas -> foldr (\s r -> registerSchemaInRegistry uri s r) reg2 (NE.toList schemas))
+                      (schemaAnyOf obj)
+          reg4 = maybe reg3 (\schemas -> foldr (\s r -> registerSchemaInRegistry uri s r) reg3 (NE.toList schemas))
+                      (schemaOneOf obj)
+          reg5 = maybe reg4 (\s -> registerSchemaInRegistry uri s reg4) (schemaNot obj)
+          
+          -- Register conditional schemas
+          reg6 = maybe reg5 (\s -> registerSchemaInRegistry uri s reg5) (schemaIf obj)
+          reg7 = maybe reg6 (\s -> registerSchemaInRegistry uri s reg6) (schemaThen obj)
+          reg8 = maybe reg7 (\s -> registerSchemaInRegistry uri s reg7) (schemaElse obj)
+          
+          -- Register property schemas
+          validation = schemaValidation obj
+          reg9 = maybe reg8 (\props -> foldr (\s r -> registerSchemaInRegistry uri s r) reg8 (Map.elems props))
+                      (validationProperties validation)
+          reg10 = maybe reg9 (\patterns -> foldr (\s r -> registerSchemaInRegistry uri s r) reg9 (Map.elems patterns))
+                       (validationPatternProperties validation)
+          reg11 = maybe reg10 (\s -> registerSchemaInRegistry uri s reg10) 
+                       (validationAdditionalProperties validation)
+          reg12 = maybe reg11 (\s -> registerSchemaInRegistry uri s reg11)
+                       (validationUnevaluatedProperties validation)
+          
+          -- Register array schemas
+          reg13 = case validationItems validation of
+            Just (ItemsSchema s) -> registerSchemaInRegistry uri s reg12
+            Just (ItemsTuple schemas maybeAdditional) ->
+              let r = foldr (\s r -> registerSchemaInRegistry uri s r) reg12 (NE.toList schemas)
+              in maybe r (\s -> registerSchemaInRegistry uri s r) maybeAdditional
+            Nothing -> reg12
+          reg14 = maybe reg13 (\schemas -> foldr (\s r -> registerSchemaInRegistry uri s r) reg13 (NE.toList schemas))
+                       (validationPrefixItems validation)
+          reg15 = maybe reg14 (\s -> registerSchemaInRegistry uri s reg14) (validationContains validation)
+          
+          -- Register dependent schemas
+          reg16 = maybe reg15 (\deps -> foldr (\s r -> registerSchemaInRegistry uri s r) reg15 (Map.elems deps))
+                       (validationDependentSchemas validation)
+      in reg16
+
+-- | Build a registry with external references loaded
+-- This function:
+-- 1. Registers the root schema and all sub-schemas
+-- 2. Finds all external $ref values
+-- 3. Uses the ReferenceLoader to fetch external schemas
+-- 4. Recursively registers loaded schemas
+--
+-- This should be called before validation to enable external $ref resolution
+buildRegistryWithExternalRefs 
+  :: ReferenceLoader           -- ^ Loader for external schemas
+  -> Schema                     -- ^ Root schema
+  -> IO (Either Text SchemaRegistry)  -- ^ Built registry or error
+buildRegistryWithExternalRefs loader rootSchema = do
+  let initialRegistry = registerSchemaInRegistry Nothing rootSchema emptyRegistry
+      rootInfo = schemaRegistrationInfo Nothing rootSchema
+      initialRefs = uniqueTexts $ collectExternalReferenceDocs (sriBaseURI rootInfo) rootSchema
+  loadExternal initialRegistry Set.empty initialRefs
+  where
+    loadExternal :: SchemaRegistry -> Set Text -> [Text] -> IO (Either Text SchemaRegistry)
+    loadExternal registry _ [] = pure $ Right registry
+    loadExternal registry loaded (uri:uris)
+      | T.null uri = loadExternal registry loaded uris
+      | Set.member uri loaded = loadExternal registry loaded uris
+      | Map.member uri (registrySchemas registry) = loadExternal registry loaded uris
+      | otherwise = do
+          result <- loader uri
+          case result of
+            Left err -> pure $ Left err
+            Right schema -> do
+              let registry' = registerSchemaInRegistry (Just uri) schema registry
+                  info = schemaRegistrationInfo (Just uri) schema
+                  newRefs = uniqueTexts $ collectExternalReferenceDocs (sriBaseURI info) schema
+                  unseen = [ref | ref <- newRefs, not (Set.member ref loaded), not (Map.member ref (registrySchemas registry'))]
+              loadExternal registry' (Set.insert uri loaded) (uris <> unseen)
+
+    collectExternalReferenceDocs :: Maybe Text -> Schema -> [Text]
+    collectExternalReferenceDocs parentBase schema =
+      case schemaCore schema of
+        BooleanSchema _ -> []
+        ObjectSchema obj ->
+          let info = schemaRegistrationInfo parentBase schema
+              baseUri = sriBaseURI info
+              directRefs = maybe [] (resolveRef baseUri) (schemaRef obj)
+              dynamicRefs = maybe [] (resolveRef baseUri) (schemaDynamicRef obj)
+              subRefs = collectFromObject baseUri obj
+          in uniqueTexts (directRefs <> dynamicRefs <> subRefs)
+
+    resolveRef :: Maybe Text -> Reference -> [Text]
+    resolveRef base (Reference refText)
+      | T.null refText = []
+      | T.isPrefixOf "#" refText = []
+      | otherwise =
+          let resolved = resolveAgainstBaseURI base refText
+              (docUri, _) = splitUriFragment resolved
+              target =
+                if T.null docUri
+                  then resolved
+                  else docUri
+          in if T.null target then [] else [target]
+
+    collectFromObject :: Maybe Text -> SchemaObject -> [Text]
+    collectFromObject base obj =
+      let defRefs = concatMap (collectExternalReferenceDocs base) (Map.elems $ schemaDefs obj)
+          allOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaAllOf obj)
+          anyOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaAnyOf obj)
+          oneOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaOneOf obj)
+          notRefs = maybe [] (collectExternalReferenceDocs base) (schemaNot obj)
+          ifRefs = maybe [] (collectExternalReferenceDocs base) (schemaIf obj)
+          thenRefs = maybe [] (collectExternalReferenceDocs base) (schemaThen obj)
+          elseRefs = maybe [] (collectExternalReferenceDocs base) (schemaElse obj)
+          validation = schemaValidation obj
+          propRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . Map.elems) (validationProperties validation)
+          patternRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . Map.elems) (validationPatternProperties validation)
+          additionalRefs = maybe [] (collectExternalReferenceDocs base) (validationAdditionalProperties validation)
+          unevaluatedRefs = maybe [] (collectExternalReferenceDocs base) (validationUnevaluatedProperties validation)
+          itemsRefs = case validationItems validation of
+            Just (ItemsSchema s) -> collectExternalReferenceDocs base s
+            Just (ItemsTuple schemas maybeAdditional) ->
+              concatMap (collectExternalReferenceDocs base) (NE.toList schemas) <>
+              maybe [] (collectExternalReferenceDocs base) maybeAdditional
+            Nothing -> []
+          prefixRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (validationPrefixItems validation)
+          containsRefs = maybe [] (collectExternalReferenceDocs base) (validationContains validation)
+          dependentSchemaRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . Map.elems) (validationDependentSchemas validation)
+      in concat
+           [ defRefs, allOfRefs, anyOfRefs, oneOfRefs, notRefs
+           , ifRefs, thenRefs, elseRefs, propRefs, patternRefs
+           , additionalRefs, unevaluatedRefs, itemsRefs, prefixRefs
+           , containsRefs, dependentSchemaRefs
+           ]
+
+-- | Custom validator function type
+type CustomValidator = Value -> Either ValidationError ()
+
+-- | Reference loader function type
+-- Given a URI, returns the schema at that URI (if available)
+-- This allows pluggable loading strategies (HTTP, file system, cache, etc.)
+type ReferenceLoader = Text -> IO (Either Text Schema)
+
+-- | Configuration for validation behavior
+data ValidationConfig = ValidationConfig
+  { validationVersion :: JsonSchemaVersion
+    -- ^ Schema version to validate against
+  
+  , validationFormatAssertion :: Bool
+    -- ^ Treat format as assertion (True) or annotation (False)
+  
+  , validationShortCircuit :: Bool
+    -- ^ Stop on first error (True) or collect all (False)
+  
+  , validationCollectAnnotations :: Bool
+    -- ^ Collect annotations during validation
+  
+  , validationCustomValidators :: Map Text CustomValidator
+    -- ^ Custom validators for format or other extensions
+  
+  , validationReferenceLoader :: Maybe ReferenceLoader
+    -- ^ Optional loader for external references (Nothing = no external refs)
+  }
+  deriving (Generic)
+
+-- | Stateful context threaded through validation
+data ValidationContext = ValidationContext
+  { contextConfig :: ValidationConfig
+    -- ^ Validation configuration
+  
+  , contextSchemaRegistry :: SchemaRegistry
+    -- ^ Registry of schemas for reference resolution
+  
+  , contextRootSchema :: Maybe Schema
+    -- ^ Root schema for resolving local $ref (e.g., #/definitions/foo)
+  
+  , contextBaseURI :: Maybe Text
+    -- ^ Current base URI for relative reference resolution
+  
+  , contextDynamicScope :: [Schema]
+    -- ^ Stack for $dynamicRef resolution (2020-12+)
+  
+  , contextEvaluatedProperties :: Set Text
+    -- ^ Properties evaluated so far (for unevaluatedProperties)
+  
+  , contextEvaluatedItems :: Set Int
+    -- ^ Array indices evaluated so far (for unevaluatedItems)
+  
+  , contextVisitedSchemas :: Set SchemaFingerprint
+    -- ^ Schemas visited (for cycle detection)
+  }
+  deriving (Generic)
+
+-- Placeholder instances to satisfy compilation
+-- These will be implemented properly in later phases
+
+instance ToJSON SchemaValidation where
+  toJSON _ = object []  -- TODO: Implement in parser phase
+
+instance FromJSON SchemaValidation where
+  parseJSON _ = pure $ SchemaValidation  -- TODO: Implement in parser phase
+    { validationMultipleOf = Nothing
+    , validationMaximum = Nothing
+    , validationExclusiveMaximum = Nothing
+    , validationMinimum = Nothing
+    , validationExclusiveMinimum = Nothing
+    , validationMaxLength = Nothing
+    , validationMinLength = Nothing
+    , validationPattern = Nothing
+    , validationFormat = Nothing
+    , validationItems = Nothing
+    , validationPrefixItems = Nothing
+    , validationContains = Nothing
+    , validationMaxItems = Nothing
+    , validationMinItems = Nothing
+    , validationUniqueItems = Nothing
+    , validationMaxContains = Nothing
+    , validationMinContains = Nothing
+    , validationProperties = Nothing
+    , validationPatternProperties = Nothing
+    , validationAdditionalProperties = Nothing
+    , validationUnevaluatedProperties = Nothing
+    , validationPropertyNames = Nothing
+    , validationMaxProperties = Nothing
+    , validationMinProperties = Nothing
+    , validationRequired = Nothing
+    , validationDependentRequired = Nothing
+    , validationDependentSchemas = Nothing
+    , validationDependencies = Nothing
+    }
+
+instance ToJSON SchemaAnnotations where
+  toJSON _ = object []  -- TODO: Implement in parser phase
+
+instance FromJSON SchemaAnnotations where
+  parseJSON _ = pure $ SchemaAnnotations  -- TODO: Implement in parser phase
+    { annotationTitle = Nothing
+    , annotationDescription = Nothing
+    , annotationDefault = Nothing
+    , annotationExamples = []
+    , annotationDeprecated = Nothing
+    , annotationReadOnly = Nothing
+    , annotationWriteOnly = Nothing
+    , annotationComment = Nothing
+    , annotationCodegen = Nothing
+    }
+
+instance ToJSON SchemaObject where
+  toJSON _ = object []  -- TODO: Implement in renderer phase
+
+instance FromJSON SchemaObject where
+  parseJSON _ = pure $ SchemaObject  -- TODO: Implement in parser phase
+    { schemaType = Nothing
+    , schemaEnum = Nothing
+    , schemaConst = Nothing
+    , schemaRef = Nothing
+    , schemaDynamicRef = Nothing
+    , schemaAnchor = Nothing
+    , schemaDynamicAnchor = Nothing
+    , schemaAllOf = Nothing
+    , schemaAnyOf = Nothing
+    , schemaOneOf = Nothing
+    , schemaNot = Nothing
+    , schemaIf = Nothing
+    , schemaThen = Nothing
+    , schemaElse = Nothing
+    , schemaValidation = SchemaValidation
+        { validationMultipleOf = Nothing
+        , validationMaximum = Nothing
+        , validationExclusiveMaximum = Nothing
+        , validationMinimum = Nothing
+        , validationExclusiveMinimum = Nothing
+        , validationMaxLength = Nothing
+        , validationMinLength = Nothing
+        , validationPattern = Nothing
+        , validationFormat = Nothing
+        , validationItems = Nothing
+        , validationPrefixItems = Nothing
+        , validationContains = Nothing
+        , validationMaxItems = Nothing
+        , validationMinItems = Nothing
+        , validationUniqueItems = Nothing
+        , validationMaxContains = Nothing
+        , validationMinContains = Nothing
+        , validationProperties = Nothing
+        , validationPatternProperties = Nothing
+        , validationAdditionalProperties = Nothing
+        , validationUnevaluatedProperties = Nothing
+        , validationPropertyNames = Nothing
+        , validationMaxProperties = Nothing
+        , validationMinProperties = Nothing
+        , validationRequired = Nothing
+        , validationDependentRequired = Nothing
+        , validationDependentSchemas = Nothing
+        , validationDependencies = Nothing
+        }
+    , schemaAnnotations = SchemaAnnotations
+        { annotationTitle = Nothing
+        , annotationDescription = Nothing
+        , annotationDefault = Nothing
+        , annotationExamples = []
+        , annotationDeprecated = Nothing
+        , annotationReadOnly = Nothing
+        , annotationWriteOnly = Nothing
+        , annotationComment = Nothing
+        , annotationCodegen = Nothing
+        }
+    , schemaDefs = Map.empty
+    }
+
+instance ToJSON SchemaCore where
+  toJSON (BooleanSchema b) = Aeson.Bool b
+  toJSON (ObjectSchema obj) = toJSON obj
+
+instance FromJSON SchemaCore where
+  parseJSON (Aeson.Bool b) = pure $ BooleanSchema b
+  parseJSON other = ObjectSchema <$> parseJSON other
+
+instance ToJSON Schema where
+  toJSON _ = object []  -- TODO: Implement in renderer phase
+
+instance FromJSON Schema where
+  parseJSON _ = pure $ Schema  -- TODO: Implement in parser phase
+    { schemaVersion = Nothing
+    , schemaId = Nothing
+    , schemaCore = BooleanSchema True
+    , schemaVocabulary = Nothing
+    , schemaExtensions = Map.empty
+    }
+

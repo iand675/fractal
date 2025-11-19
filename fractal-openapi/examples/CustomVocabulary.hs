@@ -11,8 +11,14 @@ module CustomVocabulary where
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Typeable (Typeable)
-import Fractal.OpenApi.JsonSchema.Dialect
+import Data.Aeson (Value(..))
+import qualified Data.Aeson as Aeson
+import Fractal.JsonSchema.Vocabulary
+import Fractal.JsonSchema.Dialect
+import Fractal.JsonSchema.Types
+import Fractal.JsonSchema
 
 -- | Example 1: Business Domain Vocabulary
 --
@@ -240,3 +246,89 @@ Example JSON Schema using the custom dialect:
   }
 }
 -}
+
+-- | Example 4: Using Custom Validators
+--
+-- This shows how to register custom validators and use them with validation
+
+-- Custom validator for credit card numbers (Luhn algorithm check)
+creditCardValidator :: CustomValidator
+creditCardValidator (String text) =
+  if isValidLuhn text
+    then Right ()
+    else Left $ ValidationError "x-credit-card" emptyPointer emptyPointer
+           "Invalid credit card number (Luhn check failed)" Nothing
+creditCardValidator _ = Left $ ValidationError "x-credit-card" emptyPointer emptyPointer
+  "x-credit-card can only validate strings" Nothing
+
+-- Simplified Luhn algorithm check
+isValidLuhn :: Text -> Bool
+isValidLuhn text =
+  let digits = T.filter (\c -> c >= '0' && c <= '9') text
+      nums = map (\c -> read [c] :: Int) (T.unpack digits)
+      checksum = sum $ zipWith (*) (cycle [1, 2]) $ map luhnDouble $ reverse nums
+  in length nums >= 13 && checksum `mod` 10 == 0
+  where
+    luhnDouble n = let doubled = n * 2 in if doubled > 9 then doubled - 9 else doubled
+
+-- Custom validator for currency codes (ISO 4217)
+currencyValidator :: CustomValidator
+currencyValidator (String text) =
+  if T.toUpper text `elem` ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD"]
+    then Right ()
+    else Left $ ValidationError "x-currency" emptyPointer emptyPointer
+           ("Invalid currency code: " <> text) Nothing
+currencyValidator _ = Left $ ValidationError "x-currency" emptyPointer emptyPointer
+  "x-currency expects a string value" Nothing
+
+-- Example: Validating with custom keywords
+exampleValidation :: IO ()
+exampleValidation = do
+  -- Define a schema with custom keywords
+  let schemaJson = Aeson.object
+        [ "type" Aeson..= String "object"
+        , "properties" Aeson..= Aeson.object
+            [ "cardNumber" Aeson..= Aeson.object
+                [ "type" Aeson..= String "string"
+                , "x-credit-card" Aeson..= Aeson.object
+                    [ "luhn-check" Aeson..= Bool True ]
+                ]
+            , "currency" Aeson..= Aeson.object
+                [ "type" Aeson..= String "string"
+                , "x-currency" Aeson..= Bool True
+                ]
+            ]
+        ]
+  
+  case Aeson.fromJSON schemaJson of
+    Aeson.Error err -> putStrLn $ "Schema parse error: " <> err
+    Aeson.Success schemaValue -> do
+      case parseSchema schemaValue of
+        Left parseErr -> print parseErr
+        Right schema -> do
+          -- Create validation config with custom validators
+          let config = defaultValidationConfig
+                { validationCustomValidators = Map.fromList
+                    [ ("x-credit-card", creditCardValidator)
+                    , ("x-currency", currencyValidator)
+                    ]
+                }
+          
+          -- Valid test data
+          let validData = Aeson.object
+                [ "cardNumber" Aeson..= String "4532015112830366"  -- Valid Luhn
+                , "currency" Aeson..= String "USD"
+                ]
+          
+          -- Invalid test data
+          let invalidData = Aeson.object
+                [ "cardNumber" Aeson..= String "1234567890123456"  -- Invalid Luhn
+                , "currency" Aeson..= String "XYZ"  -- Invalid currency
+                ]
+          
+          -- Validate
+          putStrLn "Validating valid data:"
+          print $ validateValue config schema validData
+          
+          putStrLn "\nValidating invalid data:"
+          print $ validateValue config schema invalidData

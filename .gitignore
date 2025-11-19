@@ -10,3 +10,10 @@ devenv.local.nix
 
 # Haskell bits
 dist-newstyle/
+.stack-work/
+
+
+# AI bits
+.cursor
+.specify
+

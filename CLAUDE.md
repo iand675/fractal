@@ -6,6 +6,15 @@ This document provides context for AI assistants working on the Fractal project.
 
 Fractal is a multi-package Haskell project focused on composable abstractions for resource management, dependency injection, event streaming, and schema management. The project is organized as a monorepo with three independent but related packages.
 
+**Governance**: This project follows the principles defined in `.specify/memory/constitution.md`. All development decisions must align with:
+- Type-Driven Development (domain types first, invalid states unrepresentable)
+- Library-First Architecture (standalone, composable packages)
+- Functional Purity & Immutability (side effects tracked in types)
+- Property-Based Testing (Hedgehog for domain invariants)
+- Composability Through Abstraction (Arrow, Monad, Category, etc.)
+
+Refer to the constitution for detailed requirements and rationale.
+
 ## Package Structure
 
 The project consists of three subpackages:
@@ -166,8 +175,11 @@ All packages use **HSpec** with **hspec-discover** for automatic test discovery.
 Each test file should:
 1. Export a `spec :: Spec` function
 2. Use `describe` blocks to organize related tests
-3. Include both unit tests and property-based tests where appropriate
-4. Test resource cleanup and exception safety for resource-related code
+3. **Emphasize property-based tests** (Hedgehog) for domain invariants and critical functions
+4. Include contract tests for public APIs and integration tests for cross-module interactions
+5. Test resource cleanup and exception safety for resource-related code
+6. **Avoid testing library implementation details** (e.g., simple field access)
+7. **NEVER use `threadDelay` in tests** - use proper synchronization primitives (MVars, STM, etc.)
 
 ### Running Tests
 
