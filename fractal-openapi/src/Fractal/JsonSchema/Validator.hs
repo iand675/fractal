@@ -41,10 +41,13 @@ import Data.Foldable (toList)
 import Data.Maybe (fromJust, fromMaybe)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
+import qualified Text.Regex.ECMA262 as R
 import qualified Data.UUID as UUID
 import qualified Data.Time.Format.ISO8601 as Time
 import qualified Data.Time.Clock as Time
 import qualified Data.Time.Calendar as Time
+import qualified Text.Read as Read
+import qualified Data.Time.RFC3339 as RFC3339
 import qualified Text.Email.Validate as Email
 import qualified Network.URI as URI
 import qualified Data.IP as IP
@@ -727,6 +730,7 @@ validateObjectConstraints ctx obj (Object objMap) =
         , validatePropertyNames ctx obj objMap
         , validateProperties ctx obj objMap
         , validateAdditionalProperties ctx obj objMap
+        , validateDependencies ctx validation objMap
         , validateDependentRequired validation objMap
         , validateDependentSchemas ctx validation objMap
         ]
@@ -968,6 +972,39 @@ validateDependentSchemas ctx validation objMap = case validationDependentSchemas
                 -- Property is present, validate entire object against dependent schema
                 validateValueWithContext ctx depSchema (Object objMap)
           | (propName, depSchema) <- Map.toList depSchemaMap
+          ]
+        failures = [errs | ValidationFailure errs <- results]
+        annotations = [anns | ValidationSuccess anns <- results]
+    in case failures of
+      [] -> ValidationSuccess $ mconcat annotations
+      (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Validate dependencies (draft-04 through draft-07)
+-- Combines property dependencies and schema dependencies in one keyword
+validateDependencies :: ValidationContext -> SchemaValidation -> KeyMap.KeyMap Value -> ValidationResult
+validateDependencies ctx validation objMap = case validationDependencies validation of
+  Nothing -> ValidationSuccess mempty
+  Just depsMap ->
+    let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+        results =
+          [ case KeyMap.lookup (Key.fromText propName) objMap of
+              Nothing -> ValidationSuccess mempty  -- Property not present, rule doesn't apply
+              Just _ ->
+                case dep of
+                  -- Property dependency: check if required properties are present
+                  DependencyProperties requiredDeps ->
+                    let missingDeps = Set.difference requiredDeps presentProps
+                    in if Set.null missingDeps
+                      then ValidationSuccess mempty
+                      else ValidationFailure $ ValidationErrors $ pure $
+                        ValidationError "dependencies" emptyPointer emptyPointer
+                          ("Property '" <> propName <> "' requires these properties: " <>
+                           T.intercalate ", " (Set.toList missingDeps))
+                          Nothing
+                  -- Schema dependency: validate entire object against the schema
+                  DependencySchema depSchema ->
+                    validateValueWithContext ctx depSchema (Object objMap)
+          | (propName, dep) <- Map.toList depsMap
           ]
         failures = [errs | ValidationFailure errs <- results]
         annotations = [anns | ValidationSuccess anns <- results]
@@ -1269,11 +1306,24 @@ resolveDynamicRef (Reference refText) ctx
       _ -> findSchemaWithDynamicAnchor anchor rest
 
 -- | Compile regex pattern
+-- Automatically adds Unicode flag if pattern contains Unicode property escapes
 compileRegex :: Text -> Either Text (Regex.Regex)
 compileRegex pattern =
-  case Regex.compileText pattern [] of
-    Left err -> Left $ T.pack $ "Invalid regex: " <> err
-    Right regex -> Right regex
+  let flags = if needsUnicodeMode pattern then [R.Unicode] else []
+  in case Regex.compileText pattern flags of
+      Left err -> Left $ T.pack $ "Invalid regex: " <> err
+      Right regex -> Right regex
+
+-- | Check if a pattern needs Unicode mode
+-- Unicode property escapes (\p{...} or \P{...}) require Unicode mode
+needsUnicodeMode :: Text -> Bool
+needsUnicodeMode pattern =
+  -- Check for \p{...} or \P{...} patterns (after JSON parsing, these are single backslashes)
+  -- We need to match against the actual text, which has the backslash
+  let hasUnicodeProperty = any (`T.isInfixOf` pattern) ["\\p{", "\\P{"]
+      -- Also check for lowercase variants which are case-sensitive in ECMA262
+      hasLowerProperty = T.isInfixOf "\\p{" pattern
+  in hasUnicodeProperty
 
 -- | Match text against regex
 matchRegex :: Regex.Regex -> Text -> Bool
@@ -1357,14 +1407,58 @@ isValidUUID text = case UUID.fromText text of
   Just _ -> True
   Nothing -> False
 
--- RFC3339 date-time validator (strict, no leap seconds allowed)
+-- RFC3339 date-time validator
+-- Validates according to RFC3339 as required by JSON Schema
+-- Uses the timerep library for strict RFC3339 parsing with additional checks
 isValidDateTime :: Text -> Bool
-isValidDateTime text = 
-  case Time.iso8601ParseM (T.unpack text) :: Maybe Time.UTCTime of
-    Just _ -> 
-      -- Additional check: reject leap seconds (60)
-      not (T.isInfixOf ":60" text)
+isValidDateTime text =
+  -- First check with RFC3339 parser
+  case RFC3339.parseTimeRFC3339 (T.unpack text) of
     Nothing -> False
+    Just _ ->
+      -- Additional validation for edge cases not caught by timerep:
+      -- 1. Leap seconds must be at XX:59:60 (not other minutes like :58:60)
+      -- 2. Leap seconds in UTC must be at 23:59:60
+      -- 3. Timezone offsets must be -23:59 to +23:59 (not -24:00 or +24:00)
+      let normalized = T.map (\c -> if c == 't' then 'T' else if c == 'z' then 'Z' else c) text
+          hasLeapSecond = T.isInfixOf ":60" normalized || T.isInfixOf ":60." normalized
+      in if hasLeapSecond
+        then
+          -- Check that leap second is at :59:60
+          let hasValidMinute = T.isInfixOf ":59:60" normalized
+              parts = T.splitOn "T" normalized
+          in if length parts /= 2 || not hasValidMinute
+            then False
+            else
+              let timePart = parts !! 1
+                  isUTC = T.isSuffixOf "Z" timePart
+                  timeStr = if isUTC
+                           then T.dropEnd 1 timePart
+                           else case T.breakOnEnd "+" timePart of
+                                  (before, after) | not (T.null after) ->
+                                    T.dropEnd (T.length after + 1) before
+                                  _ -> case T.breakOnEnd "-" timePart of
+                                         (before, after) | T.length after == 5 && T.elem ':' after ->
+                                           T.dropEnd 6 before
+                                         _ -> timePart
+                  hour = case T.splitOn ":" timeStr of
+                           (h:_) -> Read.readMaybe (T.unpack h) :: Maybe Int
+                           _ -> Nothing
+              in case (isUTC, hour) of
+                   (True, Just h) -> h == 23  -- UTC leap seconds must be at 23:59:60
+                   (False, _) -> True         -- Non-UTC can be at any XX:59:60
+                   _ -> False
+        else
+          -- Check for invalid timezone offsets (hour must be < 24)
+          let hasOffset = T.isInfixOf "+" normalized || (T.count "-" normalized > 2)
+          in if hasOffset && not (T.isSuffixOf "Z" normalized)
+            then
+              let offsetStr = T.takeEnd 6 normalized  -- e.g., "+24:00" or "-24:00"
+                  offsetHour = Read.readMaybe (T.unpack $ T.take 2 $ T.drop 1 offsetStr) :: Maybe Int
+              in case offsetHour of
+                   Just h -> h < 24
+                   Nothing -> True  -- Couldn't parse, let RFC3339 parser decision stand
+            else True
 
 -- RFC3339 date validator
 isValidDate :: Text -> Bool

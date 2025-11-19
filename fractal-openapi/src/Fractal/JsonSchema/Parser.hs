@@ -323,7 +323,7 @@ parseValidationKeywords version obj = do
                           then KeyMap.lookup "dependentSchemas" obj >>= parsePropertySchemas version
                           else Nothing
   let dependencies' = if version < Draft201909
-                      then KeyMap.lookup "dependencies" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
+                      then KeyMap.lookup "dependencies" obj >>= parseDependencies version
                       else Nothing
   
   pure $ SchemaValidation
@@ -394,4 +394,21 @@ parsePatternPropertySchemas version (Object obj) = Just $ Map.fromList
   [(Regex (Key.toText k), schema) | (k, v) <- KeyMap.toList obj
   , Right schema <- [parseSubschema version v]]
 parsePatternPropertySchemas _ _ = Nothing
+
+--- | Parse dependencies map (draft-04 through draft-07)
+parseDependencies :: JsonSchemaVersion -> Value -> Maybe (Map Text Dependency)
+parseDependencies version (Object obj) = Just $ Map.fromList
+  [(Key.toText k, dep) | (k, v) <- KeyMap.toList obj
+  , Just dep <- [parseDependency version v]]
+parseDependencies _ _ = Nothing
+
+--- | Parse a single dependency
+parseDependency :: JsonSchemaVersion -> Value -> Maybe Dependency
+parseDependency version v@(Object _) =
+  case parseSubschema version v of
+    Right schema -> Just $ DependencySchema schema
+    Left _ -> Nothing
+parseDependency _ (Array arr) = Just $ DependencyProperties $ Set.fromList
+  [t | String t <- toList arr]
+parseDependency _ _ = Nothing
 
