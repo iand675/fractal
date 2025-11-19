@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- |
 -- Module      : Text.Regex.ECMA262
@@ -32,7 +33,7 @@ module Text.Regex.ECMA262
   ( -- * Types
     Regex
   , Match(..)
-  , RegexFlag(..)
+  , I.RegexFlag(..)
     -- * Compilation
   , compile
   , compileText
@@ -70,8 +71,8 @@ data Regex = Regex
   deriving (Generic)
 
 instance Show Regex where
-  show (Regex _ pattern flags) =
-    "Regex {pattern = " ++ show (BS8.unpack pattern) ++
+  show (Regex _ pat flags) =
+    "Regex {pattern = " ++ show (BS8.unpack pat) ++
     ", flags = " ++ show flags ++ "}"
 
 -- | A successful match result
@@ -106,17 +107,17 @@ pattern UnicodeSets = I.UnicodeSets
 -- Returns 'Left' with an error message if compilation fails,
 -- or 'Right' with a compiled 'Regex' if successful.
 compile :: BS.ByteString -> [RegexFlag] -> IO (Either String Regex)
-compile pattern flags = do
-  result <- I.compileRegex pattern flags
+compile pat flags = do
+  result <- I.compileRegex pat flags
   case result of
     Left err -> return $ Left err
     Right ptr -> do
       fptr <- newForeignPtr I.c_free ptr
-      return $ Right $ Regex fptr pattern flags
+      return $ Right $ Regex fptr pat flags
 
 -- | Compile a regular expression pattern from a Text value
 compileText :: T.Text -> [RegexFlag] -> IO (Either String Regex)
-compileText pattern = compile (TE.encodeUtf8 pattern)
+compileText pat = compile (TE.encodeUtf8 pat)
 
 -- | Test if a regex matches a subject string
 --

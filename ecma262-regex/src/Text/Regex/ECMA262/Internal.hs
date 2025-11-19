@@ -9,6 +9,7 @@ module Text.Regex.ECMA262.Internal
     -- * Compilation
   , compileRegex
   , freeRegex
+  , c_free
     -- * Inspection
   , isValid
   , getError
@@ -51,8 +52,9 @@ data RegexFlag
 
 -- | Convert flags to integer representation
 flagsToInt :: [RegexFlag] -> CInt
-flagsToInt = fromIntegral . foldr (\flag acc -> acc .|. flagBit flag) 0
+flagsToInt = fromIntegral . foldr (\flag acc -> acc .|. flagBit flag) (0 :: Int)
   where
+    flagBit :: RegexFlag -> Int
     flagBit Global        = 1 `shiftL` 0
     flagBit IgnoreCase    = 1 `shiftL` 1
     flagBit Multiline     = 1 `shiftL` 2
@@ -65,8 +67,9 @@ flagsToInt = fromIntegral . foldr (\flag acc -> acc .|. flagBit flag) 0
 
 -- | Convert integer representation to flags
 intToFlags :: CInt -> [RegexFlag]
-intToFlags n = filter (testBit (fromIntegral n) . flagIndex) [minBound .. maxBound]
+intToFlags n = filter (testBit (fromIntegral n :: Int) . flagIndex) [minBound .. maxBound]
   where
+    flagIndex :: RegexFlag -> Int
     flagIndex Global        = 0
     flagIndex IgnoreCase    = 1
     flagIndex Multiline     = 2

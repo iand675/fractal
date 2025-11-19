@@ -146,8 +146,10 @@ spec = do
 
     it "matches optional" $ do
       Right regex <- compile "colou?r" []
-      Just _ <- match regex "color"
-      Just _ <- match regex "colour"
+      result1 <- match regex "color"
+      result1 `shouldSatisfy` isJust
+      result2 <- match regex "colour"
+      result2 `shouldSatisfy` isJust
 
     it "matches exact count" $ do
       Right regex <- compile "a{3}" []

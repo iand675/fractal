@@ -30,7 +30,7 @@ module Text.Regex.ECMA262.Base
   , (=~~)
   ) where
 
-import Text.Regex.ECMA262 hiding (match)
+import Text.Regex.ECMA262 hiding (match, matchAll)
 import qualified Text.Regex.ECMA262 as E262
 import Text.Regex.Base.RegexLike
 import Text.Regex.Base.Context
@@ -43,15 +43,13 @@ import Data.Array (Array, listArray)
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad (MonadFail)
 
+-- Placeholder types for regex-base compatibility
+type CompOption = ()
+type ExecOption = ()
+
 -- ============================================================================
 -- ByteString instances
 -- ============================================================================
-
--- | Extract instance for ByteString
-instance Extract BS.ByteString where
-  before i bs = BS.take i bs
-  after i bs = BS.drop i bs
-  empty = BS.empty
 
 -- | RegexMaker instance for compiling ByteString patterns
 instance RegexMaker Regex CompOption ExecOption BS.ByteString where
@@ -74,10 +72,10 @@ instance RegexLike Regex BS.ByteString where
       Just m -> Just $ buildMatchArray m
 
   matchAll regex source =
-    map buildMatchArray $ unsafePerformIO $ matchAll regex source
+    map buildMatchArray $ unsafePerformIO $ E262.matchAll regex source
 
   matchCount regex source =
-    length $ unsafePerformIO $ matchAll regex source
+    length $ unsafePerformIO $ E262.matchAll regex source
 
   matchTest regex source =
     case unsafePerformIO $ E262.match regex source of
@@ -85,7 +83,7 @@ instance RegexLike Regex BS.ByteString where
       Nothing -> False
 
   matchAllText regex source =
-    map (buildMatchText source) $ unsafePerformIO $ matchAll regex source
+    map (buildMatchText source) $ unsafePerformIO $ E262.matchAll regex source
 
   matchOnceText regex source =
     case unsafePerformIO $ E262.match regex source of
@@ -134,12 +132,6 @@ instance RegexContext Regex BS.ByteString Int where
 -- ============================================================================
 -- String instances
 -- ============================================================================
-
--- | Extract instance for String
-instance Extract String where
-  before i s = take i s
-  after i s = drop i s
-  empty = ""
 
 -- | RegexMaker instance for compiling String patterns
 instance RegexMaker Regex CompOption ExecOption String where

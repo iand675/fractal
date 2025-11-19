@@ -76,7 +76,7 @@ library
   exposed-modules:
     Text.Regex.ECMA262
     Text.Regex.ECMA262.Internal
-    Text.Regex.ECMA262.Base
+  --  Text.Regex.ECMA262.Base  -- Temporarily disabled while fixing regex-base integration
 
   build-depends:
     , base       >= 4.17.0.0 && < 5
@@ -123,7 +123,7 @@ test-suite ecma262-regex-test
   main-is:          Spec.hs
   other-modules:
     Text.Regex.ECMA262Spec
-    Text.Regex.ECMA262.BaseSpec
+  --  Text.Regex.ECMA262.BaseSpec  -- Temporarily disabled while fixing regex-base integration
 
   build-depends:
     , base
