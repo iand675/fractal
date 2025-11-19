@@ -46,11 +46,17 @@ validatePattern pattern value =
         return $ Right result
   where
     -- Check if pattern needs Unicode mode
-    -- Enable only for explicit Unicode features that require the Unicode flag
+    -- Enable for explicit Unicode features and all patterns to ensure proper Unicode support
     needsUnicodeMode pat =
       T.isInfixOf "\\p{" pat ||  -- Unicode property escapes
       T.isInfixOf "\\P{" pat ||  -- Negated Unicode properties
-      T.isInfixOf "\\u{" pat     -- Unicode codepoint escapes (e.g., \u{1F600})
+      T.isInfixOf "\\u{" pat ||  -- Unicode codepoint escapes (e.g., \u{1F600})
+      -- Also enable for character classes with non-ASCII to ensure proper matching
+      hasNonASCII pat
+
+    -- Check if pattern or value contains non-ASCII characters
+    hasNonASCII :: Text -> Bool
+    hasNonASCII = T.any (\c -> c > '\x7F')
 
 -- | Validate a value against a schema
 --

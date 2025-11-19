@@ -105,6 +105,9 @@ foreign import ccall unsafe "ecma262_regex_wrapper.c ecma262_regex_get_groupname
 foreign import ccall unsafe "ecma262_regex_wrapper.c ecma262_regex_exec"
   c_exec :: RegexPtr -> Ptr Word8 -> CInt -> CInt -> Ptr (Ptr Word8) -> IO CInt
 
+foreign import ccall unsafe "ecma262_regex_wrapper.c ecma262_regex_exec_utf16"
+  c_exec_utf16 :: RegexPtr -> Ptr Word16 -> CInt -> CInt -> Ptr (Ptr Word8) -> IO CInt
+
 -- | Compile a regular expression pattern
 compileRegex :: BS.ByteString -> [RegexFlag] -> IO (Either String RegexPtr)
 compileRegex pattern flags = do

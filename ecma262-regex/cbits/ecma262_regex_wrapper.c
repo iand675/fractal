@@ -92,14 +92,14 @@ const char *ecma262_regex_get_groupnames(ecma262_regex_t *regex) {
     return lre_get_groupnames(regex->bytecode);
 }
 
-/* Execute a match
+/* Execute a match against UTF-8 subject
  * Returns:
  *   1 if match found
  *   0 if no match
  *   negative value on error
  *
- * captures should be an array of (capture_count + 1) * 2 uint8_t pointers
- * (start and end for each capture group, plus the full match)
+ * Automatically uses UTF-16 mode when Unicode flag is set for proper
+ * Unicode character handling.
  */
 int ecma262_regex_exec(ecma262_regex_t *regex, const uint8_t *subject,
                        int start_index, int subject_len, uint8_t **captures) {
@@ -110,18 +110,18 @@ int ecma262_regex_exec(ecma262_regex_t *regex, const uint8_t *subject,
     int use_unicode = (re_flags & (LRE_FLAG_UNICODE | LRE_FLAG_UNICODE_SETS)) != 0;
 
     if (!use_unicode) {
-        /* Byte mode (cbuf_type=0): Fast path for ASCII/byte-oriented matching */
+        /* Byte mode (cbuf_type=0): Fast path for non-Unicode patterns */
         return lre_exec(captures, regex->bytecode, subject, start_index,
                        subject_len, 0, NULL);
     }
 
-    /* UTF-16 mode (cbuf_type=2): Full Unicode support */
+    /* UTF-16 mode (cbuf_type=2): Required for Unicode patterns */
 
     /* Convert UTF-8 to UTF-16 */
     int utf16_len = 0;
     uint16_t *subject_utf16 = utf8_to_utf16(subject, subject_len, &utf16_len);
     if (!subject_utf16) {
-        return -1; /* Conversion failed */
+        return -1;
     }
 
     /* Convert start index from UTF-8 byte offset to UTF-16 code unit offset */
@@ -165,6 +165,24 @@ int ecma262_regex_exec(ecma262_regex_t *regex, const uint8_t *subject,
     free(subject_utf16);
 
     return result;
+}
+
+/* Execute a match against UTF-16LE subject (for Unicode patterns)
+ * Returns:
+ *   1 if match found
+ *   0 if no match
+ *   negative value on error
+ *
+ * Note: subject should be UTF-16LE encoded (little-endian), and captures
+ * will be UTF-16 code unit offsets (as pointers).
+ */
+int ecma262_regex_exec_utf16(ecma262_regex_t *regex, const uint16_t *subject,
+                              int start_index, int subject_len, uint8_t **captures) {
+    if (!regex || !regex->bytecode) return -1;
+
+    /* Execute with UTF-16 mode (cbuf_type=2) */
+    return lre_exec(captures, regex->bytecode, (const uint8_t *)subject,
+                   start_index, subject_len, 2, NULL);
 }
 
 /* Check if compilation was successful */
