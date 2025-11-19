@@ -3,3 +3,4 @@ packages:
   fractal-schema
   fractal-openapi
   fractal-layer
+  ecma262-regex
