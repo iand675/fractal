@@ -49,6 +49,7 @@ library
                     , hasql >= 1.6 && < 2
                     , hasql-th >= 0.4 && < 1
                     , hasql-transaction >= 1.0.0 && < 2
+                    , hashable >= 1.4 && < 2
                     , http-client >= 0.7 && < 1
                     , http-client-tls >= 0.3 && < 1
                     , memory >= 0.18 && < 1
@@ -58,6 +59,8 @@ library
                     , servant-client >= 0.19 && < 1
                     , servant-client-core >= 0.19 && < 1
                     , text >= 2.0 && < 3
+                    , unordered-containers >= 0.2 && < 1
+                    , validation-selective >= 0.2 && < 1
                     , vector >= 0.13 && < 1
                     , wai >= 3.2 && < 4
                     , warp >= 3.3 && < 4
@@ -90,9 +93,9 @@ test-suite fractal-schema-test
                     , hasql >= 1.6 && < 2
                     , hasql-pool >= 0.10 && < 1
                     , hasql-th >= 0.4 && < 1
-                    , hedgehog >= 1.2 && < 1.3
+                    , hedgehog >= 1.2 && < 2
                     , hspec >= 2.10 && < 3
-                    , hspec-hedgehog >= 0.1.1 && < 0.2
+                    , hspec-hedgehog >= 0.1.1 && < 1
                     , http-client >= 0.7 && < 1
                     , http-client-tls >= 0.3 && < 1
                     , mtl >= 2.2 && < 3
