@@ -303,6 +303,7 @@ spec = do
       IgnoreCase `shouldSatisfy` (`elem` flags)
       Multiline `shouldSatisfy` (`elem` flags)
 
+
   describe "Edge Cases" $ do
     it "handles empty pattern" $ do
       Right regex <- compile "" []

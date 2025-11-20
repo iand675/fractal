@@ -1550,14 +1550,16 @@ compileRegex pattern =
 
 -- | Check if a pattern needs Unicode mode
 -- Unicode property escapes (\p{...} or \P{...}) require Unicode mode
+-- Also, patterns with non-BMP characters (code points > 0xFFFF) require Unicode mode
 needsUnicodeMode :: Text -> Bool
 needsUnicodeMode pattern =
   -- Check for \p{...} or \P{...} patterns (after JSON parsing, these are single backslashes)
   -- We need to match against the actual text, which has the backslash
   let hasUnicodeProperty = any (`T.isInfixOf` pattern) ["\\p{", "\\P{"]
-      -- Also check for lowercase variants which are case-sensitive in ECMA262
-      hasLowerProperty = T.isInfixOf "\\p{" pattern
-  in hasUnicodeProperty
+      -- Check if pattern contains any non-BMP characters (code points > 0xFFFF)
+      -- These include emoji and other characters outside the Basic Multilingual Plane
+      hasNonBMPChar = T.any (\c -> fromEnum c > 0xFFFF) pattern
+  in hasUnicodeProperty || hasNonBMPChar
 
 -- | Match text against regex
 matchRegex :: Regex.Regex -> Text -> Bool
