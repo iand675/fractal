@@ -968,49 +968,55 @@ validateObjectPropertyConstraints ctx obj objMap =
           [] -> ValidationSuccess mempty
           (e:es) -> ValidationFailure $ foldl (<>) e es
     
-    validateProperties ctx' schemaObj om = case validationProperties (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just propSchemas ->
-        let -- Validate properties that are present
-            evaluatedProps = Set.fromList
+    validateProperties ctx' schemaObj om =
+      let -- Get properties from 'properties' keyword
+          maybePropSchemas = validationProperties (schemaValidation schemaObj)
+          evaluatedProps = case maybePropSchemas of
+            Nothing -> Set.empty
+            Just propSchemas -> Set.fromList
               [ propName
               | propName <- Map.keys propSchemas
               , KeyMap.member (Key.fromText propName) om
               ]
-            results = [ validateValueWithContext ctx' propSchema propValue
-                      | (propName, propSchema) <- Map.toList propSchemas
-                      , Just propValue <- [KeyMap.lookup (Key.fromText propName) om]
-                      ]
-            -- Also check pattern properties
-            patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
-              Nothing -> Set.empty
-              Just patternSchemas -> Set.fromList
-                [ Key.toText k
-                | k <- KeyMap.keys om
-                , let propName = Key.toText k
-                , (Regex pattern, _) <- Map.toList patternSchemas
-                , case compileRegex pattern of
-                    Right regex -> matchRegex regex propName
-                    Left _ -> False
-                ]
-            patternResults = case validationPatternProperties (schemaValidation schemaObj) of
-              Nothing -> []
-              Just patternSchemas ->
-                [ validateValueWithContext ctx' patternSchema propValue
-                | (k, propValue) <- KeyMap.toList om
-                , let propName = Key.toText k
-                , (Regex pattern, patternSchema) <- Map.toList patternSchemas
-                , case compileRegex pattern of
-                    Right regex -> matchRegex regex propName
-                    Left _ -> False
-                ]
-            allResults = results <> patternResults
-            allEvaluatedProps = evaluatedProps <> patternCoveredProps
-            failures = [errs | ValidationFailure errs <- allResults]
-            annotations = [anns | ValidationSuccess anns <- allResults]
-        in case failures of
-          [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat annotations
-          (e:es) -> ValidationFailure $ foldl (<>) e es
+          results = case maybePropSchemas of
+            Nothing -> []
+            Just propSchemas ->
+              [ validateValueWithContext ctx' propSchema propValue
+              | (propName, propSchema) <- Map.toList propSchemas
+              , Just propValue <- [KeyMap.lookup (Key.fromText propName) om]
+              ]
+
+          -- Also check pattern properties (independent of 'properties' keyword)
+          patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
+            Nothing -> Set.empty
+            Just patternSchemas -> Set.fromList
+              [ Key.toText k
+              | k <- KeyMap.keys om
+              , let propName = Key.toText k
+              , (Regex pattern, _) <- Map.toList patternSchemas
+              , case compileRegex pattern of
+                  Right regex -> matchRegex regex propName
+                  Left _ -> False
+              ]
+          patternResults = case validationPatternProperties (schemaValidation schemaObj) of
+            Nothing -> []
+            Just patternSchemas ->
+              [ validateValueWithContext ctx' patternSchema propValue
+              | (k, propValue) <- KeyMap.toList om
+              , let propName = Key.toText k
+              , (Regex pattern, patternSchema) <- Map.toList patternSchemas
+              , case compileRegex pattern of
+                  Right regex -> matchRegex regex propName
+                  Left _ -> False
+              ]
+
+          allResults = results <> patternResults
+          allEvaluatedProps = evaluatedProps <> patternCoveredProps
+          failures = [errs | ValidationFailure errs <- allResults]
+          annotations = [anns | ValidationSuccess anns <- allResults]
+      in case failures of
+        [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat annotations
+        (e:es) -> ValidationFailure $ foldl (<>) e es
     
     validateAdditionalProperties ctx' schemaObj om = case validationAdditionalProperties (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
