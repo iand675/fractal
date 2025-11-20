@@ -128,7 +128,10 @@ compileRegex pattern flags = do
               else do
                 errMsg <- peekCString errPtr
                 c_free_direct ptr
-                return $ Left errMsg
+                let errorMessage = if null errMsg
+                                   then "Unknown compilation error (empty error message)"
+                                   else errMsg
+                return $ Left errorMessage
 
 -- | Direct call to free (needed when compilation fails)
 foreign import ccall unsafe "ecma262_regex_wrapper.c ecma262_regex_free"

@@ -320,6 +320,28 @@ spec = do
       result <- match regex "hello"
       result `shouldSatisfy` isJust
 
+  describe "Non-ASCII Pattern Matching" $ do
+    it "^á compiles without Unicode flag" $ do
+      result <- compile "^á" []
+      case result of
+        Left err -> expectationFailure $ "Compilation failed: " ++ err
+        Right _ -> return ()
+
+    it "^á compiles with Unicode flag" $ do
+      result <- compile "^á" [Unicode]
+      case result of
+        Left err -> expectationFailure $ "Compilation failed: " ++ err
+        Right _ -> return ()
+
+    it "^á matches 'ármányos' with Unicode flag" $ do
+      result <- compile "^á" [Unicode]
+      case result of
+        Left err -> expectationFailure $ "Compilation failed: " ++ err
+        Right regex -> do
+          let subject = TE.encodeUtf8 "ármányos"
+          matchResult <- match regex subject
+          matchResult `shouldSatisfy` isJust
+
   describe "Edge Cases" $ do
     it "handles empty pattern" $ do
       Right regex <- compile "" []
