@@ -12,7 +12,6 @@ dist-newstyle/
 *.eventlog
 .HTF/
 .ghc.environment.*
-*.cabal
 
 # IDE
 .idea/

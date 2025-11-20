@@ -51,11 +51,21 @@ validateContextO label pos c =
     _ -> pure ()
 
 -- | ZERO WIDTH NON-JOINER (U+200C) - RFC 5892 Appendix A.1
+-- Allowed after Virama OR in Arabic script contexts matching the regexp
 validateZWNJ :: Text -> Int -> Char -> Either IDNError ()
 validateZWNJ label pos c =
-  if pos > 0 && isVirama (T.index label (pos - 1))
-    then pure ()
-    else Left (InvalidContext c ZWNJRule pos label)
+  let precededByVirama = pos > 0 && isVirama (T.index label (pos - 1))
+      -- Arabic context: check if surrounded by Arabic joining characters
+      -- Per W3C ALREQ, ZWNJ is used in Arabic between joining letters
+      inArabicContext = pos > 0 && pos < T.length label - 1 &&
+                       isArabicJoining (T.index label (pos - 1)) &&
+                       isArabicJoining (T.index label (pos + 1))
+  in if precededByVirama || inArabicContext
+       then pure ()
+       else Left (InvalidContext c ZWNJRule pos label)
+  where
+    -- Characters in Arabic script that can join (simplified check)
+    isArabicJoining ch = scriptOf ch == Just Arabic && ord ch >= 0x0620 && ord ch <= 0x06FF
 
 -- | ZERO WIDTH JOINER (U+200D) - RFC 5892 Appendix A.2
 validateZWJ :: Text -> Int -> Char -> Either IDNError ()
@@ -74,18 +84,22 @@ validateMiddleDot label pos c =
        else Left (InvalidContext c MiddleDotRule pos label)
 
 -- | GREEK LOWER NUMERAL SIGN (U+0375) - RFC 5892 Appendix A.4
+-- The script of the following character MUST be Greek
 validateGreekKeraia :: Text -> Int -> Char -> Either IDNError ()
 validateGreekKeraia label pos c =
-  let hasGreek = T.any (\ch -> scriptOf ch == Just Greek) label
-  in if hasGreek
+  let followedByGreek = pos < T.length label - 1 &&
+                       scriptOf (T.index label (pos + 1)) == Just Greek
+  in if followedByGreek
        then pure ()
        else Left (InvalidContext c GreekKeraiaRule pos label)
 
 -- | HEBREW PUNCTUATION (U+05F3, U+05F4) - RFC 5892 Appendix A.5/A.6
+-- The script of the preceding character MUST be Hebrew
 validateHebrewPunctuation :: Text -> Int -> Char -> Either IDNError ()
 validateHebrewPunctuation label pos c =
-  let hasHebrew = T.any (\ch -> scriptOf ch == Just Hebrew) label
-  in if hasHebrew
+  let precededByHebrew = pos > 0 &&
+                        scriptOf (T.index label (pos - 1)) == Just Hebrew
+  in if precededByHebrew
        then pure ()
        else Left (InvalidContext c HebrewGereshRule pos label)
 
