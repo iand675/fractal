@@ -311,8 +311,9 @@ instance ToJSON Dependency where
 
 instance FromJSON Dependency where
   parseJSON v@(Aeson.Object _) = DependencySchema <$> parseJSON v
+  parseJSON v@(Aeson.Bool _) = DependencySchema <$> parseJSON v  -- Boolean schemas (true/false)
   parseJSON (Aeson.Array arr) = DependencyProperties . Set.fromList <$> traverse parseJSON (toList arr)
-  parseJSON _ = fail "dependency must be object or array"
+  parseJSON _ = fail "dependency must be object, boolean, or array"
 
 -- | Schema validation keywords grouped by category
 data SchemaValidation = SchemaValidation
