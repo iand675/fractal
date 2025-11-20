@@ -342,6 +342,50 @@ spec = do
           matchResult <- match regex subject
           matchResult `shouldSatisfy` isJust
 
+  describe "Non-BMP Character Patterns" $ do
+    it "^🐲*$ compiles with Unicode flag" $ do
+      let pattern = "^🐲*$"
+      result <- compile pattern [Unicode]
+      case result of
+        Left err -> expectationFailure $ "Compilation failed: " ++ err ++
+                                        "\nPattern bytes: " ++ show (BS.unpack pattern)
+        Right _ -> return ()
+
+    it "^🐲*$ matches empty string" $ do
+      Right regex <- compile "^🐲*$" [Unicode]
+      result <- match regex ""
+      result `shouldSatisfy` isJust
+
+    it "^🐲$ matches single dragon (no quantifier)" $ do
+      Right regex <- compile "^🐲$" [Unicode]
+      let dragon = TE.encodeUtf8 "🐲"
+      result <- match regex dragon
+      result `shouldSatisfy` isJust
+
+    it "🐲 matches dragon without anchors" $ do
+      Right regex <- compile "🐲" [Unicode]
+      let dragon = TE.encodeUtf8 "🐲"
+      result <- match regex dragon
+      result `shouldSatisfy` isJust
+
+    it "\\u{1F432} (Unicode escape) matches dragon" $ do
+      Right regex <- compile "\\u{1F432}" [Unicode]
+      let dragon = TE.encodeUtf8 "🐲"
+      result <- match regex dragon
+      result `shouldSatisfy` isJust
+
+    it "^🐲*$ matches single dragon" $ do
+      Right regex <- compile "^🐲*$" [Unicode]
+      let dragon = TE.encodeUtf8 "🐲"
+      result <- match regex dragon
+      result `shouldSatisfy` isJust
+
+    it "^🐲*$ matches two dragons" $ do
+      Right regex <- compile "^🐲*$" [Unicode]
+      let dragons = TE.encodeUtf8 "🐲🐲"
+      result <- match regex dragons
+      result `shouldSatisfy` isJust
+
   describe "Edge Cases" $ do
     it "handles empty pattern" $ do
       Right regex <- compile "" []

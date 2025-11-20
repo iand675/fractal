@@ -52,6 +52,7 @@ import qualified Text.Email.Validate as Email
 import qualified Network.URI as URI
 import qualified Data.IP as IP
 import qualified Data.Text.IDN as IDN
+import qualified Numeric
 
 -- | Error during validator compilation
 data CompileError = CompileError Text
@@ -605,7 +606,7 @@ validateStringConstraints obj (String txt) =
     validatePattern text schemaValidation = case validationPattern schemaValidation of
       Nothing -> ValidationSuccess mempty
       Just (Regex pattern) ->
-        -- Use regex-tdfa to match pattern
+        -- Use ecma262-regex to match pattern
         case compileRegex pattern of
           Right regex ->
             if matchRegex regex text
@@ -1541,12 +1542,25 @@ resolveDynamicRef (Reference refText) ctx
 
 -- | Compile regex pattern
 -- Automatically adds Unicode flag if pattern contains Unicode property escapes
+-- Escapes literal non-BMP characters to \u{...} format for proper matching
 compileRegex :: Text -> Either Text (Regex.Regex)
 compileRegex pattern =
-  let flags = if needsUnicodeMode pattern then [R.Unicode] else []
-  in case Regex.compileText pattern flags of
+  let escapedPattern = escapeNonBMPChars pattern
+      -- Check original pattern to determine if Unicode mode is needed
+      -- (escaped pattern is all ASCII, but we need Unicode mode for \u{...} escapes)
+      flags = if needsUnicodeMode pattern then [R.Unicode] else []
+  in case Regex.compileText escapedPattern flags of
       Left err -> Left $ T.pack $ "Invalid regex: " <> err
       Right regex -> Right regex
+
+-- | Escape non-BMP characters (> U+FFFF) to \u{...} format
+-- This is necessary because libregexp doesn't correctly match literal non-BMP
+-- characters in UTF-8 patterns against UTF-16 data (surrogate pairs)
+escapeNonBMPChars :: Text -> Text
+escapeNonBMPChars = T.concatMap $ \c ->
+  if fromEnum c > 0xFFFF
+    then T.pack $ "\\u{" ++ Numeric.showHex (fromEnum c) "}"
+    else T.singleton c
 
 -- | Check if a pattern needs Unicode mode
 -- Unicode property escapes (\p{...} or \P{...}) require Unicode mode
