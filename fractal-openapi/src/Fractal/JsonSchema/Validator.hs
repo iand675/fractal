@@ -910,12 +910,13 @@ validateArrayConstraints ctx obj (Array arr) =
     nubOrd = Set.toList . Set.fromList
 validateArrayConstraints _ _ _ = ValidationSuccess mempty
 
--- | Validate object constraints WITHOUT unevaluatedProperties (for use when collecting annotations)
-validateObjectConstraintsWithoutUnevaluated :: ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
+-- | Shared helper to validate object property constraints (without unevaluatedProperties)
+-- This extracts the common logic used by both validateObjectConstraints and validateObjectConstraintsWithoutUnevaluated
+validateObjectPropertyConstraints :: ValidationContext -> SchemaObject -> KeyMap.KeyMap Value -> ValidationResult
+validateObjectPropertyConstraints ctx obj objMap =
   let validation = schemaValidation obj
       objSize = KeyMap.size objMap
-      -- Run all property validators EXCEPT unevaluatedProperties to collect annotations
+      -- Run all property validators to collect annotations (NOT including unevaluatedProperties)
       propertyValidations =
         [ maybe (ValidationSuccess mempty) (\max' ->
             if fromIntegral objSize <= max'
@@ -943,7 +944,7 @@ validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
       in case failures of
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
-
+    
     validateRequired schemaObj om = case validationRequired (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
       Just requiredProps ->
@@ -955,7 +956,7 @@ validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
             ValidationError "required" emptyPointer emptyPointer
               ("Missing required properties: " <> T.intercalate ", " (Set.toList missingProps))
               Nothing
-
+    
     validatePropertyNames ctx' schemaObj om = case validationPropertyNames (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
       Just nameSchema ->
@@ -966,7 +967,7 @@ validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
         in case failures of
           [] -> ValidationSuccess mempty
           (e:es) -> ValidationFailure $ foldl (<>) e es
-
+    
     validateProperties ctx' schemaObj om = case validationProperties (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
       Just propSchemas ->
@@ -1010,13 +1011,13 @@ validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
         in case failures of
           [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat annotations
           (e:es) -> ValidationFailure $ foldl (<>) e es
-
+    
     validateAdditionalProperties ctx' schemaObj om = case validationAdditionalProperties (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
       Just addlSchema ->
         -- Properties covered by 'properties' keyword
         let definedProps = maybe Set.empty Map.keysSet (validationProperties $ schemaValidation schemaObj)
-
+            
             -- Properties covered by 'patternProperties' keyword
             patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
               Nothing -> Set.empty
@@ -1029,7 +1030,7 @@ validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
                     Right regex -> matchRegex regex propName
                     Left _ -> False
                 ]
-
+            
             -- Additional properties are those not covered by either
             allCoveredProps = definedProps <> patternCoveredProps
             additionalPropsList = [(k, v) | (k, v) <- KeyMap.toList om
@@ -1041,150 +1042,28 @@ validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
         in case failures of
           [] -> ValidationSuccess $ annotateProperties additionalPropNames <> mconcat annotations
           (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Validate object constraints WITHOUT unevaluatedProperties (for use when collecting annotations)
+validateObjectConstraintsWithoutUnevaluated :: ValidationContext -> SchemaObject -> Value -> ValidationResult
+validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
+  validateObjectPropertyConstraints ctx obj objMap
 validateObjectConstraintsWithoutUnevaluated _ _ _ = ValidationSuccess mempty
 
--- | Validate object constraints
+-- | Validate object constraints (with unevaluatedProperties)
 validateObjectConstraints :: ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateObjectConstraints ctx obj (Object objMap) =
-  let validation = schemaValidation obj
-      objSize = KeyMap.size objMap
-      -- First run all property validators to collect annotations
-      propertyValidations =
-        [ maybe (ValidationSuccess mempty) (\max' ->
-            if fromIntegral objSize <= max'
-              then ValidationSuccess mempty
-              else validationFailure "maxProperties" "Object has too many properties"
-          ) (validationMaxProperties validation)
-        , maybe (ValidationSuccess mempty) (\min' ->
-            if fromIntegral objSize >= min'
-              then ValidationSuccess mempty
-              else validationFailure "minProperties" "Object has too few properties"
-          ) (validationMinProperties validation)
-        , validateRequired obj objMap
-        , validatePropertyNames ctx obj objMap
-        , validateProperties ctx obj objMap
-        , validateAdditionalProperties ctx obj objMap
-        , validateDependencies ctx validation objMap
-        , validateDependentRequired validation objMap
-        , validateDependentSchemas ctx validation objMap
-        ]
-      -- Combine results to get annotations from property validators
-      propertyResult = combineResults propertyValidations
-      -- Then run unevaluatedProperties with those annotations
+  -- First validate property constraints
+  let propertyResult = validateObjectPropertyConstraints ctx obj objMap
+      -- Then run unevaluatedProperties with collected annotations
       unevaluatedResult = case propertyResult of
         ValidationSuccess anns ->
           validateUnevaluatedProperties ctx obj objMap anns
         ValidationFailure _ -> ValidationSuccess mempty  -- If properties failed, skip unevaluated check
   in case (propertyResult, unevaluatedResult) of
     (ValidationFailure errs, _) -> ValidationFailure errs
-    (ValidationSuccess anns, ValidationSuccess unevalAnns) -> 
+    (ValidationSuccess anns, ValidationSuccess unevalAnns) ->
       ValidationSuccess (anns <> unevalAnns)
     (ValidationSuccess _, ValidationFailure errs) -> ValidationFailure errs
-  where
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateRequired schemaObj om = case validationRequired (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just requiredProps ->
-        let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys om]
-            missingProps = Set.difference requiredProps presentProps
-        in if Set.null missingProps
-          then ValidationSuccess mempty
-          else ValidationFailure $ ValidationErrors $ pure $
-            ValidationError "required" emptyPointer emptyPointer
-              ("Missing required properties: " <> T.intercalate ", " (Set.toList missingProps))
-              Nothing
-    
-    validatePropertyNames ctx' schemaObj om = case validationPropertyNames (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just nameSchema ->
-        -- Validate each property name (as a string) against the schema
-        let propNames = [Key.toText k | k <- KeyMap.keys om]
-            results = [validateValueWithContext ctx' nameSchema (Aeson.String propName) | propName <- propNames]
-            failures = [errs | ValidationFailure errs <- results]
-        in case failures of
-          [] -> ValidationSuccess mempty
-          (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateProperties ctx' schemaObj om = case validationProperties (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just propSchemas ->
-        let -- Validate properties that are present
-            evaluatedProps = Set.fromList
-              [ propName
-              | propName <- Map.keys propSchemas
-              , KeyMap.member (Key.fromText propName) om
-              ]
-            results = [ validateValueWithContext ctx' propSchema propValue
-                      | (propName, propSchema) <- Map.toList propSchemas
-                      , Just propValue <- [KeyMap.lookup (Key.fromText propName) om]
-                      ]
-            -- Also check pattern properties
-            patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
-              Nothing -> Set.empty
-              Just patternSchemas -> Set.fromList
-                [ Key.toText k
-                | k <- KeyMap.keys om
-                , let propName = Key.toText k
-                , (Regex pattern, _) <- Map.toList patternSchemas
-                , case compileRegex pattern of
-                    Right regex -> matchRegex regex propName
-                    Left _ -> False
-                ]
-            patternResults = case validationPatternProperties (schemaValidation schemaObj) of
-              Nothing -> []
-              Just patternSchemas ->
-                [ validateValueWithContext ctx' patternSchema propValue
-                | (k, propValue) <- KeyMap.toList om
-                , let propName = Key.toText k
-                , (Regex pattern, patternSchema) <- Map.toList patternSchemas
-                , case compileRegex pattern of
-                    Right regex -> matchRegex regex propName
-                    Left _ -> False
-                ]
-            allResults = results <> patternResults
-            allEvaluatedProps = evaluatedProps <> patternCoveredProps
-            failures = [errs | ValidationFailure errs <- allResults]
-            annotations = [anns | ValidationSuccess anns <- allResults]
-        in case failures of
-          [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat annotations
-          (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateAdditionalProperties ctx' schemaObj om = case validationAdditionalProperties (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just addlSchema ->
-        -- Properties covered by 'properties' keyword
-        let definedProps = maybe Set.empty Map.keysSet (validationProperties $ schemaValidation schemaObj)
-            
-            -- Properties covered by 'patternProperties' keyword
-            patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
-              Nothing -> Set.empty
-              Just patternSchemas -> Set.fromList
-                [ Key.toText k
-                | k <- KeyMap.keys om
-                , let propName = Key.toText k
-                , (Regex pattern, _) <- Map.toList patternSchemas
-                , case compileRegex pattern of
-                    Right regex -> matchRegex regex propName
-                    Left _ -> False
-                ]
-            
-            -- Additional properties are those not covered by either
-            allCoveredProps = definedProps <> patternCoveredProps
-            additionalPropsList = [(k, v) | (k, v) <- KeyMap.toList om
-                              , not $ Set.member (Key.toText k) allCoveredProps]
-            additionalPropNames = Set.fromList [Key.toText k | (k, _) <- additionalPropsList]
-            results = [validateValueWithContext ctx' addlSchema v | (_, v) <- additionalPropsList]
-            failures = [errs | ValidationFailure errs <- results]
-            annotations = [anns | ValidationSuccess anns <- results]
-        in case failures of
-          [] -> ValidationSuccess $ annotateProperties additionalPropNames <> mconcat annotations
-          (e:es) -> ValidationFailure $ foldl (<>) e es
 validateObjectConstraints _ _ _ = ValidationSuccess mempty
 
 -- | Validate unevaluatedProperties (2019-09+)
