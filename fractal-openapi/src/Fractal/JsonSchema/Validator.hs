@@ -1550,7 +1550,14 @@ compileRegex pattern =
 
 -- | Check if a pattern needs Unicode mode
 -- Unicode property escapes (\p{...} or \P{...}) require Unicode mode
+-- Character class escapes (\d, \D, \w, \W, \s, \S) need Unicode mode for proper multi-byte character matching
 -- Also, patterns with non-BMP characters (code points > 0xFFFF) require Unicode mode
+--
+-- Why character classes need Unicode mode:
+-- In byte mode, libregexp treats each UTF-8 byte separately. For example, "é" (U+00E9)
+-- is encoded as UTF-8 bytes [0xC3, 0xA9]. The pattern `^\\W$` expects exactly ONE non-word
+-- character, but in byte mode it sees TWO bytes. In Unicode mode (UTF-16), "é" is a single
+-- code unit, so `^\\W$` matches correctly.
 needsUnicodeMode :: Text -> Bool
 needsUnicodeMode pattern =
   -- Check for \p{...} or \P{...} patterns (after JSON parsing, these are single backslashes)
@@ -1559,7 +1566,9 @@ needsUnicodeMode pattern =
       -- Check if pattern contains any non-BMP characters (code points > 0xFFFF)
       -- These include emoji and other characters outside the Basic Multilingual Plane
       hasNonBMPChar = T.any (\c -> fromEnum c > 0xFFFF) pattern
-  in hasUnicodeProperty || hasNonBMPChar
+      -- Check for character class escapes that need Unicode mode
+      hasCharClass = any (`T.isInfixOf` pattern) ["\\d", "\\D", "\\w", "\\W", "\\s", "\\S"]
+  in hasUnicodeProperty || hasNonBMPChar || hasCharClass
 
 -- | Match text against regex
 matchRegex :: Regex.Regex -> Text -> Bool

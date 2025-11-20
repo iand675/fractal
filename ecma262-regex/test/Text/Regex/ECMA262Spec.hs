@@ -304,6 +304,22 @@ spec = do
       Multiline `shouldSatisfy` (`elem` flags)
 
 
+  describe "Character Class Unicode Matching" $ do
+    it "\\d matches '0' with Unicode flag (no anchors)" $ do
+      Right regex <- compile "\\d" [Unicode]
+      result <- match regex "0"
+      result `shouldSatisfy` isJust
+
+    it "^a$ matches 'a' with Unicode flag (basic anchor test)" $ do
+      Right regex <- compile "^a$" [Unicode]
+      result <- match regex "a"
+      result `shouldSatisfy` isJust
+
+    it "^hello$ matches 'hello' with Unicode flag (longer text)" $ do
+      Right regex <- compile "^hello$" [Unicode]
+      result <- match regex "hello"
+      result `shouldSatisfy` isJust
+
   describe "Edge Cases" $ do
     it "handles empty pattern" $ do
       Right regex <- compile "" []
