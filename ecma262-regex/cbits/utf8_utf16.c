@@ -106,8 +106,8 @@ uint16_t* utf8_to_utf16(const uint8_t *utf8, int utf8_len, int *utf16_len_out) {
         }
     }
 
-    /* Allocate UTF-16 buffer */
-    uint16_t *utf16 = (uint16_t*)malloc(utf16_len * sizeof(uint16_t));
+    /* Allocate UTF-16 buffer with space for null terminator */
+    uint16_t *utf16 = (uint16_t*)malloc((utf16_len + 1) * sizeof(uint16_t));
     if (!utf16) {
         return NULL;
     }
@@ -128,6 +128,9 @@ uint16_t* utf8_to_utf16(const uint8_t *utf8, int utf8_len, int *utf16_len_out) {
             utf16[out_pos++] = 0xDC00 + (uint16_t)(codepoint & 0x3FF);
         }
     }
+
+    /* Null-terminate the UTF-16 string */
+    utf16[out_pos] = 0;
 
     *utf16_len_out = utf16_len;
     return utf16;

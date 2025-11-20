@@ -139,10 +139,10 @@ int ecma262_regex_exec(ecma262_regex_t *regex, const uint8_t *subject,
         return -1;
     }
 
-    /* Execute with UTF-16 mode */
+    /* Execute with UTF-16 mode (cbuf_type=1, libregexp will upgrade to 2 if Unicode flag set) */
     int result = lre_exec((uint8_t **)captures_utf16, regex->bytecode,
                          (uint8_t *)subject_utf16, start_index_utf16,
-                         utf16_len, 2, NULL);
+                         utf16_len, 1, NULL);
 
     if (result == 1) {
         /* Match found - convert capture positions from UTF-16 offsets to UTF-8 byte offsets */
@@ -180,9 +180,9 @@ int ecma262_regex_exec_utf16(ecma262_regex_t *regex, const uint16_t *subject,
                               int start_index, int subject_len, uint8_t **captures) {
     if (!regex || !regex->bytecode) return -1;
 
-    /* Execute with UTF-16 mode (cbuf_type=2) */
+    /* Execute with UTF-16 mode (cbuf_type=1, libregexp will upgrade to 2 if Unicode flag set) */
     return lre_exec(captures, regex->bytecode, (const uint8_t *)subject,
-                   start_index, subject_len, 2, NULL);
+                   start_index, subject_len, 1, NULL);
 }
 
 /* Check if compilation was successful */
