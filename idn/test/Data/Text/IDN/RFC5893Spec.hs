@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | RFC 5893 Bidi compliance test cases
-module Data.Text.IDNA2008.RFC5893Spec (spec) where
+module Data.Text.IDN.RFC5893Spec (spec) where
 
 import Test.Hspec
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.IDNA2008
+import Data.Text.IDN
 
 spec :: Spec
 spec = do

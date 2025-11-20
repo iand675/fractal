@@ -6,6 +6,7 @@ packages:
   - fractal-stream
   - fractal-openapi
   - ecma262-regex
+  - idn
 
 # Allow newer versions of dependencies
 allow-newer: true

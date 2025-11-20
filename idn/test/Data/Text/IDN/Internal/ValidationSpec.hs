@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Data.Text.IDNA2008.ValidationSpec (spec) where
+module Data.Text.IDN.Internal.ValidationSpec (spec) where
 
 import Test.Hspec
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.IDNA2008
-import Data.Text.IDNA2008.Types
+import Data.Text.IDN
+import Data.Text.IDN.Types
 
 spec :: Spec
 spec = do

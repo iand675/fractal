@@ -1,26 +1,26 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Data.Text.IDNA2008.PropertySpec (spec) where
+module Data.Text.IDN.PropertySpec (spec) where
 
 import Test.Hspec
 import Test.QuickCheck
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Char (isAscii, isAlphaNum)
-import Data.Text.IDNA2008
-import Data.Text.IDNA2008.Punycode
+import Data.Text.IDN
+import Data.Text.Punycode
 
 spec :: Spec
 spec = do
   describe "Property-based tests" $ do
     describe "Punycode round-trip" $ do
       it "round-trips ASCII text" $ property $ \(ASCIIText txt) ->
-        case encodePunycode txt of
-          Right encoded -> decodePunycode encoded `shouldBe` Right txt
+        case encode txt of
+          Right encoded -> decode encoded `shouldBe` Right txt
           Left _ -> expectationFailure "Encoding failed for ASCII text"
       
       it "preserves length relationship" $ property $ \(UnicodeText txt) ->
-        case encodePunycode txt of
+        case encode txt of
           Right encoded -> 
             if T.all isAscii txt
               then T.length encoded `shouldSatisfy` (<= T.length txt + 10)  -- Small overhead for pure ASCII

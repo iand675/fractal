@@ -5,8 +5,8 @@ module Main (main) where
 import Criterion.Main
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.IDNA2008
-import Data.Text.IDNA2008.Punycode
+import Data.Text.IDN
+import Data.Text.Punycode
 import Test.QuickCheck
 import Test.QuickCheck.Gen
 import Test.QuickCheck.Random (mkQCGen)
@@ -67,7 +67,7 @@ corpus =
 -- | Pre-calculated Punycode versions for decoding benchmarks
 encodedCorpus :: [(String, [Text])]
 encodedCorpus = 
-  [ (name, [ forceRes $ either (const t) ("xn--" <>) (encodePunycode t) | t <- texts ])
+      [ (name, [ forceRes $ either (const t) ("xn--" <>) (encode t) | t <- texts ])
   | (name, texts) <- corpus
   ]
   where
@@ -102,11 +102,11 @@ main = do
         | (name, texts) <- corpus
         ]
     , bgroup "Punycode.encode"
-        [ bench name $ nf (map encodePunycode) texts
+        [ bench name $ nf (map encode) texts
         | (name, texts) <- corpus
         ]
     , bgroup "Punycode.decode"
-        [ bench name $ nf (map decodePunycode) texts
+        [ bench name $ nf (map decode) texts
         | (name, texts) <- punycodeOnlyCorpus
         ]
     ]

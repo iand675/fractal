@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Data.Text.IDNA2008.UnicodeSpec (spec) where
+module Data.Text.IDN.Internal.UnicodeSpec (spec) where
 
 import Test.Hspec
-import Data.Text.IDNA2008.Unicode
-import Data.Text.IDNA2008.Types
+import Data.Text.IDN.Internal.Unicode
+import Data.Text.IDN.Types
 
 spec :: Spec
 spec = do

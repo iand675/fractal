@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Data.Text.IDNA2008.BidiSpec (spec) where
+module Data.Text.IDN.BidiSpec (spec) where
 
 import Test.Hspec
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.IDNA2008
-import Data.Text.IDNA2008.Types
+import Data.Text.IDN
+import Data.Text.IDN.Types
 
 spec :: Spec
 spec = do
@@ -157,7 +157,7 @@ spec = do
       let label = "\x0627\x064B\x0644\x0651\x0639\x064B"  -- Alternating base + NSM
       validateLabel label `shouldSatisfy` isRightOrError
 
-isRightOrError :: Either IDNA2008Error () -> Bool
+isRightOrError :: Either IDNError () -> Bool
 isRightOrError (Right ()) = True
 isRightOrError (Left _) = True  -- Some validation may not be complete
 

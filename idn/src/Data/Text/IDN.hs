@@ -1,28 +1,75 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | High-level IDNA2008 API for domain name processing
-module Data.Text.IDNA2008
+-- | High-level API for Internationalized Domain Names (IDN) processing.
+--
+-- This module provides functions for converting between Unicode and ASCII
+-- domain names, following the IDNA2008 specification (RFC 5890-5893).
+--
+-- == Overview
+--
+-- Internationalized Domain Names allow domain names to contain non-ASCII
+-- characters. This library implements IDNA2008, which uses Punycode encoding
+-- to represent Unicode characters in ASCII-compatible form.
+--
+-- == Example
+--
+-- >>> toASCII "münchen.de"
+-- Right "xn--mnchen-3ya.de"
+--
+-- >>> toUnicode "xn--mnchen-3ya.de"
+-- Right "münchen.de"
+--
+-- >>> validateLabel "example"
+-- Right ()
+--
+-- == See Also
+--
+-- * 'Data.Text.Punycode' for low-level Punycode encoding/decoding
+-- * RFC 5890-5893 for the full IDNA2008 specification
+module Data.Text.IDN
   ( -- * Main API
     toASCII
   , toUnicode
   , validateLabel
   
     -- * Types
-  , module Data.Text.IDNA2008.Types
+  , module Data.Text.IDN.Types
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.IDNA2008.Types
-import Data.Text.IDNA2008.Unicode
-import Data.Text.IDNA2008.Validation
-import Data.Text.IDNA2008.Punycode (encodePunycode, decodePunycode)
+import Data.Text.IDN.Types
+import Data.Text.IDN.Internal.Unicode
+import Data.Text.IDN.Internal.Validation
+import Data.Text.IDN.Internal.Punycode (encodePunycode, decodePunycode)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Char (ord, isAscii)
 
--- | Convert a Unicode domain name to ASCII (A-label) form per RFC 5891
-toASCII :: Text -> Either IDNA2008Error Text
+-- | Convert a Unicode domain name to ASCII (A-label) form per RFC 5891.
+--
+-- Converts each label in the domain name to its ASCII-compatible form.
+-- Unicode labels are encoded using Punycode and prefixed with "xn--".
+-- ASCII labels are validated and passed through unchanged.
+--
+-- === Examples
+--
+-- >>> toASCII "münchen.de"
+-- Right "xn--mnchen-3ya.de"
+--
+-- >>> toASCII "example.com"
+-- Right "example.com"
+--
+-- === Errors
+--
+-- Returns 'Left' with 'IDNError' if:
+-- * Any label is empty or too long
+-- * Any label contains disallowed code points
+-- * Bidirectional text rules are violated
+-- * Contextual validation fails
+--
+-- @since 0.1.0.0
+toASCII :: Text -> Either IDNError Text
 toASCII input = do
   domain <- mkDomainName input
   processedLabels <- traverse processLabelToASCII (labels domain)
@@ -31,8 +78,30 @@ toASCII input = do
     labelText (ULabel t) = t
     labelText (ALabel t) = t
 
--- | Convert an ASCII domain name to Unicode (U-label) form per RFC 5891
-toUnicode :: Text -> Either IDNA2008Error Text
+-- | Convert an ASCII domain name to Unicode (U-label) form per RFC 5891.
+--
+-- Converts each label in the domain name to its Unicode form.
+-- Punycode-encoded labels (starting with "xn--") are decoded to Unicode.
+-- Pure ASCII labels are validated and passed through unchanged.
+--
+-- === Examples
+--
+-- >>> toUnicode "xn--mnchen-3ya.de"
+-- Right "münchen.de"
+--
+-- >>> toUnicode "example.com"
+-- Right "example.com"
+--
+-- === Errors
+--
+-- Returns 'Left' with 'IDNError' if:
+-- * Any label is empty or too long
+-- * Punycode decoding fails
+-- * Any label contains disallowed code points
+-- * Bidirectional text rules are violated
+--
+-- @since 0.1.0.0
+toUnicode :: Text -> Either IDNError Text
 toUnicode input = do
   domain <- mkDomainName input
   processedLabels <- traverse processLabelToUnicode (labels domain)
@@ -41,8 +110,8 @@ toUnicode input = do
     labelText (ULabel t) = t
     labelText (ALabel t) = t
 
--- | Process a single label to ASCII form
-processLabelToASCII :: Label -> Either IDNA2008Error Label
+-- | Process a single label to ASCII form.
+processLabelToASCII :: Label -> Either IDNError Label
 processLabelToASCII (ALabel t) = 
   -- Already ASCII, validate it
   validateLabel t >> return (ALabel t)
@@ -66,8 +135,8 @@ processLabelToASCII (ULabel t)
         then Left (LabelTooLong (T.length aLabel) 63)
         else return (ALabel aLabel)
 
--- | Process a single label to Unicode form  
-processLabelToUnicode :: Label -> Either IDNA2008Error Label
+-- | Process a single label to Unicode form.
+processLabelToUnicode :: Label -> Either IDNError Label
 processLabelToUnicode (ULabel t) = 
   -- Already Unicode, validate and return
   validateLabel t >> return (ULabel t)
@@ -86,8 +155,30 @@ processLabelToUnicode (ALabel t)
       -- Pure ASCII label, validate and return
       validateLabel t >> return (ALabel t)
 
--- | Validate a single domain label per IDNA2008 rules
-validateLabel :: Text -> Either IDNA2008Error ()
+-- | Validate a single domain label per IDNA2008 rules.
+--
+-- Performs comprehensive validation including:
+-- * Length constraints (max 63 characters)
+-- * Hyphen position rules
+-- * Code point validity (PVALID, CONTEXTJ, CONTEXTO)
+-- * Contextual rule validation
+-- * Bidirectional text rules (RFC 5893)
+--
+-- === Examples
+--
+-- >>> validateLabel "example"
+-- Right ()
+--
+-- >>> validateLabel ""
+-- Left EmptyLabel
+--
+-- === Errors
+--
+-- Returns 'Left' with 'IDNError' if validation fails. See 'IDNError'
+-- constructors for specific error types.
+--
+-- @since 0.1.0.0
+validateLabel :: Text -> Either IDNError ()
 validateLabel label = do
   -- Check empty
   if T.null label
@@ -119,8 +210,8 @@ validateLabel label = do
   
   return ()
 
--- | Check hyphen position rules
-checkHyphens :: Text -> Either IDNA2008Error ()
+-- | Check hyphen position rules.
+checkHyphens :: Text -> Either IDNError ()
 checkHyphens label = do
   case T.uncons label of
     Just ('-', _) -> Left (InvalidHyphenPosition StartsWithHyphen)
@@ -137,8 +228,8 @@ checkHyphens label = do
       else pure ()
     else pure ()
 
--- | Validate a single code point
-validateCodePoint :: Char -> Either IDNA2008Error ()
+-- | Validate a single code point.
+validateCodePoint :: Char -> Either IDNError ()
 validateCodePoint c =
   case codePointStatus c of
     PVALID -> pure ()
@@ -147,6 +238,7 @@ validateCodePoint c =
     CONTEXTO -> pure ()  -- Will be checked in context validation
     UNASSIGNED -> Left (DisallowedCodePoint c (ord c))
 
--- | Check if a label is pure ASCII
+-- | Check if a label is pure ASCII.
 isAsciiLabel :: Text -> Bool
 isAsciiLabel = T.all isAscii
+

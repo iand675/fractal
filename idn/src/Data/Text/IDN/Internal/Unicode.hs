@@ -1,8 +1,24 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Unicode property lookups for IDNA2008 validation
-module Data.Text.IDNA2008.Unicode
+-- | Internal Unicode property lookups for IDN validation.
+--
+-- This module provides Unicode property lookups used internally for IDN
+-- validation. For public API, see 'Data.Text.IDN'.
+--
+-- = Implementation Note: IntMap/IntSet vs CharSet
+--
+-- This module uses 'IntMap' and 'IntSet' from containers rather than 'CharSet'
+-- from the charset package. Benchmarking showed that:
+--
+-- * Map lookups (codePointStatus, bidiClass, scriptOf, lookupContextRule)
+--   are 2-23% slower with CharSet, as it provides no benefit for map operations
+-- * Set membership tests (isCombiningMark, isVirama) show mixed results:
+--     - CharSet is 36% faster for negative lookups (non-combining chars)
+--     - CharSet is 2-6% slower for positive lookups and mixed workloads
+-- * Overall: IntMap/IntSet is faster for our workload which is dominated by
+--   map lookups rather than pure set membership tests
+module Data.Text.IDN.Internal.Unicode
   ( -- * Property Lookup Functions
     codePointStatus
   , bidiClass
@@ -15,7 +31,7 @@ module Data.Text.IDNA2008.Unicode
   , isNFCQuickCheck
   ) where
 
-import Data.Text.IDNA2008.Types
+import Data.Text.IDN.Types
 import qualified Data.IntMap.Strict as IM
 import qualified Data.IntSet as IS
 import Data.IntMap.Strict (IntMap)
