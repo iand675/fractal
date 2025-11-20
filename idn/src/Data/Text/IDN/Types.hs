@@ -202,16 +202,24 @@ mkLabel text
 -- Left EmptyLabel
 mkDomainName :: Text -> Either IDNError DomainName
 mkDomainName text = do
-  if T.null text 
+  if T.null text
     then Left EmptyLabel
     else if T.length text > 253
       then Left (TotalDomainTooLong (T.length text) 253)
       else do
-        let labelTexts = T.splitOn "." text
+        -- RFC 3490 Section 3.1: Normalize alternative dot separators
+        -- U+3002 IDEOGRAPHIC FULL STOP, U+FF0E FULLWIDTH FULL STOP, U+FF61 HALFWIDTH IDEOGRAPHIC FULL STOP
+        let normalized = T.map normalizeDot text
+            labelTexts = T.splitOn "." normalized
         labelList <- traverse mkLabel labelTexts
         case NE.nonEmpty labelList of
           Nothing -> Left EmptyLabel
           Just ne -> Right (DomainName ne)
+  where
+    normalizeDot '\x3002' = '.'  -- IDEOGRAPHIC FULL STOP
+    normalizeDot '\xFF0E' = '.'  -- FULLWIDTH FULL STOP
+    normalizeDot '\xFF61' = '.'  -- HALFWIDTH IDEOGRAPHIC FULL STOP
+    normalizeDot c = c
 
 -- | IDNA2008 code point status per RFC 5892.
 --

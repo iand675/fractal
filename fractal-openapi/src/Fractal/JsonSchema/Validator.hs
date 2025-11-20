@@ -51,6 +51,7 @@ import qualified Data.Time.RFC3339 as RFC3339
 import qualified Text.Email.Validate as Email
 import qualified Network.URI as URI
 import qualified Data.IP as IP
+import qualified Data.Text.IDN as IDN
 
 -- | Error during validator compilation
 data CompileError = CompileError Text
@@ -1334,6 +1335,9 @@ validateFormatValue :: Format -> Text -> ValidationResult
 validateFormatValue Email text
   | isValidEmail text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid email format"
+validateFormatValue IDNEmail text
+  | isValidIDNEmail text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid IDN email format"
 validateFormatValue URI text
   | isValidURI text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid URI format"
@@ -1365,7 +1369,7 @@ validateFormatValue Hostname text
   | isValidHostname text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid hostname"
 validateFormatValue IDNHostname text
-  | isValidHostname text = ValidationSuccess mempty  -- Simplified: accept ASCII hostnames
+  | isValidIDNHostname text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid IDN hostname"
 validateFormatValue JSONPointerFormat text
   | isValidJSONPointer text = ValidationSuccess mempty
@@ -1381,6 +1385,23 @@ validateFormatValue _ _ = ValidationSuccess mempty  -- Other formats: annotation
 -- Format validators using proper libraries
 isValidEmail :: Text -> Bool
 isValidEmail text = Email.isValid (TE.encodeUtf8 text)
+
+-- IDN Email validator - validates internationalized email addresses
+-- Per RFC 6531, the domain part must be a valid IDN hostname
+isValidIDNEmail :: Text -> Bool
+isValidIDNEmail text =
+  case T.splitOn "@" text of
+    [local, domain] | not (T.null local) && not (T.null domain) ->
+      -- Basic structure check: must have exactly one @ with non-empty parts
+      -- Validate local part: basic checks (no leading/trailing dots, valid chars)
+      let validLocal = not (T.isPrefixOf "." local) &&
+                      not (T.isSuffixOf "." local) &&
+                      not (T.isInfixOf ".." local) &&
+                      T.length local <= 64
+          -- Validate domain part using IDN hostname validation
+          validDomain = isValidIDNHostname domain
+      in validLocal && validDomain
+    _ -> False  -- Must have exactly one @
 
 isValidURI :: Text -> Bool
 isValidURI text = case URI.parseURI (T.unpack text) of
@@ -1469,9 +1490,9 @@ isValidDate text =
 
 -- Hostname validator (RFC 1123)
 isValidHostname :: Text -> Bool
-isValidHostname text = 
+isValidHostname text =
   let labels = T.splitOn "." text
-      validLabel lbl = 
+      validLabel lbl =
         not (T.null lbl) &&
         T.length lbl <= 63 &&
         not (T.isPrefixOf "-" lbl) &&
@@ -1480,6 +1501,14 @@ isValidHostname text =
   in not (null labels) &&
      T.length text <= 253 &&
      all validLabel labels
+
+-- IDN Hostname validator (RFC 5890-5893)
+isValidIDNHostname :: Text -> Bool
+isValidIDNHostname text =
+  -- Try to convert to ASCII using IDNA2008
+  case IDN.toASCII text of
+    Right ascii -> isValidHostname ascii  -- Validate the ASCII form
+    Left _ -> False  -- IDN conversion failed
 
 -- URI Reference validator (allows relative references)
 isValidURIReference :: Text -> Bool

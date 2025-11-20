@@ -112,9 +112,16 @@ toUnicode input = do
 
 -- | Process a single label to ASCII form.
 processLabelToASCII :: Label -> Either IDNError Label
-processLabelToASCII (ALabel t) = 
-  -- Already ASCII, validate it
-  validateLabel t >> return (ALabel t)
+processLabelToASCII (ALabel t)
+  | "xn--" `T.isPrefixOf` t = do
+      -- It's a Punycode A-label, validate it by decoding and re-encoding
+      -- This uses processLabelToUnicode which validates Punycode properly
+      ulabel <- processLabelToUnicode (ALabel t)
+      -- Then re-process back to ASCII to get a validated A-label
+      processLabelToASCII ulabel
+  | otherwise =
+      -- Regular ASCII label, just validate
+      validateLabel t >> return (ALabel t)
   
 processLabelToASCII (ULabel t)
   | isAsciiLabel t = do
@@ -144,13 +151,36 @@ processLabelToUnicode (ULabel t) =
 processLabelToUnicode (ALabel t)
   | "xn--" `T.isPrefixOf` t = do
       -- Punycode A-label, decode it
+      -- RFC 5891 Section 5.4: A-labels must be lowercase
       let encoded = T.drop 4 t
-      decoded <- case decodePunycode encoded of
+          encodedLower = T.toLower encoded
+
+      -- Check if original was already lowercase (uppercase in Punycode is invalid)
+      if encoded /= encodedLower
+        then Left (PunycodeDecodeError encoded "A-label must be lowercase")
+        else pure ()
+
+      decoded <- case decodePunycode encodedLower of
         Left err -> Left (PunycodeDecodeError encoded (T.pack (show err)))
         Right d -> Right d
-      validateLabel decoded
-      return (ULabel decoded)
-  
+
+      -- Punycode-encoded labels must contain at least one non-ASCII character
+      -- If the decoded result is pure ASCII, it shouldn't have been encoded
+      if isAsciiLabel decoded
+        then Left (PunycodeDecodeError encoded "Punycode used for pure ASCII label")
+        else pure ()
+
+      -- RFC 5891 Section 4.4: Verify round-trip consistency
+      -- Re-encode and check it matches the lowercase normalized form
+      reencoded <- case encodePunycode decoded of
+        Left err -> Left (PunycodeDecodeError decoded (T.pack (show err)))
+        Right e -> Right e
+      if reencoded /= encodedLower
+        then Left (PunycodeDecodeError encoded "Round-trip re-encoding failed")
+        else do
+          validateLabel decoded
+          return (ULabel decoded)
+
   | otherwise =
       -- Pure ASCII label, validate and return
       validateLabel t >> return (ALabel t)
