@@ -589,7 +589,16 @@ newtype ValidationAnnotations = ValidationAnnotations
 
 instance Semigroup ValidationAnnotations where
   ValidationAnnotations a <> ValidationAnnotations b =
-    ValidationAnnotations (Map.unionWith (<>) a b)
+    ValidationAnnotations (Map.unionWith mergeAnnotationMaps a b)
+    where
+      -- Merge two annotation maps, combining arrays when keys collide
+      mergeAnnotationMaps :: Map Text Value -> Map Text Value -> Map Text Value
+      mergeAnnotationMaps = Map.unionWith mergeAnnotationValues
+
+      -- Merge two annotation values - for arrays, concatenate; otherwise left-biased
+      mergeAnnotationValues :: Value -> Value -> Value
+      mergeAnnotationValues (Aeson.Array a1) (Aeson.Array a2) = Aeson.Array (a1 <> a2)
+      mergeAnnotationValues v1 _ = v1  -- For non-arrays, keep left value
 
 instance Monoid ValidationAnnotations where
   mempty = ValidationAnnotations Map.empty
