@@ -214,9 +214,13 @@ validateAgainstObject parentCtx ctx obj val =
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
                           let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
+                              -- When base URI changes (remote ref), look up the full base schema
+                              -- from the registry to support fragment resolution within it
                               rootValue =
                                 if baseChanged
-                                  then Just resolvedSchema
+                                  then case Map.lookup baseDoc (registrySchemas $ contextSchemaRegistry ctxWithRef) of
+                                         Just fullBaseSchema -> Just fullBaseSchema
+                                         Nothing -> Just resolvedSchema
                                   else case contextRootSchema ctxWithRef of
                                          Just existing -> Just existing
                                          Nothing -> Just resolvedSchema
@@ -257,9 +261,13 @@ validateAgainstObject parentCtx ctx obj val =
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
                           let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
+                              -- When base URI changes (remote ref), look up the full base schema
+                              -- from the registry to support fragment resolution within it
                               rootValue =
                                 if baseChanged
-                                  then Just resolvedSchema
+                                  then case Map.lookup baseDoc (registrySchemas $ contextSchemaRegistry ctxWithRef) of
+                                         Just fullBaseSchema -> Just fullBaseSchema
+                                         Nothing -> Just resolvedSchema
                                   else case contextRootSchema ctxWithRef of
                                          Just existing -> Just existing
                                          Nothing -> Just resolvedSchema
@@ -292,9 +300,13 @@ validateAgainstObject parentCtx ctx obj val =
                           let ctxForRef = case maybeBase of
                                 Just baseDoc ->
                                   let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
+                                      -- When base URI changes (remote ref), look up the full base schema
+                                      -- from the registry to support fragment resolution within it
                                       rootValue =
                                         if baseChanged
-                                          then Just resolvedSchema
+                                          then case Map.lookup baseDoc (registrySchemas $ contextSchemaRegistry ctxWithRef) of
+                                                 Just fullBaseSchema -> Just fullBaseSchema
+                                                 Nothing -> Just resolvedSchema
                                           else case contextRootSchema ctxWithRef of
                                                  Just existing -> Just existing
                                                  Nothing -> Just resolvedSchema
@@ -739,8 +751,9 @@ validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
                 else validationFailure "minContains" $
                   "Array has " <> T.pack (show (length array)) <> " items, but minContains requires " <> T.pack (show minC)
         Just containsSchema ->
-          let results = [validateValueWithContext ctx' containsSchema item | item <- toList array]
-              matchCount = length (filter isSuccess results)
+          let results = [(idx, validateValueWithContext ctx' containsSchema item) | (idx, item) <- zip [0..] (toList array)]
+              matchingIndices = Set.fromList [idx | (idx, result) <- results, isSuccess result]
+              matchCount = Set.size matchingIndices
               -- When contains is present, minContains defaults to 1 (not 0)
               minRequired = maybe 1 fromIntegral maybeMinContains
               maxAllowed = fmap fromIntegral maybeMaxContains
@@ -752,7 +765,7 @@ validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
             else if not maxCheck
               then validationFailure "maxContains" $
                 "Array has " <> T.pack (show matchCount) <> " items matching contains, but maxContains allows at most " <> T.pack (show (fromJust maxAllowed))
-              else ValidationSuccess mempty
+              else ValidationSuccess $ annotateItems matchingIndices
 
     validateUniqueItems schemaObj array = case validationUniqueItems (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
@@ -893,20 +906,21 @@ validateArrayConstraints ctx obj (Array arr) =
                 else validationFailure "minContains" $ 
                   "Array has " <> T.pack (show (length array)) <> " items, but minContains requires " <> T.pack (show minC)
         Just containsSchema ->
-          let results = [validateValueWithContext ctx' containsSchema item | item <- toList array]
-              matchCount = length (filter isSuccess results)
+          let results = [(idx, validateValueWithContext ctx' containsSchema item) | (idx, item) <- zip [0..] (toList array)]
+              matchingIndices = Set.fromList [idx | (idx, result) <- results, isSuccess result]
+              matchCount = Set.size matchingIndices
               -- When contains is present, minContains defaults to 1 (not 0)
               minRequired = maybe 1 fromIntegral maybeMinContains
               maxAllowed = fmap fromIntegral maybeMaxContains
               minCheck = matchCount >= minRequired
               maxCheck = maybe True (matchCount <=) maxAllowed
           in if not minCheck
-            then validationFailure "contains" $ 
+            then validationFailure "contains" $
               "Array has " <> T.pack (show matchCount) <> " items matching contains, but minContains requires " <> T.pack (show minRequired)
             else if not maxCheck
-              then validationFailure "maxContains" $ 
+              then validationFailure "maxContains" $
                 "Array has " <> T.pack (show matchCount) <> " items matching contains, but maxContains allows at most " <> T.pack (show (fromJust maxAllowed))
-              else ValidationSuccess mempty
+              else ValidationSuccess $ annotateItems matchingIndices
     
     validateUniqueItems schemaObj array = case validationUniqueItems (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
@@ -1306,11 +1320,16 @@ resolveReference (Reference refText) ctx
               Just (schema, baseContext)
             Nothing ->
               case Map.lookup uriPart (registrySchemas registry) of
-                Just schema
+                Just baseSchema
                   | T.null fragmentPart ->
-                      Just (schema, baseContext)
+                      Just (baseSchema, baseContext)
                   | T.isPrefixOf "/" fragmentPart ->
-                      resolvePointerInSchema fragmentPart schema >>= \resolved ->
+                      -- When resolving a fragment, we need to return the resolved fragment
+                      -- but we also need the context to remember the full base schema for
+                      -- subsequent fragment resolution within that schema
+                      resolvePointerInSchema fragmentPart baseSchema >>= \resolved ->
+                        -- Return the resolved fragment, but mark the base context
+                        -- The caller should set contextRootSchema to baseSchema, not resolved
                         Just (resolved, baseContext)
                   | otherwise ->
                       let anchors = registryAnchors registry
@@ -1613,6 +1632,9 @@ validateFormatValue RelativeJSONPointerFormat text
 validateFormatValue RegexFormat text
   | isValidRegex text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid ECMA-262 regex"
+validateFormatValue URITemplate text
+  | isValidURITemplate text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid URI template"
 validateFormatValue _ _ = ValidationSuccess mempty  -- Other formats: annotation only or not implemented
 
 -- Format validators using proper libraries
@@ -1642,19 +1664,27 @@ isValidURI text = case URI.parseURI (T.unpack text) of
   Nothing -> False
 
 isValidIPv4 :: Text -> Bool
-isValidIPv4 text = 
-  let parts = T.splitOn "." text
-      isValidOctet part = case reads (T.unpack part) :: [(Int, String)] of
-        [(n, "")] -> n >= 0 && n <= 255
-        _ -> False
-  in length parts == 4 && all isValidOctet parts
+isValidIPv4 text =
+  -- Reject strings with leading or trailing whitespace
+  if T.any (\c -> c == ' ' || c == '\t' || c == '\n' || c == '\r') text
+    then False
+    else
+      let parts = T.splitOn "." text
+          isValidOctet part = case reads (T.unpack part) :: [(Int, String)] of
+            [(n, "")] -> n >= 0 && n <= 255
+            _ -> False
+      in length parts == 4 && all isValidOctet parts
 
 isValidIPv6 :: Text -> Bool
 isValidIPv6 text =
-  let str = T.unpack text
-  in case reads str :: [(IP.IPv6, String)] of
-    [(_, "")] -> True
-    _ -> False
+  -- Reject strings with leading or trailing whitespace
+  if T.any (\c -> c == ' ' || c == '\t' || c == '\n' || c == '\r') text
+    then False
+    else
+      let str = T.unpack text
+      in case reads str :: [(IP.IPv6, String)] of
+        [(_, "")] -> True
+        _ -> False
 
 isValidUUID :: Text -> Bool
 isValidUUID text = case UUID.fromText text of
@@ -1773,7 +1803,22 @@ isValidDuration text =
 isValidJSONPointer :: Text -> Bool
 isValidJSONPointer text =
   -- Either empty string or starts with /
-  T.null text || T.isPrefixOf "/" text
+  (T.null text || T.isPrefixOf "/" text) && hasValidEscaping text
+  where
+    -- Check that all ~ are properly escaped as ~0 or ~1
+    hasValidEscaping t =
+      let checkEscapes "" = True
+          checkEscapes s
+            | Just ('~', rest) <- T.uncons s =
+                case T.uncons rest of
+                  Just ('0', remainder) -> checkEscapes remainder  -- ~0 is valid (represents ~)
+                  Just ('1', remainder) -> checkEscapes remainder  -- ~1 is valid (represents /)
+                  _ -> False  -- ~ must be followed by 0 or 1
+            | otherwise =
+                case T.uncons s of
+                  Just (_, remainder) -> checkEscapes remainder
+                  Nothing -> True
+      in checkEscapes t
 
 -- Relative JSON Pointer validator
 isValidRelativeJSONPointer :: Text -> Bool
@@ -1792,6 +1837,20 @@ isValidRegex text =
   case compileRegex text of
     Right _ -> True
     Left _ -> False
+
+-- URI Template validator (RFC 6570)
+isValidURITemplate :: Text -> Bool
+isValidURITemplate text =
+  -- Basic validation: check for balanced braces and valid variable syntax
+  let checkBraces 0 "" = True
+      checkBraces _ "" = False  -- Unbalanced braces
+      checkBraces depth s
+        | depth < 0 = False  -- More closing than opening braces
+        | Just ('{', rest) <- T.uncons s = checkBraces (depth + 1) rest
+        | Just ('}', rest) <- T.uncons s = checkBraces (depth - 1) rest
+        | Just (_, rest) <- T.uncons s = checkBraces depth rest
+        | otherwise = depth == 0
+  in checkBraces 0 text
 
 -- | Validate custom keywords from schema extensions
 -- Executes user-provided validators for keywords not in the standard vocabulary
