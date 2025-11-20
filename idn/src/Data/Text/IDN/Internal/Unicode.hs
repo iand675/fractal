@@ -220,7 +220,7 @@ deriveStatus cp cat
   -- Explicit CONTEXTJ code points
   | cp == 0x200C = CONTEXTJ  -- Zero Width Non-Joiner
   | cp == 0x200D = CONTEXTJ  -- Zero Width Joiner
-  -- Explicit CONTEXTO code points  
+  -- Explicit CONTEXTO code points
   | cp == 0x00B7 = CONTEXTO  -- Middle Dot
   | cp == 0x0375 = CONTEXTO  -- Greek Lower Numeral Sign (Keraia)
   | cp == 0x05F3 = CONTEXTO  -- Hebrew Punctuation Geresh
@@ -228,6 +228,24 @@ deriveStatus cp cat
   | cp == 0x30FB = CONTEXTO  -- Katakana Middle Dot
   | cp >= 0x0660 && cp <= 0x0669 = CONTEXTO  -- Arabic-Indic Digits
   | cp >= 0x06F0 && cp <= 0x06F9 = CONTEXTO  -- Extended Arabic-Indic Digits
+  -- RFC 5892 Section 2.6: Exceptions (PVALID)
+  | cp == 0x00DF = PVALID  -- LATIN SMALL LETTER SHARP S
+  | cp == 0x03C2 = PVALID  -- GREEK SMALL LETTER FINAL SIGMA
+  | cp == 0x06FD = PVALID  -- ARABIC SIGN SINDHI AMPERSAND
+  | cp == 0x06FE = PVALID  -- ARABIC SIGN SINDHI POSTPOSITION MEN
+  | cp == 0x0F0B = PVALID  -- TIBETAN MARK INTERSYLLABIC TSHEG
+  | cp == 0x3007 = PVALID  -- IDEOGRAPHIC NUMBER ZERO
+  -- RFC 5892 Section 2.6: Exceptions (DISALLOWED)
+  | cp == 0x0640 = DISALLOWED  -- ARABIC TATWEEL
+  | cp == 0x07FA = DISALLOWED  -- NKO LAJANYALAN
+  | cp == 0x302E = DISALLOWED  -- HANGUL SINGLE DOT TONE MARK
+  | cp == 0x302F = DISALLOWED  -- HANGUL DOUBLE DOT TONE MARK
+  | cp == 0x3031 = DISALLOWED  -- VERTICAL KANA REPEAT MARK
+  | cp == 0x3032 = DISALLOWED  -- VERTICAL KANA REPEAT WITH VOICED SOUND MARK
+  | cp == 0x3033 = DISALLOWED  -- VERTICAL KANA REPEAT MARK UPPER HALF
+  | cp == 0x3034 = DISALLOWED  -- VERTICAL KANA REPEAT WITH VOICED SOUND MARK UPPER HALF
+  | cp == 0x3035 = DISALLOWED  -- VERTICAL KANA REPEAT MARK LOWER HALF
+  | cp == 0x303B = DISALLOWED  -- VERTICAL IDEOGRAPHIC ITERATION MARK
   -- ASCII exceptions that are DISALLOWED (per RFC 5892)
   | cp `elem` [0x0020, 0x007F] = DISALLOWED  -- Space and DEL
   -- ASCII printable range (0x21-0x7E) is mostly PVALID
@@ -313,11 +331,24 @@ parseScriptName "Hebrew" = Right Hebrew
 parseScriptName "Greek" = Right Greek
 parseScriptName "Hiragana" = Right Hiragana
 parseScriptName "Katakana" = Right Katakana
+parseScriptName "Han" = Right Han
 parseScriptName "Hangul" = Right Hangul
 parseScriptName "Latin" = Right Latin
 parseScriptName "Cyrillic" = Right Cyrillic
 parseScriptName "Devanagari" = Right Devanagari
+parseScriptName "Bengali" = Right Bengali
+parseScriptName "Gurmukhi" = Right Gurmukhi
+parseScriptName "Gujarati" = Right Gujarati
+parseScriptName "Oriya" = Right Oriya
+parseScriptName "Tamil" = Right Tamil
+parseScriptName "Telugu" = Right Telugu
+parseScriptName "Kannada" = Right Kannada
+parseScriptName "Malayalam" = Right Malayalam
 parseScriptName "Thai" = Right Thai
+parseScriptName "Lao" = Right Lao
+parseScriptName "Tibetan" = Right Tibetan
+parseScriptName "Myanmar" = Right Myanmar
+parseScriptName "Georgian" = Right Georgian
 parseScriptName _ = Right OtherScript
 
 isComment :: T.Text -> Bool
