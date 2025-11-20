@@ -111,7 +111,9 @@ foreign import ccall unsafe "ecma262_regex_wrapper.c ecma262_regex_exec_utf16"
 -- | Compile a regular expression pattern
 compileRegex :: BS.ByteString -> [RegexFlag] -> IO (Either String RegexPtr)
 compileRegex pattern flags = do
-  BSU.unsafeUseAsCStringLen pattern $ \(patternStr, patternLen) -> do
+  -- Use useAsCString to ensure null-termination (required by libregexp)
+  BS.useAsCString pattern $ \patternStr -> do
+    let patternLen = BS.length pattern
     ptr <- c_compile patternStr (fromIntegral patternLen) (flagsToInt flags)
     if ptr == nullPtr
       then return $ Left "Failed to allocate memory for regex"
@@ -126,7 +128,10 @@ compileRegex pattern flags = do
               else do
                 errMsg <- peekCString errPtr
                 c_free_direct ptr
-                return $ Left errMsg
+                let errorMessage = if null errMsg
+                                   then "Unknown compilation error (empty error message)"
+                                   else errMsg
+                return $ Left errorMessage
 
 -- | Direct call to free (needed when compilation fails)
 foreign import ccall unsafe "ecma262_regex_wrapper.c ecma262_regex_free"
@@ -164,15 +169,29 @@ getGroupNames ptr = do
     then return Nothing
     else Just <$> peekCString namePtr
 
--- | Execute regex against a subject string
--- Returns Nothing if no match, Just (startIdx, endIdx, captures) if match
--- Note: libregexp's capture_count INCLUDES the full match at index 0
+-- | Execute regex against a UTF-8 encoded subject string
+--
+-- Returns Nothing if no match, Just (startIdx, endIdx, captures) if match.
+-- All indices are UTF-8 byte offsets.
+--
+-- Note: The C wrapper (ecma262_regex_exec) automatically handles UTF-8 to UTF-16
+-- conversion when the Unicode flag is set. This is necessary because:
+--
+-- 1. libregexp requires UTF-16 for proper Unicode character class matching
+--    (\s, \D, \W should work with non-ASCII characters)
+-- 2. Text 2.0+ stores strings as UTF-8 internally
+-- 3. The wrapper converts UTF-8→UTF-16 for matching, then converts offsets back
+--
+-- The conversion overhead is unavoidable given libregexp's UTF-16 requirement
+-- and Text 2.0's UTF-8 internals.
 execRegex :: RegexPtr -> BS.ByteString -> Int -> IO (Maybe (Int, Int, [(Int, Int)]))
 execRegex ptr subject startIdx = do
   captureCount <- getCaptureCount ptr
   -- captureCount already includes the full match, so no need to add 1
   let captureArraySize = captureCount * 2
 
+  -- For exec, we can use unsafeUseAsCStringLen since libregexp uses length parameter
+  -- However, we pass the bytestring which may or may not be null-terminated
   BSU.unsafeUseAsCStringLen subject $ \(subjectStr, subjectLen) -> do
     allocaArray captureArraySize $ \captureArray -> do
       result <- c_exec ptr (castPtr subjectStr) (fromIntegral startIdx)

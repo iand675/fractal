@@ -43,22 +43,26 @@ type RegexFlag = R.RegexFlag
 -- no side effects, deterministic behavior.
 compile :: BS.ByteString -> [RegexFlag] -> Either String Regex
 compile pat flags = unsafePerformIO $ R.compile pat flags
+{-# NOINLINE compile #-}
 
 -- | Compile a regular expression pattern from a Text value
 compileText :: T.Text -> [RegexFlag] -> Either String Regex
 compileText pat flags = unsafePerformIO $ R.compileText pat flags
+{-# NOINLINE compileText #-}
 
 -- | Test if a regex matches a subject string
 --
 -- This is observably pure: same regex and input always produces same result.
 test :: Regex -> BS.ByteString -> Bool
 test regex subject = unsafePerformIO $ R.test regex subject
+{-# NOINLINE test #-}
 
 -- | Find the first match of a regex in a subject string
 --
 -- This is observably pure: same regex and input always produces same result.
 matchFirst :: Regex -> BS.ByteString -> Maybe R.Match
 matchFirst regex subject = unsafePerformIO $ R.match regex subject
+{-# NOINLINE matchFirst #-}
 
 -- | Make a regex from a string (throws error on invalid pattern)
 makeRegex :: String -> Regex
