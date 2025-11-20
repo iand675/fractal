@@ -192,8 +192,13 @@ validateAgainstObject parentCtx ctx obj val =
   in if refIsApplicator
     then
       -- 2019-09+: $ref/$dynamicRef are applicators, combine with other keywords
+      -- We need to pass ref annotations to content validation so unevaluatedProperties
+      -- can see properties evaluated by the ref
       let refResult = validateRef parentCtx ctx obj val
-          contentResult = validateObjectSchemaContent ctx obj val
+          refAnnotations = case refResult of
+            ValidationSuccess anns -> anns
+            ValidationFailure _ -> mempty
+          contentResult = validateObjectSchemaContentWithRefAnnotations ctx obj val refAnnotations
       in combineResults [refResult, contentResult]
     else
       -- Pre-2019-09: $ref short-circuits, ignores sibling keywords
@@ -313,7 +318,12 @@ validateAgainstObject parentCtx ctx obj val =
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
+    -- Validate object schema content without ref annotations (for pre-2019-09 or when no ref)
     validateObjectSchemaContent ctx' obj' val' =
+      validateObjectSchemaContentWithRefAnnotations ctx' obj' val' mempty
+
+    -- Validate object schema content with additional annotations from refs
+    validateObjectSchemaContentWithRefAnnotations ctx' obj' val' refAnns =
       -- Update context with dynamic anchor if present
       let ctx'' = case schemaDynamicAnchor obj' of
             Just _ ->
@@ -340,11 +350,14 @@ validateAgainstObject parentCtx ctx obj val =
             , validateArrayConstraintsWithoutUnevaluated ctx'' obj' val'
             , validateObjectConstraintsWithoutUnevaluated ctx'' obj' val'
             ]
-          -- Combine results to get accumulated annotations
+          -- Combine results to get accumulated annotations (including ref annotations)
           combinedResult = combineResults results
-      in case combinedResult of
+          combinedWithRefs = case combinedResult of
+            ValidationSuccess anns -> ValidationSuccess (refAnns <> anns)
+            ValidationFailure errs -> ValidationFailure errs
+      in case combinedWithRefs of
            ValidationSuccess anns ->
-             -- Now validate unevaluated keywords with accumulated annotations
+             -- Now validate unevaluated keywords with accumulated annotations (including from refs)
              let unevalResults =
                    [ validateUnevaluatedForArray ctx'' obj' val' anns
                    , validateUnevaluatedForObject ctx'' obj' val' anns
@@ -1101,15 +1114,17 @@ validateUnevaluatedProperties ctx obj objMap collectedAnnotations =
 -- | Extract evaluated properties from collected annotations
 extractEvaluatedProperties :: ValidationAnnotations -> Set Text
 extractEvaluatedProperties (ValidationAnnotations annMap) =
-  Set.unions
-    [ case Map.lookup "properties" innerMap of
-        Just (Aeson.Array arr) -> Set.fromList
-          [ txt
-          | Aeson.String txt <- toList arr
-          ]
-        _ -> Set.empty
-    | innerMap <- Map.elems annMap
-    ]
+  -- Debug: trace the annotations being processed
+  let result = Set.unions
+        [ case Map.lookup "properties" innerMap of
+            Just (Aeson.Array arr) -> Set.fromList
+              [ txt
+              | Aeson.String txt <- toList arr
+              ]
+            _ -> Set.empty
+        | innerMap <- Map.elems annMap
+        ]
+  in result -- Debug output removed for production
 
 -- | Validate unevaluatedItems (2019-09+)
 -- Array items that weren't evaluated by items, prefixItems, or contains
