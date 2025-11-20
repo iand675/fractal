@@ -214,17 +214,20 @@ validateAgainstObject parentCtx ctx obj val =
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
                           let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
-                              -- When base URI changes (remote ref), look up the full base schema
-                              -- from the registry to support fragment resolution within it
+                              -- When base URI changes (remote ref), use resolvedSchema as root
                               rootValue =
                                 if baseChanged
-                                  then case Map.lookup baseDoc (registrySchemas $ contextSchemaRegistry ctxWithRef) of
-                                         Just fullBaseSchema -> Just fullBaseSchema
-                                         Nothing -> Just resolvedSchema
+                                  then Just resolvedSchema
                                   else case contextRootSchema ctxWithRef of
                                          Just existing -> Just existing
                                          Nothing -> Just resolvedSchema
-                          in ctxWithRef { contextBaseURI = Just baseDoc
+                              -- For remote refs with relative $id, keep parent base to avoid
+                              -- double-applying the $id during applySchemaContext
+                              baseToSet =
+                                if baseChanged && schemaId resolvedSchema /= Nothing
+                                  then contextBaseURI ctxWithRef  -- Keep parent base
+                                  else Just baseDoc
+                          in ctxWithRef { contextBaseURI = baseToSet
                                         , contextRootSchema = rootValue
                                         }
                         Nothing -> ctxWithRef
@@ -261,17 +264,20 @@ validateAgainstObject parentCtx ctx obj val =
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
                           let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
-                              -- When base URI changes (remote ref), look up the full base schema
-                              -- from the registry to support fragment resolution within it
+                              -- When base URI changes (remote ref), use resolvedSchema as root
                               rootValue =
                                 if baseChanged
-                                  then case Map.lookup baseDoc (registrySchemas $ contextSchemaRegistry ctxWithRef) of
-                                         Just fullBaseSchema -> Just fullBaseSchema
-                                         Nothing -> Just resolvedSchema
+                                  then Just resolvedSchema
                                   else case contextRootSchema ctxWithRef of
                                          Just existing -> Just existing
                                          Nothing -> Just resolvedSchema
-                          in ctxWithRef { contextBaseURI = Just baseDoc
+                              -- For remote refs with relative $id, keep parent base to avoid
+                              -- double-applying the $id during applySchemaContext
+                              baseToSet =
+                                if baseChanged && schemaId resolvedSchema /= Nothing
+                                  then contextBaseURI ctxWithRef  -- Keep parent base
+                                  else Just baseDoc
+                          in ctxWithRef { contextBaseURI = baseToSet
                                         , contextRootSchema = rootValue
                                         }
                         Nothing -> ctxWithRef
@@ -300,17 +306,20 @@ validateAgainstObject parentCtx ctx obj val =
                           let ctxForRef = case maybeBase of
                                 Just baseDoc ->
                                   let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
-                                      -- When base URI changes (remote ref), look up the full base schema
-                                      -- from the registry to support fragment resolution within it
+                                      -- When base URI changes (remote ref), use resolvedSchema as root
                                       rootValue =
                                         if baseChanged
-                                          then case Map.lookup baseDoc (registrySchemas $ contextSchemaRegistry ctxWithRef) of
-                                                 Just fullBaseSchema -> Just fullBaseSchema
-                                                 Nothing -> Just resolvedSchema
+                                          then Just resolvedSchema
                                           else case contextRootSchema ctxWithRef of
                                                  Just existing -> Just existing
                                                  Nothing -> Just resolvedSchema
-                                  in ctxWithRef { contextBaseURI = Just baseDoc
+                                      -- For remote refs with relative $id, keep parent base to avoid
+                                      -- double-applying the $id during applySchemaContext
+                                      baseToSet =
+                                        if baseChanged && schemaId resolvedSchema /= Nothing
+                                          then contextBaseURI ctxWithRef  -- Keep parent base
+                                          else Just baseDoc
+                                  in ctxWithRef { contextBaseURI = baseToSet
                                                 , contextRootSchema = rootValue
                                                 }
                                 Nothing -> ctxWithRef
