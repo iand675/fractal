@@ -2,6 +2,8 @@
 
 This document provides context for AI assistants working on the Fractal project.
 
+BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions
+
 ## Project Overview
 
 Fractal is a multi-package Haskell project focused on composable abstractions for resource management, dependency injection, event streaming, and schema management. The project is organized as a monorepo with three independent but related packages.
@@ -81,34 +83,92 @@ The project consists of three subpackages:
 
 **Test status**: Placeholder test suite - needs Stream-specific tests
 
+### 4. **fractal-openapi** (`fractal-openapi/`)
+**Purpose**: JSON Schema and OpenAPI 3.x validation and code generation
+
+**Key modules**:
+- `Fractal.JsonSchema` - Core JSON Schema validation engine (draft-04 through 2020-12)
+- `Fractal.JsonSchema.Validator` - Schema validation with annotations
+- `Fractal.JsonSchema.Parser` - JSON Schema parsing
+- `Fractal.JsonSchema.Codegen` - Code generation from schemas
+- `Fractal.OpenApi` - OpenAPI 3.x support
+
+**Key concepts**:
+- Full JSON Schema specification compliance
+- Support for multiple schema drafts
+- Reference resolution ($ref, $dynamicRef)
+- Format validators (URI, email, date-time, hostname, IDN hostname, etc.)
+- Annotation collection for unevaluated properties/items
+
+**Dependencies**: Depends on `ecma262-regex` and `idn` for format validation
+
+### 5. **ecma262-regex** (`ecma262-regex/`)
+**Purpose**: ECMAScript 262 (JavaScript) regular expressions for Haskell
+
+**Key modules**:
+- `Text.Regex.ECMA262` - High-level API for ECMA-262 regex
+- `Text.Regex.ECMA262.Internal` - Low-level FFI bindings to libregexp
+
+**Key concepts**:
+- Full ECMAScript 2023 regex specification compliance
+- Unicode mode support with proper UTF-16 handling
+- Named capture groups, lookahead/lookbehind
+- Uses QuickJS's libregexp (bundled C sources)
+
+**Dependencies**: No external dependencies (C code bundled in cbits/)
+
+### 6. **fractal-idna2008** (`idn/`)
+**Purpose**: Pure Haskell IDNA2008 (Internationalized Domain Names)
+
+**Key concepts**:
+- ToASCII and ToUnicode conversion (Punycode encoding/decoding)
+- IDNA2008 validation (RFC 5890-5894)
+- Unicode normalization (NFC)
+- Contextual rules (CONTEXTJ, CONTEXTO)
+- BiDi validation for RTL domains
+
+## System Dependencies
+
+Some packages in this project require external C libraries to be installed:
+
+### ecma262-regex
+**Required**: None (bundled)
+
+This package includes QuickJS's libregexp as bundled C sources in `cbits/`, so no external dependencies are needed.
+
 ## Build System
 
-### Cabal Multi-Package Project
+### Stack Multi-Package Project
 
-The project uses Cabal's multi-package project feature. The root `cabal.project` file references all three packages:
+The project uses Stack with multiple packages. The `stack.yaml` file references all packages:
 
-```cabal
+```yaml
 packages:
-  fractal-stream
-  fractal-schema
-  fractal-layer
+  - fractal-layer
+  - fractal-schema
+  - fractal-stream
+  - fractal-openapi
+  - ecma262-regex
+  - idn
 ```
 
 ### Building
 
 ```bash
 # Build all packages
-cabal build all
+stack build
 
 # Build specific package
-cabal build fractal-layer
-cabal build fractal-schema
-cabal build fractal-stream
+stack build fractal-layer
+stack build fractal-openapi
+stack build idn
 
 # Run tests
-cabal test all
-cabal test fractal-layer
+stack test
+stack test fractal-openapi
 ```
+
+Practially speaking, you can typically go straight to running stack test since it will show you build failures too.
 
 ### Common Configuration
 
@@ -123,6 +183,8 @@ All packages share common settings:
 ```
 fractal/
 ├── cabal.project                 # Multi-package configuration
+├── stack.yaml                    # Stack configuration
+├── devenv.nix                    # devenv configuration with system dependencies
 ├── README.md                     # User-facing documentation
 ├── CLAUDE.md                     # This file (AI assistant guide)
 │
@@ -147,15 +209,37 @@ fractal/
 │   │   └── Fractal/Schema/
 │   └── examples/
 │
-└── fractal-stream/               # Event streaming package
-    ├── fractal-stream.cabal
-    ├── src/Fractal/
-    │   ├── Stream/
-    │   └── Yesod/               # Yesod integration utilities
-    ├── test/
-    │   └── Spec.hs              # Placeholder - needs real tests
-    └── examples/
-        └── redis/
+├── fractal-stream/               # Event streaming package
+│   ├── fractal-stream.cabal
+│   ├── src/Fractal/
+│   │   ├── Stream/
+│   │   └── Yesod/               # Yesod integration utilities
+│   ├── test/
+│   │   └── Spec.hs              # Placeholder - needs real tests
+│   └── examples/
+│       └── redis/
+│
+├── fractal-openapi/              # JSON Schema & OpenAPI package
+│   ├── fractal-openapi.cabal
+│   ├── src/Fractal/
+│   │   ├── JsonSchema/
+│   │   └── OpenApi/
+│   ├── test/
+│   │   └── Fractal/
+│   └── test-suite/              # Vendored JSON Schema test suite
+│
+├── ecma262-regex/                # ECMAScript regex package
+│   ├── ecma262-regex.cabal
+│   ├── cbits/                   # Bundled QuickJS libregexp sources
+│   ├── src/Text/Regex/ECMA262/
+│   ├── test/
+│   └── examples/
+│
+└── fractal-idna2008/             # IDNA2008 bindings package
+    ├── fractal-idna2008.cabal
+    ├── shell.nix                # Standalone nix shell with libidn2
+    ├── src/Text/IDNA2008/
+    └── test/
 ```
 
 ## Testing Conventions
@@ -346,7 +430,7 @@ Examples go in `<package>/examples/` directory:
 ### "Module not found" errors
 - Check `exposed-modules` in `.cabal` file
 - Verify module path matches directory structure
-- Run `cabal clean` and rebuild
+- Run `stack clean` and rebuild
 
 ### Test discovery issues
 - Ensure test file ends with `Spec.hs`
@@ -355,8 +439,8 @@ Examples go in `<package>/examples/` directory:
 
 ### Dependency conflicts
 - Check version bounds across all packages
-- Use `cabal freeze` to generate exact dependency versions
-- Review `cabal.project` for package-specific constraints
+- Use `stack freeze` to generate exact dependency versions
+- Review `stack.yaml` for package-specific constraints
 
 ## References
 

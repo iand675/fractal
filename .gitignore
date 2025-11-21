@@ -17,4 +17,4 @@ dist-newstyle/
 # AI bits
 .cursor
 .specify
-
+.beads/*.db
