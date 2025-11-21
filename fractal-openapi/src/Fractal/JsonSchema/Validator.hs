@@ -38,7 +38,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Scientific as Sci
 import Data.Foldable (toList)
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromJust, fromMaybe, isJust)
 import Control.Monad (mplus)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
@@ -222,29 +222,23 @@ validateAgainstObject parentCtx ctx obj val =
       refIsApplicator = version >= Draft201909
       -- Update context with dynamic scope BEFORE processing refs
       -- Push schema resources (schemas with $id) onto the scope
-      ctxWithDynamicScope = case (schemaDynamicAnchor obj, contextBaseURI ctx) of
-        -- Push onto dynamic scope if schema has $dynamicAnchor OR if it's a schema resource (has $id)
-        (Just _, _) ->
-          -- Schema has $dynamicAnchor, push it
-          let schema' = Schema
-                { schemaVersion = Just (validationVersion $ contextConfig ctx)
-                , schemaId = contextBaseURI ctx
-                , schemaCore = ObjectSchema obj
-                , schemaVocabulary = Nothing
-                , schemaExtensions = Map.empty
-                }
-          in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
-        (Nothing, Just _) ->
-          -- Schema is a resource (has $id), push it for $dynamicRef resolution
-          let schema' = Schema
-                { schemaVersion = Just (validationVersion $ contextConfig ctx)
-                , schemaId = contextBaseURI ctx
-                , schemaCore = ObjectSchema obj
-                , schemaVocabulary = Nothing
-                , schemaExtensions = Map.empty
-                }
-          in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
-        _ -> ctx
+      -- For 2020-12: push schemas with $dynamicAnchor or schemas with $id
+      -- For 2019-09: push schemas with $recursiveAnchor: true or schemas with $id
+      shouldPushToScope = case version of
+        Draft201909 -> schemaRecursiveAnchor obj == Just True || isJust (contextBaseURI ctx)
+        _ -> isJust (schemaDynamicAnchor obj) || isJust (contextBaseURI ctx)
+      ctxWithDynamicScope =
+        if shouldPushToScope
+          then
+            let schema' = Schema
+                  { schemaVersion = Just version
+                  , schemaId = contextBaseURI ctx
+                  , schemaCore = ObjectSchema obj
+                  , schemaVocabulary = Nothing
+                  , schemaExtensions = Map.empty
+                  }
+            in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
+          else ctx
   in if refIsApplicator
     then
       -- 2019-09+: $ref/$dynamicRef are applicators, combine with other keywords
@@ -397,7 +391,49 @@ validateAgainstObject parentCtx ctx obj val =
                             ValidationError "$dynamicRef" emptyPointer emptyPointer
                               ("Unable to resolve dynamic reference: " <> showReference dynRef)
                               Nothing
-            Nothing -> ValidationSuccess mempty  -- No ref at all
+            Nothing ->
+              -- No $dynamicRef, check for $recursiveRef (2019-09)
+              case schemaRecursiveRef obj' of
+                Just recRef ->
+                  -- Handle $recursiveRef similar to $dynamicRef but with 2019-09 semantics
+                  if contextRecursionDepth ctx' >= 100
+                    then ValidationSuccess mempty  -- Break recursion at depth limit
+                    else
+                      let ctxWithDepth = ctx' { contextRecursionDepth = contextRecursionDepth ctx' + 1 }
+                      in case resolveRecursiveRef recRef ctxWithDepth of
+                        Just resolvedSchema ->
+                          validateValueWithContext ctxWithDepth resolvedSchema val'
+                        Nothing ->
+                          -- Fallback: treat as regular $ref
+                          case resolveReference recRef refCtx of
+                            Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
+                              let ctxForRef = case maybeBase of
+                                    Just baseDoc ->
+                                      let baseChanged = contextBaseURI ctxWithDepth /= Just baseDoc
+                                          rootValue =
+                                            if baseChanged
+                                              then maybeRootForRefs `mplus` Just resolvedSchema
+                                              else case contextRootSchema ctxWithDepth of
+                                                     Just existing -> Just existing
+                                                     Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
+                                          baseToSet =
+                                            if baseChanged && schemaId resolvedSchema /= Nothing
+                                              then contextBaseURI ctxWithDepth
+                                              else Just baseDoc
+                                      in ctxWithDepth { contextBaseURI = baseToSet
+                                                      , contextRootSchema = rootValue
+                                                      , contextDynamicScope = contextDynamicScope ctxWithDepth
+                                                      }
+                                    Nothing -> ctxWithDepth { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithDepth
+                                                            , contextDynamicScope = contextDynamicScope ctxWithDepth
+                                                            }
+                              in validateValueWithContext ctxForRef resolvedSchema val'
+                            Nothing ->
+                              ValidationFailure $ ValidationErrors $ pure $
+                                ValidationError "$recursiveRef" emptyPointer emptyPointer
+                                  ("Unable to resolve recursive reference: " <> showReference recRef)
+                                  Nothing
+                Nothing -> ValidationSuccess mempty  -- No ref at all
 
     combineResults :: [ValidationResult] -> ValidationResult
     combineResults results =
@@ -1389,24 +1425,34 @@ resolveReference (Reference refText) ctx
           baseURI = contextBaseURI ctx
           registry = contextSchemaRegistry ctx
           rootSchema = contextRootSchema ctx
-          -- First try as an anchor
+          -- First try as an anchor (also check dynamic anchors for $ref resolution)
           tryAnchor = case baseURI of
             Just uri ->
-              -- Try with explicit base URI first
+              -- Try with explicit base URI first (regular anchors)
               case Map.lookup (uri, anchorName) (registryAnchors registry) of
                 Just s -> Just (s, Just uri, Just s)
                 Nothing ->
-                  -- Fallback: try with empty string base (for fragment-only $id)
-                  case Map.lookup ("", anchorName) (registryAnchors registry) of
-                    Just s -> Just (s, Nothing, Just s)
-                    Nothing -> lookupAnyAnchor anchorName registry
+                  -- Also try dynamic anchors (2020-12+: $ref can resolve $dynamicAnchor)
+                  case Map.lookup (uri, anchorName) (registryDynamicAnchors registry) of
+                    Just s -> Just (s, Just uri, Just s)
+                    Nothing ->
+                      -- Fallback: try with empty string base (for fragment-only $id)
+                      case Map.lookup ("", anchorName) (registryAnchors registry) of
+                        Just s -> Just (s, Nothing, Just s)
+                        Nothing ->
+                          case Map.lookup ("", anchorName) (registryDynamicAnchors registry) of
+                            Just s -> Just (s, Nothing, Just s)
+                            Nothing -> lookupAnyAnchor anchorName registry
             Nothing ->
               -- No base URI, try with empty string base first
               case Map.lookup ("", anchorName) (registryAnchors registry) of
                 Just s -> Just (s, Nothing, Just s)
                 Nothing ->
-                  -- Fallback: try looking up with any base
-                  lookupAnyAnchor anchorName registry
+                  case Map.lookup ("", anchorName) (registryDynamicAnchors registry) of
+                    Just s -> Just (s, Nothing, Just s)
+                    Nothing ->
+                      -- Fallback: try looking up with any base
+                      lookupAnyAnchor anchorName registry
           -- If not found as anchor, try as JSON Pointer (without leading slash)
           tryPointer = resolvePointerInCurrentSchema ("/" <> anchorName) ctx >>= \schema ->
             Just (schema, contextBaseURI ctx, rootSchema)
@@ -1438,14 +1484,20 @@ resolveReference (Reference refText) ctx
                       -- When resolving a fragment, return the resolved fragment as the schema
                       -- to validate against, but return the base schema as the root for
                       -- resolving subsequent internal references.
-                      resolvePointerInSchema fragmentPart baseSchema >>= \resolved ->
-                        Just (resolved, baseContext, Just baseSchema)
+                      -- Track base URI changes from nested $id during pointer resolution
+                      resolvePointerInSchemaWithBase fragmentPart baseSchema baseContext >>= \(resolved, effectiveBase) ->
+                        Just (resolved, effectiveBase, Just baseSchema)
                   | otherwise ->
+                      -- Try regular anchors first, then dynamic anchors
                       let anchors = registryAnchors registry
-                      in maybe
-                           (lookupAnyAnchor fragmentPart registry)
-                           (\resolved -> Just (resolved, baseContext, Just baseSchema))
-                           (Map.lookup (resolvedUriPart, fragmentPart) anchors)
+                          dynamicAnchors = registryDynamicAnchors registry
+                          anchorResult = Map.lookup (resolvedUriPart, fragmentPart) anchors
+                          dynamicAnchorResult = Map.lookup (resolvedUriPart, fragmentPart) dynamicAnchors
+                      in case anchorResult of
+                        Just resolved -> Just (resolved, baseContext, Just baseSchema)
+                        Nothing -> case dynamicAnchorResult of
+                          Just resolved -> Just (resolved, baseContext, Just baseSchema)
+                          Nothing -> lookupAnyAnchor fragmentPart registry
                 Nothing ->
                   lookupAnyAnchor fragmentPart registry
   | otherwise =
@@ -1461,6 +1513,7 @@ resolveReference (Reference refText) ctx
   where
     lookupAnyAnchor :: Text -> SchemaRegistry -> Maybe (Schema, Maybe Text, Maybe Schema)
     lookupAnyAnchor anchorName registry =
+      -- Try regular anchors first
       case [ (base, schema)
            | ((base, name), schema) <- Map.toList (registryAnchors registry)
            , name == anchorName
@@ -1468,7 +1521,16 @@ resolveReference (Reference refText) ctx
         ((baseUri, schema):_) ->
           let baseResult = if T.null baseUri then Nothing else Just baseUri
           in Just (schema, baseResult, Just schema)
-        [] -> Nothing
+        [] ->
+          -- Also check dynamic anchors (2020-12+: $ref can resolve $dynamicAnchor)
+          case [ (base, schema)
+               | ((base, name), schema) <- Map.toList (registryDynamicAnchors registry)
+               , name == anchorName
+               ] of
+            ((baseUri, schema):_) ->
+              let baseResult = if T.null baseUri then Nothing else Just baseUri
+              in Just (schema, baseResult, Just schema)
+            [] -> Nothing
 
 -- | Resolve a JSON Pointer within the current schema context
 resolvePointerInCurrentSchema :: Text -> ValidationContext -> Maybe Schema
@@ -1480,24 +1542,35 @@ resolvePointerInCurrentSchema pointer ctx =
 -- | Resolve a JSON Pointer within a specific schema
 resolvePointerInSchema :: Text -> Schema -> Maybe Schema
 resolvePointerInSchema pointer schema =
+  fmap fst (resolvePointerInSchemaWithBase pointer schema Nothing)
+
+-- | Resolve a JSON Pointer within a specific schema, tracking base URI changes
+-- Returns (resolved schema, effective base URI after navigating through schemas with $id)
+resolvePointerInSchemaWithBase :: Text -> Schema -> Maybe Text -> Maybe (Schema, Maybe Text)
+resolvePointerInSchemaWithBase pointer schema currentBase =
   case parsePointer pointer of
     Left _ -> Nothing
-    Right (JSONPointer segments) -> followPointer segments schema
+    Right (JSONPointer segments) -> followPointer segments schema currentBase
   where
-    followPointer :: [Text] -> Schema -> Maybe Schema
-    followPointer [] s = Just s
-    followPointer (seg:rest) s = case schemaCore s of
+    followPointer :: [Text] -> Schema -> Maybe Text -> Maybe (Schema, Maybe Text)
+    followPointer [] s base = Just (s, base)
+    followPointer (seg:rest) s base = case schemaCore s of
       BooleanSchema _ -> Nothing
-      ObjectSchema obj -> navigateObject seg rest s obj
-    
-    navigateObject :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Schema
-    navigateObject seg rest parentSchema obj
+      ObjectSchema obj -> navigateObject seg rest s obj base
+
+    navigateObject :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Text -> Maybe (Schema, Maybe Text)
+    navigateObject seg rest parentSchema obj currentBase
       -- Navigate into $defs or definitions
       | seg == "$defs" || seg == "definitions" =
           case rest of
             (defName:remaining) ->
               case Map.lookup defName (schemaDefs obj) of
-                Just subSchema -> followPointer remaining subSchema
+                Just subSchema ->
+                  -- If subSchema has $id, it changes the base URI
+                  let newBase = case schemaId subSchema of
+                        Just sid -> Just $ resolveAgainstBaseURI currentBase sid
+                        Nothing -> currentBase
+                  in followPointer remaining subSchema newBase
                 Nothing -> Nothing
             [] -> Nothing  -- Need a definition name
       
@@ -1506,10 +1579,10 @@ resolvePointerInSchema pointer schema =
           case rest of
             (propName:remaining) ->
               case validationProperties (schemaValidation obj) >>= Map.lookup propName of
-                Just propSchema -> followPointer remaining propSchema
+                Just propSchema -> followPointer remaining propSchema currentBase
                 Nothing -> Nothing
             [] -> Nothing  -- Need a property name
-      
+
       -- Navigate into patternProperties
       | seg == "patternProperties" =
           case rest of
@@ -1517,29 +1590,31 @@ resolvePointerInSchema pointer schema =
               case validationPatternProperties (schemaValidation obj) of
                 Just patterns ->
                   case [(patSchema, pat) | (Regex pat, patSchema) <- Map.toList patterns, pat == patternKey] of
-                    ((patSchema, _):_) -> followPointer remaining patSchema
+                    ((patSchema, _):_) -> followPointer remaining patSchema currentBase
                     [] -> Nothing
                 Nothing -> Nothing
             [] -> Nothing
-      
+
       -- Navigate into additionalProperties
       | seg == "additionalProperties" =
-          validationAdditionalProperties (schemaValidation obj) >>= followPointer rest
+          case validationAdditionalProperties (schemaValidation obj) of
+            Just apSchema -> followPointer rest apSchema currentBase
+            Nothing -> Nothing
       
       -- Navigate into items
       | seg == "items" =
           case validationItems (schemaValidation obj) of
-            Just (ItemsSchema itemSchema) -> followPointer rest itemSchema
+            Just (ItemsSchema itemSchema) -> followPointer rest itemSchema currentBase
             Just (ItemsTuple schemas _) ->
               case rest of
                 (idx:remaining) ->
                   case reads (T.unpack idx) :: [(Int, String)] of
                     [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n)
+                      followPointer remaining (NE.toList schemas !! n) currentBase
                     _ -> Nothing
                 [] -> Nothing
             Nothing -> Nothing
-      
+
       -- Navigate into prefixItems (2020-12+)
       | seg == "prefixItems" =
           case validationPrefixItems (schemaValidation obj) of
@@ -1548,11 +1623,11 @@ resolvePointerInSchema pointer schema =
                 (idx:remaining) ->
                   case reads (T.unpack idx) :: [(Int, String)] of
                     [(n, "")] | n >= 0 && n < length prefixSchemas ->
-                      followPointer remaining (NE.toList prefixSchemas !! n)
+                      followPointer remaining (NE.toList prefixSchemas !! n) currentBase
                     _ -> Nothing
                 [] -> Nothing
             Nothing -> Nothing
-      
+
       -- Navigate into allOf
       | seg == "allOf" =
           case schemaAllOf obj of
@@ -1561,11 +1636,11 @@ resolvePointerInSchema pointer schema =
                 (idx:remaining) ->
                   case reads (T.unpack idx) :: [(Int, String)] of
                     [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n)
+                      followPointer remaining (NE.toList schemas !! n) currentBase
                     _ -> Nothing
                 [] -> Nothing
             Nothing -> Nothing
-      
+
       -- Navigate into anyOf
       | seg == "anyOf" =
           case schemaAnyOf obj of
@@ -1574,11 +1649,11 @@ resolvePointerInSchema pointer schema =
                 (idx:remaining) ->
                   case reads (T.unpack idx) :: [(Int, String)] of
                     [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n)
+                      followPointer remaining (NE.toList schemas !! n) currentBase
                     _ -> Nothing
                 [] -> Nothing
             Nothing -> Nothing
-      
+
       -- Navigate into oneOf
       | seg == "oneOf" =
           case schemaOneOf obj of
@@ -1587,38 +1662,54 @@ resolvePointerInSchema pointer schema =
                 (idx:remaining) ->
                   case reads (T.unpack idx) :: [(Int, String)] of
                     [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n)
+                      followPointer remaining (NE.toList schemas !! n) currentBase
                     _ -> Nothing
                 [] -> Nothing
             Nothing -> Nothing
-      
+
       -- Navigate into not
       | seg == "not" =
-          schemaNot obj >>= followPointer rest
-      
+          case schemaNot obj of
+            Just notSchema -> followPointer rest notSchema currentBase
+            Nothing -> Nothing
+
       -- Navigate into if/then/else
-      | seg == "if" = schemaIf obj >>= followPointer rest
-      | seg == "then" = schemaThen obj >>= followPointer rest
-      | seg == "else" = schemaElse obj >>= followPointer rest
-      
+      | seg == "if" = case schemaIf obj of
+          Just ifSchema -> followPointer rest ifSchema currentBase
+          Nothing -> Nothing
+      | seg == "then" = case schemaThen obj of
+          Just thenSchema -> followPointer rest thenSchema currentBase
+          Nothing -> Nothing
+      | seg == "else" = case schemaElse obj of
+          Just elseSchema -> followPointer rest elseSchema currentBase
+          Nothing -> Nothing
+
       -- Navigate into dependentSchemas
       | seg == "dependentSchemas" =
           case rest of
             (propName:remaining) ->
-              validationDependentSchemas (schemaValidation obj) >>= Map.lookup propName >>= followPointer remaining
+              case validationDependentSchemas (schemaValidation obj) >>= Map.lookup propName of
+                Just depSchema -> followPointer remaining depSchema currentBase
+                Nothing -> Nothing
             [] -> Nothing
-      
+
       -- Navigate into contains
       | seg == "contains" =
-          validationContains (schemaValidation obj) >>= followPointer rest
-      
+          case validationContains (schemaValidation obj) of
+            Just containsSchema -> followPointer rest containsSchema currentBase
+            Nothing -> Nothing
+
       -- Navigate into propertyNames
       | seg == "propertyNames" =
-          validationPropertyNames (schemaValidation obj) >>= followPointer rest
-      
+          case validationPropertyNames (schemaValidation obj) of
+            Just propNamesSchema -> followPointer rest propNamesSchema currentBase
+            Nothing -> Nothing
+
       -- Navigate into unevaluatedProperties
       | seg == "unevaluatedProperties" =
-          validationUnevaluatedProperties (schemaValidation obj) >>= followPointer rest
+          case validationUnevaluatedProperties (schemaValidation obj) of
+            Just unevalPropsSchema -> followPointer rest unevalPropsSchema currentBase
+            Nothing -> Nothing
       
       -- Fallback: check schemaExtensions for arbitrary keywords
       | otherwise =
@@ -1627,7 +1718,7 @@ resolvePointerInSchema pointer schema =
               -- Try to parse the value as a schema
               let version = fromMaybe Draft07 (schemaVersion parentSchema)
               in case Parser.parseSchemaWithVersion version val of
-                Right schema -> followPointer rest schema
+                Right schema -> followPointer rest schema currentBase
                 Left _ ->
                   -- Not a schema - check if we need array indexing
                   case (val, rest) of
@@ -1636,7 +1727,7 @@ resolvePointerInSchema pointer schema =
                         [(n, "")] | n >= 0 && n < length arr ->
                           -- Try to parse the array element as a schema
                           case Parser.parseSchemaWithVersion version (arr ! n) of
-                            Right schema -> followPointer remaining schema
+                            Right schema -> followPointer remaining schema currentBase
                             Left _ -> Nothing
                         _ -> Nothing
                     _ -> Nothing
@@ -1658,35 +1749,47 @@ resolveDynamicRef (Reference refText) ctx
           anchorName = T.drop 1 fragment  -- Remove the # prefix
           registry = contextSchemaRegistry ctx
           baseURI = contextBaseURI ctx
+
+          -- BOOKENDING REQUIREMENT: For dynamic resolution to work, the initial
+          -- resolution target must have a $dynamicAnchor. If it doesn't, return Nothing
+          -- to trigger fallback to static $ref resolution.
+          checkBookending schemaToCheck =
+            case schemaCore schemaToCheck of
+              ObjectSchema obj -> isJust (schemaDynamicAnchor obj)
+              _ -> False
+
       in if T.null uriPart
            then
              -- Simple fragment reference: #anchor
-             -- Search the dynamic scope for matching $dynamicAnchor
-             -- Search from OUTERMOST (oldest/furthest) to INNERMOST (newest/current)
-             -- This implements the bookending requirement: we skip the current resource
-             -- and search outward from the dynamic scope
-             case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
-               Just schema -> Just schema
-               Nothing ->
-                 -- If not in dynamic scope, check the registry's dynamic anchors
-                 case baseURI of
+             -- First check if there's a bookending $dynamicAnchor at the target
+             let staticTarget = case baseURI of
                    Just uri -> Map.lookup (uri, anchorName) (registryDynamicAnchors registry)
                    Nothing -> Nothing
+             in case staticTarget of
+               Just targetSchema | checkBookending targetSchema ->
+                 -- Target has $dynamicAnchor, search dynamic scope
+                 case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
+                   Just schema -> Just schema
+                   Nothing -> Just targetSchema  -- Use the target itself
+               _ ->
+                 -- No bookending $dynamicAnchor at target, return Nothing to trigger fallback
+                 Nothing
            else
              -- URI with fragment: uri#anchor
-             -- First resolve the URI part statically
+             -- First resolve the URI part statically to find the target
              case resolveReference (Reference refText) ctx of
-               Just (resolvedSchema, maybeBase, _) ->
-                 -- Search the dynamic scope for a schema with this anchor
-                 -- Search from outermost to innermost (reverse order)
+               Just (resolvedSchema, maybeBase, _) | checkBookending resolvedSchema ->
+                 -- Target has $dynamicAnchor, search dynamic scope
                  case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
                    Just schema -> Just schema
                    Nothing ->
                      -- If not in dynamic scope, check the registry
                      case maybeBase of
                        Just uri -> Map.lookup (uri, anchorName) (registryDynamicAnchors registry)
-                       Nothing -> Nothing
-               Nothing -> Nothing
+                       Nothing -> Just resolvedSchema
+               _ ->
+                 -- No bookending $dynamicAnchor, return Nothing to trigger fallback
+                 Nothing
   | otherwise = Nothing  -- Not a valid $dynamicRef format
   where
     -- Search for a schema with matching $dynamicAnchor in the dynamic scope
@@ -1719,6 +1822,35 @@ resolveDynamicRef (Reference refText) ctx
            ] of
         (found:_) -> Just found
         [] -> Nothing
+
+-- | Resolve $recursiveRef (2019-09)
+-- Similar to $dynamicRef but uses $recursiveAnchor (boolean) instead of $dynamicAnchor (named)
+-- When $recursiveRef points to "#", it resolves to the outermost schema resource with $recursiveAnchor: true
+resolveRecursiveRef :: Reference -> ValidationContext -> Maybe Schema
+resolveRecursiveRef (Reference refText) ctx
+  | refText == "#" =
+      -- Reference to root - search dynamic scope for $recursiveAnchor: true
+      -- Search from OUTERMOST to INNERMOST
+      case findSchemaWithRecursiveAnchor (reverse (contextDynamicScope ctx)) of
+        Just schema -> Just schema
+        Nothing ->
+          -- If not in dynamic scope, check registry
+          case contextBaseURI ctx of
+            Just uri -> Map.lookup uri (registryRecursiveAnchors $ contextSchemaRegistry ctx)
+            Nothing -> Nothing
+  | otherwise =
+      -- For non-"#" references, treat as regular $ref
+      -- This is the fallback behavior in 2019-09
+      Nothing
+  where
+    findSchemaWithRecursiveAnchor :: [Schema] -> Maybe Schema
+    findSchemaWithRecursiveAnchor [] = Nothing
+    findSchemaWithRecursiveAnchor (schema:rest) = case schemaCore schema of
+      ObjectSchema obj ->
+        case schemaRecursiveAnchor obj of
+          Just True -> Just schema
+          _ -> findSchemaWithRecursiveAnchor rest
+      _ -> findSchemaWithRecursiveAnchor rest
 
 -- | Compile regex pattern
 -- Automatically adds Unicode flag if pattern contains Unicode property escapes

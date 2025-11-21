@@ -522,6 +522,12 @@ data SchemaObject = SchemaObject
   , schemaDynamicAnchor :: Maybe Text
     -- ^ Dynamic anchor (2020-12+)
 
+  , schemaRecursiveRef :: Maybe Reference
+    -- ^ Recursive reference (2019-09, replaced by $dynamicRef in 2020-12)
+
+  , schemaRecursiveAnchor :: Maybe Bool
+    -- ^ Recursive anchor (2019-09, replaced by $dynamicAnchor in 2020-12)
+
     -- === Composition Keywords ===
   , schemaAllOf :: Maybe (NonEmpty Schema)
     -- ^ Must satisfy all subschemas
@@ -802,6 +808,9 @@ data SchemaRegistry = SchemaRegistry
   
   , registryDynamicAnchors :: Map (Text, Text) Schema
     -- ^ Dynamic anchors (2020-12+)
+
+  , registryRecursiveAnchors :: Map Text Schema
+    -- ^ Recursive anchors (2019-09): schemas with $recursiveAnchor: true
   }
   deriving (Eq, Show, Generic)
 
@@ -810,6 +819,7 @@ instance Semigroup SchemaRegistry where
     { registrySchemas = registrySchemas r1 <> registrySchemas r2
     , registryAnchors = registryAnchors r1 <> registryAnchors r2
     , registryDynamicAnchors = registryDynamicAnchors r1 <> registryDynamicAnchors r2
+    , registryRecursiveAnchors = registryRecursiveAnchors r1 <> registryRecursiveAnchors r2
     }
 
 instance Monoid SchemaRegistry where
@@ -821,6 +831,7 @@ emptyRegistry = SchemaRegistry
   { registrySchemas = Map.empty
   , registryAnchors = Map.empty
   , registryDynamicAnchors = Map.empty
+  , registryRecursiveAnchors = Map.empty
   }
 
 -- | Register a schema and all its sub-schemas in the registry
@@ -853,7 +864,13 @@ registerSchemaInRegistry baseURI schema registry =
                      maybe regWithAnchor
                        (\dynAnchor -> insertDynamicAnchor anchorBase dynAnchor regWithAnchor)
                        (schemaDynamicAnchor obj)
-               in regWithDynamic
+                   regWithRecursive =
+                     maybe regWithDynamic
+                       (\isRecursive -> if isRecursive
+                                        then insertRecursiveAnchor anchorBase regWithDynamic
+                                        else regWithDynamic)
+                       (schemaRecursiveAnchor obj)
+               in regWithRecursive
          in registerObjectSubSchemas currentBase obj registryWithExplicitAnchors
   where
     insertSchemaKey key reg =
@@ -867,6 +884,9 @@ registerSchemaInRegistry baseURI schema registry =
 
     insertDynamicAnchor baseKey anchorName reg =
       reg { registryDynamicAnchors = Map.insert (baseKey, anchorName) schema (registryDynamicAnchors reg) }
+
+    insertRecursiveAnchor baseKey reg =
+      reg { registryRecursiveAnchors = Map.insert baseKey schema (registryRecursiveAnchors reg) }
 
     registerObjectSubSchemas :: Maybe Text -> SchemaObject -> SchemaRegistry -> SchemaRegistry
     registerObjectSubSchemas uri obj reg =
@@ -982,6 +1002,11 @@ buildRegistryWithExternalRefs loader rootSchema = do
 
     collectFromObject :: Maybe Text -> SchemaObject -> [Text]
     collectFromObject base obj =
+      -- IMPORTANT: For $defs, each definition may have its own $id that changes the base URI.
+      -- We must use the parent schema's effective base when collecting from $defs, because
+      -- the parent might have an $id. But collectExternalReferenceDocs will compute each
+      -- def's effective base internally. So we should pass `base` here, which is the
+      -- effective base of the parent schema (computed by collectExternalReferenceDocs).
       let defRefs = concatMap (collectExternalReferenceDocs base) (Map.elems $ schemaDefs obj)
           allOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaAllOf obj)
           anyOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaAnyOf obj)
@@ -1162,6 +1187,8 @@ instance FromJSON SchemaObject where
     , schemaDynamicRef = Nothing
     , schemaAnchor = Nothing
     , schemaDynamicAnchor = Nothing
+    , schemaRecursiveRef = Nothing
+    , schemaRecursiveAnchor = Nothing
     , schemaAllOf = Nothing
     , schemaAnyOf = Nothing
     , schemaOneOf = Nothing
