@@ -809,15 +809,8 @@ validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
           maybeMaxContains = validationMaxContains validation
       in case maybeContains of
         Nothing ->
-          -- No contains constraint, but check for standalone minContains/maxContains
-          case maybeMinContains of
-            Nothing -> ValidationSuccess mempty
-            Just minC ->
-              -- Standalone minContains without contains is valid if minC <= array length
-              if fromIntegral (length array) >= minC
-                then ValidationSuccess mempty
-                else validationFailure "minContains" $
-                  "Array has " <> T.pack (show (length array)) <> " items, but minContains requires " <> T.pack (show minC)
+          -- No contains constraint: minContains and maxContains are ignored per spec
+          ValidationSuccess mempty
         Just containsSchema ->
           let results = [(idx, validateValueWithContext ctx' containsSchema item) | (idx, item) <- zip [0..] (toList array)]
               matchingIndices = Set.fromList [idx | (idx, result) <- results, isSuccess result]
@@ -977,15 +970,8 @@ validateArrayConstraints ctx obj (Array arr) =
           maybeMaxContains = validationMaxContains validation
       in case maybeContains of
         Nothing ->
-          -- No contains constraint, but check for standalone minContains/maxContains
-          case maybeMinContains of
-            Nothing -> ValidationSuccess mempty
-            Just minC -> 
-              -- Standalone minContains without contains is valid if minC <= array length
-              if fromIntegral (length array) >= minC
-                then ValidationSuccess mempty
-                else validationFailure "minContains" $ 
-                  "Array has " <> T.pack (show (length array)) <> " items, but minContains requires " <> T.pack (show minC)
+          -- No contains constraint: minContains and maxContains are ignored per spec
+          ValidationSuccess mempty
         Just containsSchema ->
           let results = [(idx, validateValueWithContext ctx' containsSchema item) | (idx, item) <- zip [0..] (toList array)]
               matchingIndices = Set.fromList [idx | (idx, result) <- results, isSuccess result]
