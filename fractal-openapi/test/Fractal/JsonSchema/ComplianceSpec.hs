@@ -83,22 +83,39 @@ loadFromRemotes version path = do
         Draft07 -> "draft7"
         Draft201909 -> "draft2019-09"
         Draft202012 -> "draft2020-12"
-      
-      -- Check if path already includes version directory
-      pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") path) 
-        ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12"]
-      
-      commonPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack path
-      versionPath = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
-  
-  -- If path includes version, just try common path; otherwise try version-specific first
-  if pathIncludesVersion
-    then fileLoaderWithVersion version commonPath
-    else do
-      versionResult <- fileLoaderWithVersion version versionPath
-      case versionResult of
+
+      -- Check if path already includes version directory or v1
+      pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") path)
+        ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12", "v1"]
+
+      -- Try both with and without fractal-openapi/ prefix to support running from different directories
+      -- For draft4/06/07, also try v1/ directory as those use the v1 test fixtures
+      commonPath1 = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack path
+      commonPath2 = T.pack $ "fractal-openapi/test-suite/json-schema-test-suite/remotes/" <> T.unpack path
+      versionPath1 = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
+      versionPath2 = T.pack $ "fractal-openapi/test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
+      v1Path1 = T.pack $ "test-suite/json-schema-test-suite/remotes/v1/" <> T.unpack path
+      v1Path2 = T.pack $ "fractal-openapi/test-suite/json-schema-test-suite/remotes/v1/" <> T.unpack path
+
+  -- Try paths with fallback: version-specific first, then v1 (for older drafts), then common
+  let pathsToTry = if pathIncludesVersion
+                   then [commonPath1, commonPath2]
+                   else case version of
+                     Draft04 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
+                     Draft06 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
+                     Draft07 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
+                     _ -> [versionPath1, versionPath2, commonPath1, commonPath2]
+
+  tryPaths pathsToTry pathsToTry
+  where
+    tryPaths allPaths [] = do
+      let pathsList = T.intercalate ", " allPaths
+      pure $ Left $ "Could not load schema from any path for: " <> path <> " (tried: " <> pathsList <> ")"
+    tryPaths allPaths (p:ps) = do
+      result <- fileLoaderWithVersion version p
+      case result of
         Right schema -> pure $ Right schema
-        Left _ -> fileLoaderWithVersion version commonPath
+        Left _ -> tryPaths allPaths ps
 
 -- | Loader for relative paths (no scheme)
 relativePath :: JsonSchemaVersion -> ReferenceLoader
@@ -197,6 +214,12 @@ draft201909MetaSchema =
       object
         [ "$id" .= ("http://json-schema.org/draft/2019-09/schema#" :: Text)
         , "type" .= ("object" :: Text)
+        , "properties" .= object
+            [ "minLength" .= object
+                [ "type" .= ("integer" :: Text)
+                , "minimum" .= (0 :: Int)
+                ]
+            ]
         , "additionalProperties" .= True
         ]
 
@@ -210,6 +233,12 @@ draft202012MetaSchema =
       object
         [ "$id" .= ("https://json-schema.org/draft/2020-12/schema#" :: Text)
         , "type" .= ("object" :: Text)
+        , "properties" .= object
+            [ "minLength" .= object
+                [ "type" .= ("integer" :: Text)
+                , "minimum" .= (0 :: Int)
+                ]
+            ]
         , "additionalProperties" .= True
         ]
 
@@ -268,8 +297,26 @@ runTestFile version filePath = describe fileLabel $ do
             it (T.unpack $ testDescription testCase) $
               runTestCase version filePath group testCase
   where
-    suiteRoot = "test-suite/json-schema-test-suite/tests"
-    fileLabel = makeRelative suiteRoot filePath
+    -- Extract just the relative path for display (works with either path prefix)
+    fileLabel =
+      let withoutPrefix1 = makeRelative "test-suite/json-schema-test-suite/tests" filePath
+          withoutPrefix2 = makeRelative "fractal-openapi/test-suite/json-schema-test-suite/tests" filePath
+      in if length withoutPrefix1 < length withoutPrefix2
+         then withoutPrefix1
+         else withoutPrefix2
+
+-- | Find the test suite root directory, trying both with and without fractal-openapi/ prefix
+findTestSuiteRoot :: IO FilePath
+findTestSuiteRoot = do
+  let paths = [ "test-suite/json-schema-test-suite/tests"
+              , "fractal-openapi/test-suite/json-schema-test-suite/tests"
+              ]
+  findFirst paths
+  where
+    findFirst [] = error "Could not find test suite directory"
+    findFirst (p:ps) = do
+      exists <- doesDirectoryExist p
+      if exists then pure p else findFirst ps
 
 collectJsonFiles :: FilePath -> IO [FilePath]
 collectJsonFiles dir = do
@@ -285,21 +332,21 @@ collectJsonFiles dir = do
 spec :: Spec
 spec = do
   describe "JSON Schema Official Test Suite" $ do
+    testSuiteRoot <- runIO findTestSuiteRoot
+
     it "loads test suite structure" $ do
       -- Verify test suite is available
-      let testSuiteRoot = "test-suite/json-schema-test-suite/tests"
       exists <- doesFileExist (testSuiteRoot </> "draft7/type.json")
       exists `shouldBe` True
-    
-    let testSuiteRoot = "test-suite/json-schema-test-suite/tests"
-        versionDirs =
+
+    let versionDirs =
           [ (Draft04, "draft4")
           , (Draft06, "draft6")
           , (Draft07, "draft7")
           , (Draft201909, "draft2019-09")
           , (Draft202012, "draft2020-12")
           ]
-    
+
     forM_ versionDirs $ \(version, dirName) -> do
       describe ("Draft " <> show version) $ do
         files <- runIO $ collectJsonFiles (testSuiteRoot </> dirName)

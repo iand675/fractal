@@ -943,7 +943,7 @@ registerSchemaInRegistry baseURI schema registry =
 -- 4. Recursively registers loaded schemas
 --
 -- This should be called before validation to enable external $ref resolution
-buildRegistryWithExternalRefs 
+buildRegistryWithExternalRefs
   :: ReferenceLoader           -- ^ Loader for external schemas
   -> Schema                     -- ^ Root schema
   -> IO (Either Text SchemaRegistry)  -- ^ Built registry or error

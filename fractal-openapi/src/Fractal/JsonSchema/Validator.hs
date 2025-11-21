@@ -1417,8 +1417,12 @@ resolveReference (Reference refText) ctx
       -- parsePointer handles URL decoding internally
       let pointer = T.drop 1 refText  -- Remove #
           rootSchema = contextRootSchema ctx
-      in resolvePointerInCurrentSchema pointer ctx >>= \schema ->
-           Just (schema, contextBaseURI ctx, rootSchema)
+      -- IMPORTANT: Use resolvePointerInSchemaWithBase to track base URI changes
+      -- from $id fields encountered while navigating the pointer
+      in case rootSchema of
+           Nothing -> Nothing
+           Just root -> resolvePointerInSchemaWithBase pointer root (contextBaseURI ctx) >>= \(schema, effectiveBase) ->
+             Just (schema, effectiveBase, rootSchema)
   | T.isPrefixOf "#" refText =
       -- Anchor reference (#foo) or JSON Pointer in compact form
       let anchorName = T.drop 1 refText
