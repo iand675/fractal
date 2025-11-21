@@ -139,6 +139,11 @@ metaschemaLoader uri =
       pure $ Right draft201909MetaSchema
     Just "https://json-schema.org/draft/2019-09/schema" ->
       pure $ Right draft201909MetaSchema
+    -- Sub-metaschemas (vocabularies) - return empty stubs
+    Just u | "/meta/" `T.isInfixOf` u ->
+      pure $ Right $ case parseSchemaWithVersion Draft202012 (object []) of
+        Right s -> s
+        Left _ -> error "Failed to create empty schema stub"
     _ ->
       pure $ Left $ "Unknown URI: " <> uri
   where

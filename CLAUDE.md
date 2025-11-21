@@ -1,8 +1,8 @@
 # Fractal Project - AI Assistant Guide
 
-This document provides context for AI assistants working on the Fractal project.
+**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads) for issue tracking. Use `bd` commands instead of markdown TODOs. See AGENTS.md for workflow details.
 
-BEFORE ANYTHING ELSE: run 'bd onboard' and follow the instructions
+This document provides context for AI assistants working on the Fractal project.
 
 ## Project Overview
 

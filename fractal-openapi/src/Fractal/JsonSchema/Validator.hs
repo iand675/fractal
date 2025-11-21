@@ -38,7 +38,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Scientific as Sci
 import Data.Foldable (toList)
-import Data.Maybe (fromJust, fromMaybe, isJust)
+import Data.Maybe (fromJust, fromMaybe, isJust, listToMaybe, maybeToList)
 import Control.Monad (mplus)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
@@ -133,7 +133,7 @@ validateValueWithContext ctx schema val =
        ObjectSchema obj ->
          -- First validate against standard keywords, then custom keywords
          combineResults
-           [ validateAgainstObject ctx ctxWithBase obj val
+           [ validateAgainstObject ctx ctxWithBase schema obj val
            , validateCustomKeywords ctxWithBase schema val
            ]
   where
@@ -143,6 +143,66 @@ validateValueWithContext ctx schema val =
       in case failures of
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Get the effective vocabularies for a schema based on its metaschema.
+-- Returns Nothing if all vocabularies should be active (pre-2019-09 or no vocabulary restrictions).
+-- Returns Just (set of vocab URIs) if vocabularies are explicitly declared.
+getEffectiveVocabularies :: ValidationContext -> Schema -> Maybe (Set Text)
+getEffectiveVocabularies ctx schema =
+  case schemaVersion schema of
+    -- Pre-2019-09 drafts don't have $vocabulary concept - all keywords active
+    Just Draft04 -> Nothing
+    Just Draft06 -> Nothing
+    Just Draft07 -> Nothing
+    -- 2019-09 and later support $vocabulary
+    Just Draft201909 -> getVocabulariesFrom201909 ctx schema
+    Just Draft202012 -> getVocabulariesFrom202012 ctx schema
+    Nothing -> Nothing  -- No version, assume all vocabularies
+  where
+    getVocabulariesFrom201909 ctx' schema' =
+      case schemaVocabulary schema' of
+        Just vocabMap -> Just $ Set.fromList (Map.keys vocabMap)
+        Nothing -> getVocabulariesFromMetaschema ctx' schema'
+
+    getVocabulariesFrom202012 ctx' schema' =
+      case schemaVocabulary schema' of
+        Just vocabMap -> Just $ Set.fromList (Map.keys vocabMap)
+        Nothing -> getVocabulariesFromMetaschema ctx' schema'
+
+    -- Look up the metaschema in the registry and extract its vocabularies
+    getVocabulariesFromMetaschema ctx' schema' =
+      case schemaMetaschemaURI schema' of
+        Nothing -> Nothing  -- No custom metaschema
+        Just metaURI ->
+          case Map.lookup metaURI (registrySchemas $ contextSchemaRegistry ctx') of
+            Nothing -> Nothing  -- Metaschema not found in registry
+            Just metaschema ->
+              case schemaVocabulary metaschema of
+                Just vocabMap -> Just $ Set.fromList (Map.keys vocabMap)
+                Nothing -> Nothing  -- Metaschema has no vocabulary declaration
+
+-- | Check if a vocabulary is active for validation.
+-- Returns True if the vocabulary should be used, False if it should be ignored.
+isVocabularyActive :: ValidationContext -> Schema -> Text -> Bool
+isVocabularyActive ctx schema vocabURI =
+  case getEffectiveVocabularies ctx schema of
+    Nothing -> True  -- No restrictions, all vocabularies active
+    Just vocabs -> Set.member vocabURI vocabs
+
+-- | Validation vocabulary URIs for 2019-09 and 2020-12
+validationVocabularyURI201909 :: Text
+validationVocabularyURI201909 = "https://json-schema.org/draft/2019-09/vocab/validation"
+
+validationVocabularyURI202012 :: Text
+validationVocabularyURI202012 = "https://json-schema.org/draft/2020-12/vocab/validation"
+
+-- | Check if validation vocabulary is active for a schema
+isValidationVocabularyActive :: ValidationContext -> Schema -> Bool
+isValidationVocabularyActive ctx schema =
+  case schemaVersion schema of
+    Just Draft201909 -> isVocabularyActive ctx schema validationVocabularyURI201909
+    Just Draft202012 -> isVocabularyActive ctx schema validationVocabularyURI202012
+    _ -> True  -- Pre-2019-09 or no version: validation is always active
 
 -- | Apply schema-specific context updates (base URI, root schema)
 applySchemaContext :: ValidationContext -> Schema -> ValidationContext
@@ -214,8 +274,8 @@ propertyPointer :: Text -> JSONPointer
 propertyPointer prop = JSONPointer [prop]
 
 -- | Validate against object schema
-validateAgainstObject :: ValidationContext -> ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateAgainstObject parentCtx ctx obj val =
+validateAgainstObject :: ValidationContext -> ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
+validateAgainstObject parentCtx ctx schema obj val =
   -- In 2019-09+, $ref and $dynamicRef are applicators alongside other keywords
   -- In earlier drafts, $ref short-circuits (only validates against ref, ignores siblings)
   let version = validationVersion (contextConfig ctx)
@@ -232,6 +292,7 @@ validateAgainstObject parentCtx ctx obj val =
           then
             let schema' = Schema
                   { schemaVersion = Just version
+                  , schemaMetaschemaURI = Nothing
                   , schemaId = contextBaseURI ctx
                   , schemaCore = ObjectSchema obj
                   , schemaVocabulary = Nothing
@@ -404,8 +465,8 @@ validateAgainstObject parentCtx ctx obj val =
                         Just resolvedSchema ->
                           validateValueWithContext ctxWithDepth resolvedSchema val'
                         Nothing ->
-                          -- Fallback: treat as regular $ref
-                          case resolveReference recRef refCtx of
+                          -- Fallback: treat as regular $ref using current context (not parent)
+                          case resolveReference recRef ctxWithDepth of
                             Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
                               let ctxForRef = case maybeBase of
                                     Just baseDoc ->
@@ -451,15 +512,22 @@ validateAgainstObject parentCtx ctx obj val =
     -- Note: Dynamic scope has already been updated in validateAgainstObject
     validateObjectSchemaContentWithRefAnnotations ctx' obj' val' refAnns =
       let ctx'' = ctx'  -- Dynamic scope already set up
+          -- Check if validation vocabulary is active
+          validationActive = isValidationVocabularyActive ctx'' schema
           -- Validate all keywords EXCEPT unevaluated ones
+          -- Only apply validation keywords if validation vocabulary is active
           results =
-            [ validateTypeConstraint obj' val'
-            , validateEnumConstraint obj' val'
-            , validateConstConstraint obj' val'
-            , validateComposition ctx'' obj' val'
+            (if validationActive
+             then [ validateTypeConstraint obj' val'
+                  , validateEnumConstraint obj' val'
+                  , validateConstConstraint obj' val'
+                  , validateNumericConstraints obj' val'
+                  , validateStringConstraints obj' val'
+                  ]
+             else [])
+            ++
+            [ validateComposition ctx'' obj' val'
             , validateConditional ctx'' obj' val'
-            , validateNumericConstraints obj' val'
-            , validateStringConstraints obj' val'
             , validateFormatConstraints ctx'' obj' val'
             , validateArrayConstraintsWithoutUnevaluated ctx'' obj' val'
             , validateObjectConstraintsWithoutUnevaluated ctx'' obj' val'
@@ -1772,6 +1840,7 @@ resolveDynamicRef (Reference refText) ctx
              in case staticTarget of
                Just targetSchema | checkBookending targetSchema ->
                  -- Target has $dynamicAnchor, search dynamic scope
+                 -- Search from outermost (oldest/root) to innermost (most recent) for $dynamicRef
                  case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
                    Just schema -> Just schema
                    Nothing -> Just targetSchema  -- Use the target itself
@@ -1784,6 +1853,7 @@ resolveDynamicRef (Reference refText) ctx
              case resolveReference (Reference refText) ctx of
                Just (resolvedSchema, maybeBase, _) | checkBookending resolvedSchema ->
                  -- Target has $dynamicAnchor, search dynamic scope
+                 -- Search from outermost (oldest/root) to innermost (most recent) for $dynamicRef
                  case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
                    Just schema -> Just schema
                    Nothing ->
@@ -1797,26 +1867,47 @@ resolveDynamicRef (Reference refText) ctx
   | otherwise = Nothing  -- Not a valid $dynamicRef format
   where
     -- Search for a schema with matching $dynamicAnchor in the dynamic scope
-    -- According to the spec, we search schema resources (schemas with $id) and their $defs
+    -- Search from outermost (root/oldest) to innermost (most recent)
+    -- The list is reversed before calling this function to achieve outermost-first search
+    -- According to the spec, $dynamicRef resolves to the FIRST $dynamicAnchor encountered in scope
     findSchemaWithDynamicAnchor :: Text -> [Schema] -> Maybe Schema
     findSchemaWithDynamicAnchor _anchor [] = Nothing
     findSchemaWithDynamicAnchor anchor (schema:rest) = case schemaCore schema of
+      ObjectSchema obj ->
+        -- Search the entire schema resource for the matching $dynamicAnchor
+        case findDynamicAnchorInSchemaResource anchor schema of
+          Just foundSchema -> Just foundSchema
+          Nothing -> findSchemaWithDynamicAnchor anchor rest
+      _ -> findSchemaWithDynamicAnchor anchor rest
+
+    -- Search for a $dynamicAnchor anywhere within a schema resource
+    -- This includes the schema itself, its $defs, and recursively through composition keywords
+    -- (allOf, anyOf, oneOf) since they're all part of the same schema resource
+    findDynamicAnchorInSchemaResource :: Text -> Schema -> Maybe Schema
+    findDynamicAnchorInSchemaResource anchor schema = case schemaCore schema of
       ObjectSchema obj ->
         -- First check if this schema itself has the matching $dynamicAnchor
         case schemaDynamicAnchor obj of
           Just dynAnchor | dynAnchor == anchor -> Just schema
           _ ->
-            -- If not, search in $defs (part of the same schema resource)
+            -- Search in $defs
             case findInDefs anchor (schemaDefs obj) of
               Just foundSchema -> Just foundSchema
-              Nothing -> findSchemaWithDynamicAnchor anchor rest
-      _ -> findSchemaWithDynamicAnchor anchor rest
+              Nothing ->
+                -- Search in composition keywords (allOf, anyOf, oneOf)
+                -- These are part of the same schema resource if they don't have their own $id
+                case findInComposition anchor obj of
+                  Just foundSchema -> Just foundSchema
+                  Nothing -> Nothing
+      _ -> Nothing
 
     -- Search for a $dynamicAnchor in $defs
+    -- Only search schemas that don't have their own $id (same schema resource)
     findInDefs :: Text -> Map Text Schema -> Maybe Schema
     findInDefs anchor defs =
       case [ defSchema
            | defSchema <- Map.elems defs
+           , not (isJust (schemaId defSchema))  -- Exclude schemas with their own $id
            , case schemaCore defSchema of
                ObjectSchema defObj ->
                  case schemaDynamicAnchor defObj of
@@ -1827,21 +1918,72 @@ resolveDynamicRef (Reference refText) ctx
         (found:_) -> Just found
         [] -> Nothing
 
+    -- Search for a $dynamicAnchor in composition keywords (allOf, anyOf, oneOf)
+    -- Only search in schemas that don't have their own $id (same schema resource)
+    findInComposition :: Text -> SchemaObject -> Maybe Schema
+    findInComposition anchor obj =
+      let searchSchemas schemas = listToMaybe
+            [ result
+            | schema <- schemas
+            , let schemaHasId = isJust (schemaId schema)
+            , not schemaHasId  -- Only search if it's part of the same resource
+            , Just result <- [findDynamicAnchorInSchemaResource anchor schema]
+            ]
+      in case schemaAllOf obj of
+           Just schemas -> case searchSchemas (NE.toList schemas) of
+             Just found -> Just found
+             Nothing -> case schemaAnyOf obj of
+               Just schemas' -> case searchSchemas (NE.toList schemas') of
+                 Just found' -> Just found'
+                 Nothing -> case schemaOneOf obj of
+                   Just schemas'' -> searchSchemas (NE.toList schemas'')
+                   Nothing -> Nothing
+               Nothing -> case schemaOneOf obj of
+                 Just schemas'' -> searchSchemas (NE.toList schemas'')
+                 Nothing -> Nothing
+           Nothing -> case schemaAnyOf obj of
+             Just schemas' -> case searchSchemas (NE.toList schemas') of
+               Just found' -> Just found'
+               Nothing -> case schemaOneOf obj of
+                 Just schemas'' -> searchSchemas (NE.toList schemas'')
+                 Nothing -> Nothing
+             Nothing -> case schemaOneOf obj of
+               Just schemas'' -> searchSchemas (NE.toList schemas'')
+               Nothing -> Nothing
+
 -- | Resolve $recursiveRef (2019-09)
 -- Similar to $dynamicRef but uses $recursiveAnchor (boolean) instead of $dynamicAnchor (named)
 -- When $recursiveRef points to "#", it resolves to the outermost schema resource with $recursiveAnchor: true
+-- BOOKENDING: The current schema must have $recursiveAnchor: true for dynamic resolution
 resolveRecursiveRef :: Reference -> ValidationContext -> Maybe Schema
 resolveRecursiveRef (Reference refText) ctx
   | refText == "#" =
-      -- Reference to root - search dynamic scope for $recursiveAnchor: true
-      -- Search from OUTERMOST to INNERMOST
-      case findSchemaWithRecursiveAnchor (reverse (contextDynamicScope ctx)) of
-        Just schema -> Just schema
-        Nothing ->
-          -- If not in dynamic scope, check registry
-          case contextBaseURI ctx of
-            Just uri -> Map.lookup uri (registryRecursiveAnchors $ contextSchemaRegistry ctx)
-            Nothing -> Nothing
+      let registry = contextSchemaRegistry ctx
+          baseURI = contextBaseURI ctx
+          -- Check if the current schema (most recent in dynamic scope) has $recursiveAnchor: true
+          currentSchemaHasAnchor = case contextDynamicScope ctx of
+            (schema:_) -> case schemaCore schema of
+              ObjectSchema obj -> schemaRecursiveAnchor obj == Just True
+              _ -> False
+            [] -> False
+          -- Also check the registry for the base URI
+          registryHasAnchor = case baseURI of
+            Just uri -> Map.member uri (registryRecursiveAnchors registry)
+            Nothing -> False
+      in if currentSchemaHasAnchor || registryHasAnchor
+         then
+           -- Target has $recursiveAnchor: true, search dynamic scope
+           -- Search from OUTERMOST to INNERMOST
+           case findSchemaWithRecursiveAnchor (reverse (contextDynamicScope ctx)) of
+             Just schema -> Just schema
+             Nothing ->
+               -- If not in dynamic scope, check registry
+               case baseURI of
+                 Just uri -> Map.lookup uri (registryRecursiveAnchors registry)
+                 Nothing -> Nothing
+         else
+           -- No bookending $recursiveAnchor: true, return Nothing to trigger fallback
+           Nothing
   | otherwise =
       -- For non-"#" references, treat as regular $ref
       -- This is the fallback behavior in 2019-09

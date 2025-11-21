@@ -57,26 +57,32 @@ parseSchemaWithVersion :: JsonSchemaVersion -> Value -> Either ParseError Schema
 parseSchemaWithVersion version val = case val of
   Bool b -> Right $ Schema
     { schemaVersion = Just version
+    , schemaMetaschemaURI = Nothing  -- Boolean schemas don't have $schema
     , schemaId = Nothing
     , schemaCore = BooleanSchema b
     , schemaVocabulary = Nothing
     , schemaExtensions = Map.empty
     }
   Object obj -> do
+    -- Parse $schema URI
+    let metaschemaURI = KeyMap.lookup "$schema" obj >>= \case
+          String t -> Just t
+          _ -> Nothing
+
     -- Parse $id (draft-06+) or id (draft-04 only)
     let idKey = if version >= Draft06 then "$id" else "id"
     let schemaId' = KeyMap.lookup idKey obj >>= \case
           String t -> Just t
           _ -> Nothing
-    
+
     -- Parse $vocabulary (2019-09+)
     let vocabMap = if version >= Draft201909
                    then KeyMap.lookup "$vocabulary" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
                    else Nothing
-    
+
     -- Parse core structure
     core <- parseSchemaObject version obj
-    
+
     -- Collect unknown keywords (extensions)
     -- TODO (US3): This is where vocabulary integration happens
     -- For each unknown keyword:
@@ -103,11 +109,12 @@ parseSchemaWithVersion version val = case val of
           , "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"
           , "multipleOf"
           ]
-    let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords) 
+    let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords)
                    $ Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
-    
+
     pure $ Schema
       { schemaVersion = Just version
+      , schemaMetaschemaURI = metaschemaURI
       , schemaId = schemaId'
       , schemaCore = ObjectSchema core
       , schemaVocabulary = vocabMap
@@ -315,7 +322,7 @@ parseValidationKeywords version obj = do
   let properties' = KeyMap.lookup "properties" obj >>= parsePropertySchemas version
   let patternProperties' = KeyMap.lookup "patternProperties" obj >>= parsePatternPropertySchemas version
   let additionalProperties' = KeyMap.lookup "additionalProperties" obj >>= \v -> case v of
-        Bool b -> Just $ Schema Nothing Nothing (BooleanSchema b) Nothing Map.empty
+        Bool b -> Just $ Schema Nothing Nothing Nothing (BooleanSchema b) Nothing Map.empty
         _ -> eitherToMaybe $ parseSubschema version v
   let unevaluatedProperties' = if version >= Draft201909
                                then KeyMap.lookup "unevaluatedProperties" obj >>= eitherToMaybe . parseSubschema version

@@ -570,19 +570,23 @@ data SchemaObject = SchemaObject
 data Schema = Schema
   { schemaVersion :: Maybe JsonSchemaVersion
     -- ^ Schema version from $schema keyword. Nothing means latest version.
-  
+
+  , schemaMetaschemaURI :: Maybe Text
+    -- ^ Full $schema URI (e.g., "http://localhost:1234/custom-metaschema.json")
+    -- Used to look up the metaschema in the registry to extract vocabulary restrictions
+
   , schemaId :: Maybe Text
     -- ^ Unique identifier for this schema ($id keyword)
     -- Invariant: Must be absolute URI if present
-  
+
   , schemaCore :: SchemaCore
     -- ^ Core schema structure (boolean or object schema)
-  
+
   , schemaVocabulary :: Maybe (Map Text Bool)
     -- ^ Vocabularies and whether they're required ($vocabulary keyword)
     -- Only valid for 2019-09+
     -- Invariant: All required vocabularies must be understood
-  
+
   , schemaExtensions :: Map Text Value
     -- ^ Unknown keywords collected during parsing
   }
@@ -977,15 +981,19 @@ buildRegistryWithExternalRefs loader rootSchema = do
 
     collectExternalReferenceDocs :: Maybe Text -> Schema -> [Text]
     collectExternalReferenceDocs parentBase schema =
-      case schemaCore schema of
-        BooleanSchema _ -> []
+      -- Include the $schema URI (metaschema) if present
+      let metaschemaRefs = case schemaMetaschemaURI schema of
+            Just uri | not (T.isPrefixOf "#" uri) -> [uri]
+            _ -> []
+      in case schemaCore schema of
+        BooleanSchema _ -> metaschemaRefs
         ObjectSchema obj ->
           -- Compute the effective base URI for this schema, accounting for its $id
           let effectiveBase = schemaEffectiveBase parentBase schema
               directRefs = maybe [] (resolveRef effectiveBase) (schemaRef obj)
               dynamicRefs = maybe [] (resolveRef effectiveBase) (schemaDynamicRef obj)
               subRefs = collectFromObject effectiveBase obj
-          in uniqueTexts (directRefs <> dynamicRefs <> subRefs)
+          in uniqueTexts (metaschemaRefs <> directRefs <> dynamicRefs <> subRefs)
 
     resolveRef :: Maybe Text -> Reference -> [Text]
     resolveRef base (Reference refText)
@@ -1255,6 +1263,7 @@ instance ToJSON Schema where
 instance FromJSON Schema where
   parseJSON _ = pure $ Schema  -- TODO: Implement in parser phase
     { schemaVersion = Nothing
+    , schemaMetaschemaURI = Nothing
     , schemaId = Nothing
     , schemaCore = BooleanSchema True
     , schemaVocabulary = Nothing
