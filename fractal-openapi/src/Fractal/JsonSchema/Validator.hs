@@ -191,16 +191,42 @@ validateAgainstObject parentCtx ctx obj val =
   -- In earlier drafts, $ref short-circuits (only validates against ref, ignores siblings)
   let version = validationVersion (contextConfig ctx)
       refIsApplicator = version >= Draft201909
+      -- Update context with dynamic scope BEFORE processing refs
+      -- Push schema resources (schemas with $id) onto the scope
+      ctxWithDynamicScope = case (schemaDynamicAnchor obj, contextBaseURI ctx) of
+        -- Push onto dynamic scope if schema has $dynamicAnchor OR if it's a schema resource (has $id)
+        (Just _, _) ->
+          -- Schema has $dynamicAnchor, push it
+          let schema' = Schema
+                { schemaVersion = Just (validationVersion $ contextConfig ctx)
+                , schemaId = contextBaseURI ctx
+                , schemaCore = ObjectSchema obj
+                , schemaVocabulary = Nothing
+                , schemaExtensions = Map.empty
+                }
+          in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
+        (Nothing, Just _) ->
+          -- Schema is a resource (has $id), push it for $dynamicRef resolution
+          let schema' = Schema
+                { schemaVersion = Just (validationVersion $ contextConfig ctx)
+                , schemaId = contextBaseURI ctx
+                , schemaCore = ObjectSchema obj
+                , schemaVocabulary = Nothing
+                , schemaExtensions = Map.empty
+                }
+          in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
+        _ -> ctx
   in if refIsApplicator
     then
       -- 2019-09+: $ref/$dynamicRef are applicators, combine with other keywords
       -- We need to pass ref annotations to content validation so unevaluatedProperties
       -- can see properties evaluated by the ref
-      let refResult = validateRef parentCtx ctx obj val
+      -- Use ctxWithDynamicScope so refs can see this schema in dynamic scope
+      let refResult = validateRef parentCtx ctxWithDynamicScope obj val
           refAnnotations = case refResult of
             ValidationSuccess anns -> anns
             ValidationFailure _ -> mempty
-          contentResult = validateObjectSchemaContentWithRefAnnotations ctx obj val refAnnotations
+          contentResult = validateObjectSchemaContentWithRefAnnotations ctxWithDynamicScope obj val refAnnotations
       in combineResults [refResult, contentResult]
     else
       -- Pre-2019-09: $ref short-circuits, ignores sibling keywords
@@ -351,32 +377,9 @@ validateAgainstObject parentCtx ctx obj val =
       validateObjectSchemaContentWithRefAnnotations ctx' obj' val' mempty
 
     -- Validate object schema content with additional annotations from refs
+    -- Note: Dynamic scope has already been updated in validateAgainstObject
     validateObjectSchemaContentWithRefAnnotations ctx' obj' val' refAnns =
-      -- Update context with dynamic scope: push schema resources (schemas with $id) onto the scope
-      -- This is needed for $dynamicRef resolution
-      let ctx'' = case (schemaDynamicAnchor obj', contextBaseURI ctx') of
-            -- Push onto dynamic scope if schema has $dynamicAnchor OR if it's a schema resource (has $id)
-            (Just _, _) ->
-              -- Schema has $dynamicAnchor, push it
-              let schema' = Schema
-                    { schemaVersion = Just (validationVersion $ contextConfig ctx')
-                    , schemaId = contextBaseURI ctx'
-                    , schemaCore = ObjectSchema obj'
-                    , schemaVocabulary = Nothing
-                    , schemaExtensions = Map.empty
-                    }
-              in ctx' { contextDynamicScope = schema' : contextDynamicScope ctx' }
-            (Nothing, Just _) ->
-              -- Schema is a resource (has $id), push it for $dynamicRef resolution
-              let schema' = Schema
-                    { schemaVersion = Just (validationVersion $ contextConfig ctx')
-                    , schemaId = contextBaseURI ctx'
-                    , schemaCore = ObjectSchema obj'
-                    , schemaVocabulary = Nothing
-                    , schemaExtensions = Map.empty
-                    }
-              in ctx' { contextDynamicScope = schema' : contextDynamicScope ctx' }
-            _ -> ctx'
+      let ctx'' = ctx'  -- Dynamic scope already set up
           -- Validate all keywords EXCEPT unevaluated ones
           results =
             [ validateTypeConstraint obj' val'
