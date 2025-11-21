@@ -1045,30 +1045,53 @@ data ValidationConfig = ValidationConfig
 data ValidationContext = ValidationContext
   { contextConfig :: ValidationConfig
     -- ^ Validation configuration
-  
+
   , contextSchemaRegistry :: SchemaRegistry
     -- ^ Registry of schemas for reference resolution
-  
+
   , contextRootSchema :: Maybe Schema
     -- ^ Root schema for resolving local $ref (e.g., #/definitions/foo)
-  
+
   , contextBaseURI :: Maybe Text
     -- ^ Current base URI for relative reference resolution
-  
+
   , contextDynamicScope :: [Schema]
     -- ^ Stack for $dynamicRef resolution (2020-12+)
-  
+
   , contextEvaluatedProperties :: Set Text
     -- ^ Properties evaluated so far (for unevaluatedProperties)
-  
+
   , contextEvaluatedItems :: Set Int
     -- ^ Array indices evaluated so far (for unevaluatedItems)
-  
+
   , contextVisitedSchemas :: Set SchemaFingerprint
     -- ^ Schemas visited (for cycle detection)
-  
+
   , contextResolvingRefs :: Set Text
     -- ^ References currently being resolved (for detecting reference cycles)
+    -- NOTE: This set is currently maintained but not used for cycle detection.
+    -- We use contextRecursionDepth instead (see below).
+
+  , contextRecursionDepth :: Int
+    -- ^ Current recursion depth (for preventing infinite recursion in recursive schemas)
+    --
+    -- DESIGN NOTE - Recursive Reference Handling:
+    -- We use a depth-based approach (limit: 100) rather than set-based cycle detection.
+    -- This allows valid recursive schemas like: tree → node → tree → node → ...
+    --
+    -- Research into other JSON Schema validators showed different approaches:
+    -- - Ajv (JavaScript): Compile-time resolution, pre-compiles refs into validation code
+    -- - Python referencing: Dynamic scope traversal with structural termination conditions
+    -- - gojsonschema (Go): Schema pool duplicate detection during parsing (prevention-oriented)
+    -- - everit-org (Java): Reference caching/memoization with ReferenceKnot
+    -- - Academic: StopList tracking (Context, Instance, Schema) triples
+    --
+    -- Our depth-based approach is simpler and more permissive than alternatives,
+    -- allowing recursive data structures to validate naturally while preventing
+    -- infinite recursion through a reasonable depth limit. This is appropriate
+    -- for an interpreted validator and aligns with common recursive algorithm practices.
+    --
+    -- The limit of 100 is configurable via future enhancement to ValidationConfig.
   }
   deriving (Generic)
 

@@ -96,6 +96,7 @@ validateValue config schema val =
         , contextEvaluatedItems = Set.empty
         , contextVisitedSchemas = Set.empty
         , contextResolvingRefs = Set.empty
+        , contextRecursionDepth = 0
         }
   in validateValueWithContext ctx schema val
 
@@ -113,6 +114,7 @@ validateValueWithRegistry config registry schema val =
         , contextEvaluatedItems = Set.empty
         , contextVisitedSchemas = Set.empty
         , contextResolvingRefs = Set.empty
+        , contextRecursionDepth = 0
         }
   in validateValueWithContext ctx schema val
 
@@ -145,7 +147,19 @@ validateValueWithContext ctx schema val =
 applySchemaContext :: ValidationContext -> Schema -> ValidationContext
 applySchemaContext ctx schema =
   let parentBase = contextBaseURI ctx
-      newBase = schemaEffectiveBase parentBase schema
+      -- Check if the schema's $id has already been applied to the parent base
+      -- This happens when following a $ref to a schema with a relative $id
+      idAlreadyApplied = case (schemaId schema, parentBase) of
+        (Just idText, Just baseText)
+          -- If $id is relative and parent base ends with the same path, assume already applied
+          | not (T.isPrefixOf "#" idText)
+          , not (T.any (== ':') idText) -- No scheme, so it's relative
+          , T.isSuffixOf idText baseText ->
+              True
+        _ -> False
+      newBase = if idAlreadyApplied
+                  then parentBase  -- Don't recompute, use existing base
+                  else schemaEffectiveBase parentBase schema
       baseChanged = newBase /= parentBase
   in ctx
       { contextBaseURI = newBase
@@ -246,33 +260,33 @@ validateAgainstObject parentCtx ctx obj val =
       -- Pre-2019-09: $ref short-circuits, ignores sibling keywords
       case schemaRef obj of
         Just ref ->
-          let refText = showReference ref
-          in if Set.member refText (contextResolvingRefs ctx)
-            then ValidationSuccess mempty  -- Break the cycle
+          -- RECURSIVE REFERENCE FIX: Same depth-based cycle detection for pre-2019-09 $ref
+          if contextRecursionDepth ctx >= 100
+            then ValidationSuccess mempty  -- Break recursion at depth limit
             else
-              let ctxWithRef = ctx { contextResolvingRefs = Set.insert refText (contextResolvingRefs ctx) }
+              let ctxWithDepth = ctx { contextRecursionDepth = contextRecursionDepth ctx + 1 }
               in case resolveReference ref refCtx of
                 Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
-                          let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
+                          let baseChanged = contextBaseURI ctxWithDepth /= Just baseDoc
                               -- When base URI changes (remote ref), use the root schema for refs
                               -- This is either the base schema (for fragments) or resolved schema
                               rootValue =
                                 if baseChanged
                                   then maybeRootForRefs `mplus` Just resolvedSchema
-                                  else case contextRootSchema ctxWithRef of
+                                  else case contextRootSchema ctxWithDepth of
                                          Just existing -> Just existing
                                          Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
-                          in ctxWithRef { contextBaseURI = Just baseDoc
-                                        , contextRootSchema = rootValue
-                                        -- Preserve dynamic scope when following $ref
-                                        , contextDynamicScope = contextDynamicScope ctxWithRef
-                                        }
-                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef
-                                              -- Preserve dynamic scope when following $ref
-                                              , contextDynamicScope = contextDynamicScope ctxWithRef
-                                              }
+                          in ctxWithDepth { contextBaseURI = Just baseDoc
+                                          , contextRootSchema = rootValue
+                                          -- Preserve dynamic scope when following $ref
+                                          , contextDynamicScope = contextDynamicScope ctxWithDepth
+                                          }
+                        Nothing -> ctxWithDepth { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithDepth
+                                                -- Preserve dynamic scope when following $ref
+                                                , contextDynamicScope = contextDynamicScope ctxWithDepth
+                                                }
                   in validateValueWithContext ctxForRef resolvedSchema val
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
@@ -296,33 +310,39 @@ validateAgainstObject parentCtx ctx obj val =
     validateRef parentCtx' ctx' obj' val' =
       case schemaRef obj' of
         Just ref ->
-          let refText = showReference ref
-          in if Set.member refText (contextResolvingRefs ctx')
-            then ValidationSuccess mempty  -- Break the cycle
+          -- RECURSIVE REFERENCE FIX: Check recursion depth limit (prevent infinite recursion)
+          -- Previously used Set-based cycle detection which was too aggressive and broke valid
+          -- recursive schemas like: tree → node → tree → node → ...
+          --
+          -- Now using depth-based approach (limit: 100) which allows recursive validation
+          -- of nested data structures while still preventing truly infinite recursion.
+          -- See detailed design note in Types.hs for ValidationContext.contextRecursionDepth
+          if contextRecursionDepth ctx' >= 100
+            then ValidationSuccess mempty  -- Break recursion at depth limit
             else
-              let ctxWithRef = ctx' { contextResolvingRefs = Set.insert refText (contextResolvingRefs ctx') }
+              let ctxWithDepth = ctx' { contextRecursionDepth = contextRecursionDepth ctx' + 1 }
               in case resolveReference ref refCtx of
                 Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
-                          let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
+                          let baseChanged = contextBaseURI ctxWithDepth /= Just baseDoc
                               -- When base URI changes (remote ref), use the root schema for refs
                               -- This is either the base schema (for fragments) or resolved schema
                               rootValue =
                                 if baseChanged
                                   then maybeRootForRefs `mplus` Just resolvedSchema
-                                  else case contextRootSchema ctxWithRef of
+                                  else case contextRootSchema ctxWithDepth of
                                          Just existing -> Just existing
                                          Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
-                          in ctxWithRef { contextBaseURI = Just baseDoc
-                                        , contextRootSchema = rootValue
-                                        -- Preserve dynamic scope when following $ref
-                                        , contextDynamicScope = contextDynamicScope ctxWithRef
-                                        }
-                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef
-                                              -- Preserve dynamic scope when following $ref
-                                              , contextDynamicScope = contextDynamicScope ctxWithRef
-                                              }
+                          in ctxWithDepth { contextBaseURI = Just baseDoc
+                                          , contextRootSchema = rootValue
+                                          -- Preserve dynamic scope when following $ref
+                                          , contextDynamicScope = contextDynamicScope ctxWithDepth
+                                          }
+                        Nothing -> ctxWithDepth { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithDepth
+                                                -- Preserve dynamic scope when following $ref
+                                                , contextDynamicScope = contextDynamicScope ctxWithDepth
+                                                }
                   in validateValueWithContext ctxForRef resolvedSchema val'
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
@@ -333,42 +353,42 @@ validateAgainstObject parentCtx ctx obj val =
           -- No $ref, check for $dynamicRef (2020-12+)
           case schemaDynamicRef obj' of
             Just dynRef ->
-              let dynRefText = showReference dynRef
-              in if Set.member dynRefText (contextResolvingRefs ctx')
-                then ValidationSuccess mempty  -- Break the cycle
+              -- RECURSIVE REFERENCE FIX: Same depth-based cycle detection for $dynamicRef
+              if contextRecursionDepth ctx' >= 100
+                then ValidationSuccess mempty  -- Break recursion at depth limit
                 else
-                  let ctxWithRef = ctx' { contextResolvingRefs = Set.insert dynRefText (contextResolvingRefs ctx') }
-                  in case resolveDynamicRef dynRef ctxWithRef of
+                  let ctxWithDepth = ctx' { contextRecursionDepth = contextRecursionDepth ctx' + 1 }
+                  in case resolveDynamicRef dynRef ctxWithDepth of
                     Just resolvedSchema ->
-                      validateValueWithContext ctxWithRef resolvedSchema val'
+                      validateValueWithContext ctxWithDepth resolvedSchema val'
                     Nothing ->
                       -- Fallback: treat as regular $ref (resolve statically)
                       case resolveReference dynRef refCtx of
                         Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
                           let ctxForRef = case maybeBase of
                                 Just baseDoc ->
-                                  let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
+                                  let baseChanged = contextBaseURI ctxWithDepth /= Just baseDoc
                                       -- When base URI changes (remote ref), use the root schema for refs
                                       rootValue =
                                         if baseChanged
                                           then maybeRootForRefs `mplus` Just resolvedSchema
-                                          else case contextRootSchema ctxWithRef of
+                                          else case contextRootSchema ctxWithDepth of
                                                  Just existing -> Just existing
                                                  Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
                                       -- For remote refs with relative $id, keep parent base to avoid
                                       -- double-applying the $id during applySchemaContext
                                       baseToSet =
                                         if baseChanged && schemaId resolvedSchema /= Nothing
-                                          then contextBaseURI ctxWithRef  -- Keep parent base
+                                          then contextBaseURI ctxWithDepth  -- Keep parent base
                                           else Just baseDoc
-                                  in ctxWithRef { contextBaseURI = baseToSet
-                                                , contextRootSchema = rootValue
-                                                -- Preserve dynamic scope when following $dynamicRef fallback
-                                                , contextDynamicScope = contextDynamicScope ctxWithRef
-                                                }
-                                Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef
-                                                      -- Preserve dynamic scope when following $dynamicRef fallback
-                                                      , contextDynamicScope = contextDynamicScope ctxWithRef
+                                  in ctxWithDepth { contextBaseURI = baseToSet
+                                                  , contextRootSchema = rootValue
+                                                  -- Preserve dynamic scope when following $dynamicRef fallback
+                                                  , contextDynamicScope = contextDynamicScope ctxWithDepth
+                                                  }
+                                Nothing -> ctxWithDepth { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithDepth
+                                                        -- Preserve dynamic scope when following $dynamicRef fallback
+                                                        , contextDynamicScope = contextDynamicScope ctxWithDepth
                                                       }
                           in validateValueWithContext ctxForRef resolvedSchema val'
                         Nothing ->
