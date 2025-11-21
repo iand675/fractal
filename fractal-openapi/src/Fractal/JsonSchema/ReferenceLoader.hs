@@ -30,7 +30,7 @@ module Fractal.JsonSchema.ReferenceLoader
   ) where
 
 import Fractal.JsonSchema.Types
-import Fractal.JsonSchema.Parser (parseSchema, parseSchemaWithVersion, ParseError(parseErrorMessage))
+import Fractal.JsonSchema.Parser (parseSchema, parseSchemaWithVersion, parseSubschema, ParseError(parseErrorMessage))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
@@ -106,7 +106,7 @@ fileLoaderWithVersion version uri
       case result of
         Left (exc :: IOError) -> pure $ Left $ "File error loading " <> uri <> ": " <> T.pack (show exc)
         Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
-        Right (Right value) -> case parseSchemaWithVersion version value of
+        Right (Right value) -> case parseSubschema version value of
           Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
           Right schema -> pure $ Right schema
   | T.isPrefixOf "/" uri || T.isPrefixOf "./" uri || T.isPrefixOf "../" uri = do
@@ -115,7 +115,7 @@ fileLoaderWithVersion version uri
       case result of
         Left (exc :: IOError) -> pure $ Left $ "File error: " <> T.pack (show exc)
         Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
-        Right (Right value) -> case parseSchemaWithVersion version value of
+        Right (Right value) -> case parseSubschema version value of
           Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
           Right schema -> pure $ Right schema
   | not (T.any (== ':') uri) = do
@@ -124,7 +124,7 @@ fileLoaderWithVersion version uri
       case result of
         Left (exc :: IOError) -> pure $ Left $ "File error: " <> T.pack (show exc)
         Right (Left err) -> pure $ Left $ "JSON parse error: " <> T.pack err
-        Right (Right value) -> case parseSchemaWithVersion version value of
+        Right (Right value) -> case parseSubschema version value of
           Left parseErr -> pure $ Left $ "Schema parse error: " <> parseErrorMessage parseErr
           Right schema -> pure $ Right schema
   | otherwise = pure $ Left $ "Not a file URI: " <> uri

@@ -48,13 +48,26 @@ embeddedMetaschemas = Map.fromList $ concatMap parseMetaschema embeddedFiles
               in [(uri, schema)]
 
     -- Convert file path to JSON Schema URI
-    -- Path format: 2020-12/meta-core.json or 2019-09/meta-applicator.json
+    -- Path format: 2020-12/meta-core.json or 2019-09/schema.json
     uriFromPath :: FilePath -> Text
     uriFromPath path =
       let parts = splitPath path
           fileName = takeFileName path
           baseSchemaName = dropExtension fileName
       in case parts of
+           -- Main schema files (2019-09 and later use https)
+           [version, file] | version == "2020-12" && file == "schema.json" ->
+             "https://json-schema.org/draft/2020-12/schema"
+           [version, file] | version == "2019-09" && file == "schema.json" ->
+             "https://json-schema.org/draft/2019-09/schema"
+           -- Older drafts use http (not https) and different path format
+           [version, file] | version == "draft-07" && file == "schema.json" ->
+             "http://json-schema.org/draft-07/schema"
+           [version, file] | version == "draft-06" && file == "schema.json" ->
+             "http://json-schema.org/draft-06/schema"
+           [version, file] | version == "draft-04" && file == "schema.json" ->
+             "http://json-schema.org/draft-04/schema"
+           -- Vocabulary metaschemas with "meta-" prefix (2019-09+)
            [version, _] | version == "2020-12" && "meta-" `isPrefix` baseSchemaName ->
              "https://json-schema.org/draft/2020-12/meta/" <> T.pack (drop 5 baseSchemaName)
            [version, _] | version == "2019-09" && "meta-" `isPrefix` baseSchemaName ->

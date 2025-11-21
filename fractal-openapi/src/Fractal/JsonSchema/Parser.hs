@@ -7,9 +7,10 @@ module Fractal.JsonSchema.Parser
   ( -- * Parsing Functions
     parseSchema
   , parseSchemaWithVersion
+  , parseSubschema
   , parseSchemaStrict
   , parseSchemaFromFile
-  
+
     -- * Error Types
   , ParseError(..)
   ) where
@@ -106,6 +107,7 @@ parseSchemaWithVersion version val = case val of
           , "minItems", "maxItems", "uniqueItems"
           , "maxContains", "minContains", "unevaluatedItems"
           , "minLength", "maxLength", "pattern", "format"
+          , "contentEncoding", "contentMediaType"
           , "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"
           , "multipleOf"
           ]
@@ -298,7 +300,15 @@ parseValidationKeywords version obj = do
         String t -> Just (Regex t)
         _ -> Nothing
   let format' = KeyMap.lookup "format" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
-  
+
+  -- Content validation (draft-07+)
+  let contentEncoding' = if version >= Draft07
+                         then KeyMap.lookup "contentEncoding" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
+                         else Nothing
+  let contentMediaType' = if version >= Draft07
+                          then KeyMap.lookup "contentMediaType" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
+                          else Nothing
+
   -- Array validation
   let items' = parseArrayItems version obj
   let prefixItems' = if version >= Draft202012
@@ -354,6 +364,8 @@ parseValidationKeywords version obj = do
     , validationMinLength = minLength
     , validationPattern = pattern'
     , validationFormat = format'
+    , validationContentEncoding = contentEncoding'
+    , validationContentMediaType = contentMediaType'
     , validationItems = items'
     , validationPrefixItems = prefixItems'
     , validationContains = contains'

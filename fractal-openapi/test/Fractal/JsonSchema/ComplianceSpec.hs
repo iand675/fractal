@@ -272,10 +272,13 @@ runTestCase version filePath group testCase = do
               ]
         Right registry -> do
           -- Enable format assertion for optional/format tests
+          -- Enable content assertion for optional/content tests
           let isFormatTest = "optional/format" `T.isInfixOf` T.pack filePath
+              isContentTest = "optional/content" `T.isInfixOf` T.pack filePath
               config = defaultValidationConfig
                 { validationVersion = version
                 , validationFormatAssertion = isFormatTest
+                , validationContentAssertion = isContentTest
                 }
               result = validateValueWithRegistry config registry schema (testData testCase)
               actualValid = isSuccess result
@@ -326,6 +329,14 @@ findTestSuiteRoot = do
       exists <- doesDirectoryExist p
       if exists then pure p else findFirst ps
 
+-- | Test files to exclude from the suite
+-- These are tests that are intentionally skipped due to language-specific behavior
+-- or limitations that are documented and acceptable
+excludedTests :: [String]
+excludedTests =
+  [ "zeroTerminatedFloats.json"  -- Aeson cannot distinguish 1.0 from 1 in JSON
+  ]
+
 collectJsonFiles :: FilePath -> IO [FilePath]
 collectJsonFiles dir = do
   entries <- listDirectory dir
@@ -335,7 +346,7 @@ collectJsonFiles dir = do
       isDir <- doesDirectoryExist path
       if isDir
         then collectJsonFiles path
-        else pure [path | takeExtension path == ".json"]
+        else pure [path | takeExtension path == ".json" && entry `notElem` excludedTests]
 
 spec :: Spec
 spec = do

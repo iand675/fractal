@@ -185,26 +185,43 @@ getGroupNames ptr = do
 -- The conversion overhead is unavoidable given libregexp's UTF-16 requirement
 -- and Text 2.0's UTF-8 internals.
 execRegex :: RegexPtr -> BS.ByteString -> Int -> IO (Maybe (Int, Int, [(Int, Int)]))
-execRegex ptr subject startIdx = do
-  captureCount <- getCaptureCount ptr
-  -- captureCount already includes the full match, so no need to add 1
-  let captureArraySize = captureCount * 2
+execRegex ptr subject startIdx
+  -- Special case: empty string matching
+  -- The C wrapper's UTF-8 to UTF-16 conversion has issues with empty strings
+  -- For empty strings, just check if pattern matches empty input
+  | BS.null subject && startIdx == 0 = do
+      captureCount <- getCaptureCount ptr
+      let captureArraySize = captureCount * 2
+      -- Use a valid empty C string (not nullPtr, but pointer to "\0")
+      BSU.unsafeUseAsCStringLen (BS.pack []) $ \(emptyStr, _) -> do
+        allocaArray captureArraySize $ \captureArray -> do
+          result <- c_exec ptr (castPtr emptyStr) 0 0 captureArray
+          if result == 1
+            then do
+              -- Match found - extract captures
+              captures <- extractCaptures captureArray captureCount (castPtr emptyStr)
+              case captures of
+                ((start, end):rest) -> return $ Just (start, end, rest)
+                [] -> return Nothing
+            else return Nothing
 
-  -- For exec, we can use unsafeUseAsCStringLen since libregexp uses length parameter
-  -- However, we pass the bytestring which may or may not be null-terminated
-  BSU.unsafeUseAsCStringLen subject $ \(subjectStr, subjectLen) -> do
-    allocaArray captureArraySize $ \captureArray -> do
-      result <- c_exec ptr (castPtr subjectStr) (fromIntegral startIdx)
-                      (fromIntegral subjectLen) captureArray
+  -- Normal case: non-empty string
+  | otherwise = do
+      captureCount <- getCaptureCount ptr
+      let captureArraySize = captureCount * 2
+      BSU.unsafeUseAsCStringLen subject $ \(subjectStr, subjectLen) -> do
+        allocaArray captureArraySize $ \captureArray -> do
+          result <- c_exec ptr (castPtr subjectStr) (fromIntegral startIdx)
+                          (fromIntegral subjectLen) captureArray
 
-      if result == 1
-        then do
-          -- Match found, extract captures (including full match at index 0)
-          captures <- extractCaptures captureArray captureCount (castPtr subjectStr)
-          case captures of
-            ((start, end):rest) -> return $ Just (start, end, rest)
-            [] -> return Nothing
-        else return Nothing
+          if result == 1
+            then do
+              -- Match found, extract captures (including full match at index 0)
+              captures <- extractCaptures captureArray captureCount (castPtr subjectStr)
+              case captures of
+                ((start, end):rest) -> return $ Just (start, end, rest)
+                [] -> return Nothing
+            else return Nothing
 
 -- | Extract capture group positions from the C array
 extractCaptures :: Ptr (Ptr Word8) -> Int -> Ptr Word8 -> IO [(Int, Int)]

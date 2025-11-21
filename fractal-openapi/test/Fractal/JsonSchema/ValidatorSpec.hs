@@ -17,6 +17,7 @@ spec = do
     it "validates against boolean schema true" $ do
       let schema = Schema
             { schemaVersion = Just Draft202012
+            , schemaMetaschemaURI = Nothing
             , schemaId = Nothing
             , schemaCore = BooleanSchema True
             , schemaVocabulary = Nothing
@@ -28,6 +29,7 @@ spec = do
     it "fails against boolean schema false" $ do
       let schema = Schema
             { schemaVersion = Just Draft202012
+            , schemaMetaschemaURI = Nothing
             , schemaId = Nothing
             , schemaCore = BooleanSchema False
             , schemaVocabulary = Nothing
@@ -41,6 +43,7 @@ spec = do
       -- Schema 1: just type constraint
       let schema1 = Schema
             { schemaVersion = Just Draft202012
+            , schemaMetaschemaURI = Nothing
             , schemaId = Nothing
             , schemaCore = ObjectSchema $ SchemaObject
                 { schemaType = Just (One NumberType)
@@ -70,6 +73,7 @@ spec = do
       -- Schema 2: type + minimum constraint (more restrictive)
       let schema2 = Schema
             { schemaVersion = Just Draft202012
+            , schemaMetaschemaURI = Nothing
             , schemaId = Nothing
             , schemaCore = ObjectSchema $ SchemaObject
                 { schemaType = Just (One NumberType)

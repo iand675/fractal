@@ -30,6 +30,9 @@ import qualified Data.Aeson.Key as Key
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Base64 as Base64
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -68,6 +71,7 @@ defaultValidationConfig :: ValidationConfig
 defaultValidationConfig = ValidationConfig
   { validationVersion = Draft202012
   , validationFormatAssertion = False  -- Format as annotation
+  , validationContentAssertion = False  -- Content as annotation
   , validationShortCircuit = False     -- Collect all errors
   , validationCollectAnnotations = False
   , validationCustomValidators = Map.empty
@@ -78,6 +82,7 @@ defaultValidationConfig = ValidationConfig
 strictValidationConfig :: ValidationConfig
 strictValidationConfig = defaultValidationConfig
   { validationFormatAssertion = True
+  , validationContentAssertion = True
   , validationShortCircuit = False
   }
 
@@ -349,7 +354,9 @@ validateAgainstObject parentCtx ctx schema obj val =
                                                 -- Preserve dynamic scope when following $ref
                                                 , contextDynamicScope = contextDynamicScope ctxWithDepth
                                                 }
-                  in validateValueWithContext ctxForRef resolvedSchema val
+                      -- Update context if crossing draft boundaries
+                      ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
+                  in validateValueWithContext ctxForRefWithVersion resolvedSchema val
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
                     ValidationError "$ref" emptyPointer emptyPointer
@@ -405,7 +412,9 @@ validateAgainstObject parentCtx ctx schema obj val =
                                                 -- Preserve dynamic scope when following $ref
                                                 , contextDynamicScope = contextDynamicScope ctxWithDepth
                                                 }
-                  in validateValueWithContext ctxForRef resolvedSchema val'
+                      -- Update context if crossing draft boundaries
+                      ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
+                  in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
                     ValidationError "$ref" emptyPointer emptyPointer
@@ -452,7 +461,9 @@ validateAgainstObject parentCtx ctx schema obj val =
                                                         -- Preserve dynamic scope when following $dynamicRef fallback
                                                         , contextDynamicScope = contextDynamicScope ctxWithDepth
                                                       }
-                          in validateValueWithContext ctxForRef resolvedSchema val'
+                              -- Update context if crossing draft boundaries
+                              ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
+                          in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                         Nothing ->
                           ValidationFailure $ ValidationErrors $ pure $
                             ValidationError "$dynamicRef" emptyPointer emptyPointer
@@ -494,7 +505,9 @@ validateAgainstObject parentCtx ctx schema obj val =
                                     Nothing -> ctxWithDepth { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithDepth
                                                             , contextDynamicScope = contextDynamicScope ctxWithDepth
                                                             }
-                              in validateValueWithContext ctxForRef resolvedSchema val'
+                                  -- Update context if crossing draft boundaries
+                                  ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
+                              in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                             Nothing ->
                               ValidationFailure $ ValidationErrors $ pure $
                                 ValidationError "$recursiveRef" emptyPointer emptyPointer
@@ -528,7 +541,7 @@ validateAgainstObject parentCtx ctx schema obj val =
                   , validateEnumConstraint obj' val'
                   , validateConstConstraint obj' val'
                   , validateNumericConstraints obj' val'
-                  , validateStringConstraints obj' val'
+                  , validateStringConstraints ctx'' obj' val'
                   ]
              else [])
             ++
@@ -765,9 +778,9 @@ validateNumericConstraints obj (Number n) =
         _ -> ValidationSuccess mempty
 validateNumericConstraints _ _ = ValidationSuccess mempty
 
--- | Validate string constraints  
-validateStringConstraints :: SchemaObject -> Value -> ValidationResult
-validateStringConstraints obj (String txt) =
+-- | Validate string constraints
+validateStringConstraints :: ValidationContext -> SchemaObject -> Value -> ValidationResult
+validateStringConstraints ctx obj (String txt) =
   let validation = schemaValidation obj
       textLength = T.length txt
   in combineResults
@@ -782,6 +795,7 @@ validateStringConstraints obj (String txt) =
           else validationFailure "minLength" $ "String length below minLength"
       ) (validationMinLength validation)
     , validatePattern txt validation
+    , validateContent ctx txt validation
     ]
   where
     combineResults results =
@@ -789,7 +803,7 @@ validateStringConstraints obj (String txt) =
       in case failures of
         [] -> ValidationSuccess mempty
         (e:es) -> ValidationFailure $ foldl (<>) e es
-    
+
     validatePattern text schemaValidation = case validationPattern schemaValidation of
       Nothing -> ValidationSuccess mempty
       Just (Regex pattern) ->
@@ -800,7 +814,50 @@ validateStringConstraints obj (String txt) =
               then ValidationSuccess mempty
               else validationFailure "pattern" $ "String does not match pattern: " <> pattern
           Left err -> validationFailure "pattern" $ "Invalid regex pattern: " <> err
-validateStringConstraints _ _ = ValidationSuccess mempty
+
+    validateContent context text schemaValidation =
+      let encoding = validationContentEncoding schemaValidation
+          mediaType = validationContentMediaType schemaValidation
+          config = contextConfig context
+          shouldAssert = validationContentAssertion config
+      in if shouldAssert
+         then case (encoding, mediaType) of
+           (Nothing, Nothing) -> ValidationSuccess mempty
+           (Just enc, Nothing) -> validateEncoding enc text
+           (Nothing, Just mt) -> validateMediaType mt text
+           (Just enc, Just mt) ->
+             -- First validate encoding, then decode and validate media type
+             case validateEncoding enc text of
+               ValidationFailure err -> ValidationFailure err
+               ValidationSuccess _ ->
+                 case decodeContent enc text of
+                   Left err -> validationFailure "contentEncoding" err
+                   Right decoded -> validateMediaType mt decoded
+         else ValidationSuccess mempty  -- Content as annotation only
+
+    validateEncoding "base64" text =
+      case Base64.decode (TE.encodeUtf8 text) of
+        Left _ -> validationFailure "contentEncoding" "Invalid base64 encoding"
+        Right _ -> ValidationSuccess mempty
+    validateEncoding _ _ =
+      -- Unknown encoding - just pass (encodings are optional to support)
+      ValidationSuccess mempty
+
+    decodeContent "base64" text =
+      case Base64.decode (TE.encodeUtf8 text) of
+        Left _ -> Left "Invalid base64 encoding"
+        Right bytes -> Right (TE.decodeUtf8 bytes)
+    decodeContent _ text = Right text  -- Unknown encoding, pass through
+
+    validateMediaType "application/json" content =
+      case Aeson.eitherDecode (BL.fromStrict (TE.encodeUtf8 content)) of
+        Left _ -> validationFailure "contentMediaType" "Invalid JSON document"
+        Right (_ :: Value) -> ValidationSuccess mempty
+    validateMediaType _ _ =
+      -- Unknown media type - just pass (media types are optional to support)
+      ValidationSuccess mempty
+
+validateStringConstraints _ _ _ = ValidationSuccess mempty
 
 -- | Validate format constraints (respects config flag)
 validateFormatConstraints :: ValidationContext -> SchemaObject -> Value -> ValidationResult
@@ -846,8 +903,11 @@ validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
 
     validateItems ctx' schemaObj array =
       -- In 2020-12+, prefixItems takes precedence for tuple validation
-      case validationPrefixItems (schemaValidation schemaObj) of
-        Just prefixSchemas ->
+      -- But only apply prefixItems if we're validating against 2020-12 or later
+      let currentVersion = validationVersion (contextConfig ctx')
+          isPrefixItemsSupported = currentVersion >= Draft202012
+      in case validationPrefixItems (schemaValidation schemaObj) of
+        Just prefixSchemas | isPrefixItemsSupported ->
           -- 2020-12+ mode: prefixItems validates positional items
           let prefixResults = zipWith (validateValueWithContext ctx') (NE.toList prefixSchemas) (toList array)
               prefixFailures = [errs | ValidationFailure errs <- prefixResults]
@@ -1017,8 +1077,11 @@ validateArrayConstraints ctx obj (Array arr) =
     
     validateItems ctx' schemaObj array =
       -- In 2020-12+, prefixItems takes precedence for tuple validation
-      case validationPrefixItems (schemaValidation schemaObj) of
-        Just prefixSchemas ->
+      -- But only apply prefixItems if we're validating against 2020-12 or later
+      let currentVersion = validationVersion (contextConfig ctx')
+          isPrefixItemsSupported = currentVersion >= Draft202012
+      in case validationPrefixItems (schemaValidation schemaObj) of
+        Just prefixSchemas | isPrefixItemsSupported ->
           -- 2020-12+ mode: prefixItems validates positional items
           let prefixResults = zipWith (validateValueWithContext ctx') (NE.toList prefixSchemas) (toList array)
               prefixFailures = [errs | ValidationFailure errs <- prefixResults]
@@ -1158,7 +1221,7 @@ validateObjectPropertyConstraints ctx obj objMap =
         , validateProperties ctx obj objMap
         , validateAdditionalProperties ctx obj objMap
         , validateDependencies ctx validation objMap
-        , validateDependentRequired validation objMap
+        , validateDependentRequired ctx validation objMap
         , validateDependentSchemas ctx validation objMap
         ]
   in combineResults propertyValidations
@@ -1393,30 +1456,34 @@ extractEvaluatedItems (ValidationAnnotations annMap) =
 
 -- | Validate dependentRequired (2019-09+)
 -- If a property exists, then the properties in the value set must also exist
-validateDependentRequired :: SchemaValidation -> KeyMap.KeyMap Value -> ValidationResult
-validateDependentRequired validation objMap = case validationDependentRequired validation of
-  Nothing -> ValidationSuccess mempty
-  Just depReqMap ->
-    let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
-        results = 
-          [ case KeyMap.lookup (Key.fromText propName) objMap of
-              Nothing -> ValidationSuccess mempty  -- Property not present, rule doesn't apply
-              Just _ ->
-                -- Property is present, check if all required dependencies are present
-                let missingDeps = Set.difference requiredDeps presentProps
-                in if Set.null missingDeps
-                  then ValidationSuccess mempty
-                  else ValidationFailure $ ValidationErrors $ pure $
-                    ValidationError "dependentRequired" emptyPointer emptyPointer
-                      ("Property '" <> propName <> "' requires these properties: " <> 
-                       T.intercalate ", " (Set.toList missingDeps))
-                      Nothing
-          | (propName, requiredDeps) <- Map.toList depReqMap
-          ]
-        failures = [errs | ValidationFailure errs <- results]
-    in case failures of
-      [] -> ValidationSuccess mempty
-      (e:es) -> ValidationFailure $ foldl (<>) e es
+validateDependentRequired :: ValidationContext -> SchemaValidation -> KeyMap.KeyMap Value -> ValidationResult
+validateDependentRequired ctx validation objMap =
+  let currentVersion = validationVersion (contextConfig ctx)
+      isDependentRequiredSupported = currentVersion >= Draft201909
+  in case validationDependentRequired validation of
+    Nothing -> ValidationSuccess mempty
+    Just depReqMap | not isDependentRequiredSupported -> ValidationSuccess mempty  -- Ignore if not supported
+    Just depReqMap ->
+      let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+          results =
+            [ case KeyMap.lookup (Key.fromText propName) objMap of
+                Nothing -> ValidationSuccess mempty  -- Property not present, rule doesn't apply
+                Just _ ->
+                  -- Property is present, check if all required dependencies are present
+                  let missingDeps = Set.difference requiredDeps presentProps
+                  in if Set.null missingDeps
+                    then ValidationSuccess mempty
+                    else ValidationFailure $ ValidationErrors $ pure $
+                      ValidationError "dependentRequired" emptyPointer emptyPointer
+                        ("Property '" <> propName <> "' requires these properties: " <>
+                         T.intercalate ", " (Set.toList missingDeps))
+                        Nothing
+            | (propName, requiredDeps) <- Map.toList depReqMap
+            ]
+          failures = [errs | ValidationFailure errs <- results]
+      in case failures of
+        [] -> ValidationSuccess mempty
+        (e:es) -> ValidationFailure $ foldl (<>) e es
 
 -- | Validate dependentSchemas (2019-09+)
 -- If a property exists, then the instance must validate against the dependent schema
@@ -1471,6 +1538,21 @@ validateDependencies ctx validation objMap = case validationDependencies validat
       [] -> ValidationSuccess $ mconcat annotations
       (e:es) -> ValidationFailure $ foldl (<>) e es
 
+-- | Update validation context when crossing draft boundaries
+-- When a schema references another schema with a different $schema version,
+-- we need to validate the referenced schema using its own draft rules
+updateContextForCrossDraftRef :: ValidationContext -> Schema -> ValidationContext
+updateContextForCrossDraftRef ctx resolvedSchema =
+  case schemaVersion resolvedSchema of
+    Just refVersion ->
+      let currentVersion = validationVersion (contextConfig ctx)
+      in if refVersion /= currentVersion
+         then -- Switch to the referenced schema's draft version
+              let newConfig = (contextConfig ctx) { validationVersion = refVersion }
+              in ctx { contextConfig = newConfig }
+         else ctx
+    Nothing -> ctx  -- No $schema specified, use current context's version
+
 -- | Resolve a $ref reference using the schema registry and base URI
 -- Supports:
 -- - Root reference: #
@@ -1496,7 +1578,11 @@ resolveReference (Reference refText) ctx
       in case rootSchema of
            Nothing -> Nothing
            Just root -> resolvePointerInSchemaWithBase pointer root (contextBaseURI ctx) >>= \(schema, effectiveBase) ->
-             Just (schema, effectiveBase, rootSchema)
+             -- If the resolved schema has $id, it becomes the new root for subsequent references
+             let newRoot = case schemaId schema of
+                             Just _ -> Just schema  -- Schema has $id, it's a new schema resource
+                             Nothing -> rootSchema  -- No $id, keep the old root
+             in Just (schema, effectiveBase, newRoot)
   | T.isPrefixOf "#" refText =
       -- Anchor reference (#foo) or JSON Pointer in compact form
       let anchorName = T.drop 1 refText
@@ -2115,8 +2201,23 @@ validateFormatValue URITemplate text
 validateFormatValue _ _ = ValidationSuccess mempty  -- Other formats: annotation only or not implemented
 
 -- Format validators using proper libraries
+-- Validates email addresses per RFC 5321 and RFC 5322
 isValidEmail :: Text -> Bool
-isValidEmail text = Email.isValid (TE.encodeUtf8 text)
+isValidEmail text =
+  -- First check with email-validate library
+  if not (Email.isValid (TE.encodeUtf8 text))
+    then False
+    else
+      -- Additional validation for IP address literals in square brackets
+      -- email-validate might accept invalid IP addresses like [127.0.0.300]
+      case T.splitOn "@" text of
+        [_local, domain] | T.isPrefixOf "[" domain && T.isSuffixOf "]" domain ->
+          -- Domain is an IP address literal [xxx.xxx.xxx.xxx] or [IPv6:...]
+          let ipLiteral = T.drop 1 $ T.dropEnd 1 domain
+          in if T.isPrefixOf "IPv6:" ipLiteral || T.isPrefixOf "ipv6:" ipLiteral
+             then isValidIPv6 (T.drop 5 ipLiteral)  -- IPv6 literal
+             else isValidIPv4 ipLiteral  -- IPv4 literal
+        _ -> True  -- Not an IP literal, email-validate check is sufficient
 
 -- IDN Email validator - validates internationalized email addresses
 -- Per RFC 6531, the domain part must be a valid IDN hostname
@@ -2515,11 +2616,65 @@ isValidRelativeJSONPointer text =
     _ -> False
 
 -- ECMA-262 Regex validator
+-- Validates that the pattern is a valid ECMAScript regex
 isValidRegex :: Text -> Bool
 isValidRegex text =
-  case compileRegex text of
-    Right _ -> True
-    Left _ -> False
+  -- First check for invalid escape sequences (like \a)
+  -- These are not valid in ECMA-262 but might be accepted by lenient parsers
+  if hasInvalidEscapes text
+    then False
+    else case compileRegex text of
+      Right _ -> True
+      Left _ -> False
+  where
+    -- Check for invalid single-character escapes
+    -- Valid escapes: \b \f \n \r \t \v (control chars)
+    --               \d \D \w \W \s \S (char classes)
+    --               \c[A-Za-z] (control escapes)
+    --               \x[0-9A-Fa-f]{2} (hex escapes)
+    --               \u[0-9A-Fa-f]{4} (unicode escapes)
+    --               \u{...} (unicode code point escapes)
+    --               \p{...} \P{...} (unicode property escapes)
+    --               \0-9 (backreferences and octal)
+    --               Any special regex char: \. \* \+ \? \^ \$ \| \\ \/ \[ \] \{ \} \( \)
+    -- Invalid: \a \e \g \h \i \j \k \l \m \o \q \y \z and uppercase variants
+    hasInvalidEscapes :: Text -> Bool
+    hasInvalidEscapes t = checkEscapes (T.unpack t)
+      where
+        checkEscapes [] = False
+        checkEscapes ('\\':c:rest)
+          -- Valid single-character escapes
+          | c `elem` ['b', 'f', 'n', 'r', 't', 'v', 'B'] = checkEscapes rest
+          -- Valid character class escapes
+          | c `elem` ['d', 'D', 'w', 'W', 's', 'S'] = checkEscapes rest
+          -- Control escape \cX (where X is A-Z or a-z)
+          | c == 'c' = case rest of
+              (x:xs) | x >= 'A' && x <= 'Z' || x >= 'a' && x <= 'z' -> checkEscapes xs
+              _ -> True  -- Invalid: \c must be followed by letter
+          -- Hex escape \xHH
+          | c == 'x' = case rest of
+              (h1:h2:xs) | isHexDigit h1 && isHexDigit h2 -> checkEscapes xs
+              _ -> checkEscapes rest  -- Let compiler handle invalid \x
+          -- Unicode escapes \uHHHH or \u{H+}
+          | c == 'u' = case rest of
+              ('{':xs) -> checkEscapes (dropWhile (/= '}') xs)  -- \u{...}
+              (h1:h2:h3:h4:xs) | all isHexDigit [h1,h2,h3,h4] -> checkEscapes xs
+              _ -> checkEscapes rest  -- Let compiler handle invalid \u
+          -- Unicode property escapes \p{...} \P{...}
+          | c `elem` ['p', 'P'] = case rest of
+              ('{':xs) -> checkEscapes (dropWhile (/= '}') xs)
+              _ -> True  -- Invalid: \p must be followed by {
+          -- Octal/backreferences \0-9
+          | c >= '0' && c <= '9' = checkEscapes rest
+          -- Special regex characters (always valid to escape)
+          | c `elem` ['.', '*', '+', '?', '^', '$', '|', '\\', '/', '[', ']', '{', '}', '(', ')', '-', ',', '=', '!', ':', '<', '>'] = checkEscapes rest
+          -- Invalid escapes (not in ECMA-262 spec)
+          | c `elem` ['a', 'e', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'o', 'q', 'y', 'z',
+                      'A', 'C', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'Q', 'R', 'T', 'U', 'V', 'X', 'Y', 'Z'] = True
+          | otherwise = checkEscapes rest
+        checkEscapes (_:rest) = checkEscapes rest
+
+        isHexDigit c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
 -- URI Template validator (RFC 6570)
 -- Uses uri-templater library (>= 1.0.0.1) for proper RFC 6570 compliance

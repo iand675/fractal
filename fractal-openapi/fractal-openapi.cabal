@@ -75,6 +75,7 @@ library
                     , aeson >= 2.0 && < 3
                     , text >= 2.0 && < 3
                     , bytestring >= 0.11 && < 1
+                    , base64-bytestring >= 1.2 && < 2
                     , containers >= 0.6 && < 1
                     , unordered-containers >= 0.2 && < 1
                     , vector >= 0.13 && < 1
@@ -132,6 +133,7 @@ test-suite fractal-openapi-test
                     , aeson >= 2.0 && < 3
                     , text >= 2.0 && < 3
                     , bytestring >= 0.11 && < 1
+                    , base64-bytestring >= 1.2 && < 2
                     , containers >= 0.6 && < 1
                     , yaml >= 0.11 && < 1
                     , filepath >= 1.4 && < 2

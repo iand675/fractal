@@ -347,6 +347,12 @@ data SchemaValidation = SchemaValidation
   , validationFormat :: Maybe Format
     -- ^ Semantic format (email, uri, date-time, etc.)
 
+  , validationContentEncoding :: Maybe Text
+    -- ^ Content encoding (e.g., "base64", "base64url") (draft-07+)
+
+  , validationContentMediaType :: Maybe Text
+    -- ^ Content media type (e.g., "application/json") (draft-07+)
+
     -- === Array Validation ===
   , validationItems :: Maybe ArrayItemsValidation
     -- ^ Items validation (version-dependent structure)
@@ -1059,7 +1065,10 @@ data ValidationConfig = ValidationConfig
   
   , validationFormatAssertion :: Bool
     -- ^ Treat format as assertion (True) or annotation (False)
-  
+
+  , validationContentAssertion :: Bool
+    -- ^ Treat contentEncoding/contentMediaType as assertion (True) or annotation (False)
+
   , validationShortCircuit :: Bool
     -- ^ Stop on first error (True) or collect all (False)
   
