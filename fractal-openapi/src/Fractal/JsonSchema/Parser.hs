@@ -218,7 +218,17 @@ parseSchemaObject version obj = do
   let dynamicAnchor' = if version >= Draft202012
                        then KeyMap.lookup "$dynamicAnchor" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
                        else Nothing
-  
+
+  -- Parse $recursiveRef (2019-09)
+  let recursiveRef' = if version == Draft201909
+                      then KeyMap.lookup "$recursiveRef" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
+                      else Nothing
+
+  -- Parse $recursiveAnchor (2019-09)
+  let recursiveAnchor' = if version == Draft201909
+                         then KeyMap.lookup "$recursiveAnchor" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
+                         else Nothing
+
   pure $ SchemaObject
     { schemaType = schemaType'
     , schemaEnum = schemaEnum'
@@ -227,6 +237,8 @@ parseSchemaObject version obj = do
     , schemaDynamicRef = dynamicRef'
     , schemaAnchor = KeyMap.lookup "$anchor" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
     , schemaDynamicAnchor = dynamicAnchor'
+    , schemaRecursiveRef = recursiveRef'
+    , schemaRecursiveAnchor = recursiveAnchor'
     , schemaAllOf = schemaAllOf'
     , schemaAnyOf = schemaAnyOf'
     , schemaOneOf = schemaOneOf'
