@@ -79,6 +79,7 @@ library
                     , hashable >= 1.4 && < 2
                     , yaml >= 0.11 && < 1
                     , uri-bytestring >= 0.3 && < 1
+                    , uri-templater >= 1.0.0 && < 2
                     , ecma262-regex
                     , idn
 

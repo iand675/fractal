@@ -17,6 +17,7 @@ extra-deps:
   - validation-selective-0.2.0.0@sha256:7f7d78b28f1bf2165b5d4da0aa98eb7e4a81f56b45ff1e2cbede08f02d8fa192,3917
   - thread-utils-context-0.3.0.4@sha256:e763da1c6cab3b6d378fb670ca74aa9bf03c9b61b6fcf7628c56363fb0e3e71e,1671
   - thread-utils-finalizers-0.1.1.0@sha256:24944b71d9f1d01695a5908b4a3b44838fab870883114a323336d537995e0a5b,1381
+  - uri-templater-1.0.0.1@sha256:ff55922e80518431513a198ab19fb47e28bfcdd4c2f882528331c98c7adfe407,2529
 
 # System dependencies
 # system-ghc: false

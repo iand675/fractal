@@ -32,6 +32,13 @@ packages:
       size: 400
   original:
     hackage: thread-utils-finalizers-0.1.1.0@sha256:24944b71d9f1d01695a5908b4a3b44838fab870883114a323336d537995e0a5b,1381
+- completed:
+    hackage: uri-templater-1.0.0.1@sha256:ff55922e80518431513a198ab19fb47e28bfcdd4c2f882528331c98c7adfe407,2529
+    pantry-tree:
+      sha256: 4cb905a72ac60ce027b7dad1ea430d137bb265790152245c19554b37242b819c
+      size: 782
+  original:
+    hackage: uri-templater-1.0.0.1@sha256:ff55922e80518431513a198ab19fb47e28bfcdd4c2f882528331c98c7adfe407,2529
 snapshots:
 - completed:
     sha256: 6c5aeace2ca5ecde793a9e0acfaa730ec8f384aa2f6183a2a252f5f9ec55d623
