@@ -191,16 +191,42 @@ validateAgainstObject parentCtx ctx obj val =
   -- In earlier drafts, $ref short-circuits (only validates against ref, ignores siblings)
   let version = validationVersion (contextConfig ctx)
       refIsApplicator = version >= Draft201909
+      -- Update context with dynamic scope BEFORE processing refs
+      -- Push schema resources (schemas with $id) onto the scope
+      ctxWithDynamicScope = case (schemaDynamicAnchor obj, contextBaseURI ctx) of
+        -- Push onto dynamic scope if schema has $dynamicAnchor OR if it's a schema resource (has $id)
+        (Just _, _) ->
+          -- Schema has $dynamicAnchor, push it
+          let schema' = Schema
+                { schemaVersion = Just (validationVersion $ contextConfig ctx)
+                , schemaId = contextBaseURI ctx
+                , schemaCore = ObjectSchema obj
+                , schemaVocabulary = Nothing
+                , schemaExtensions = Map.empty
+                }
+          in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
+        (Nothing, Just _) ->
+          -- Schema is a resource (has $id), push it for $dynamicRef resolution
+          let schema' = Schema
+                { schemaVersion = Just (validationVersion $ contextConfig ctx)
+                , schemaId = contextBaseURI ctx
+                , schemaCore = ObjectSchema obj
+                , schemaVocabulary = Nothing
+                , schemaExtensions = Map.empty
+                }
+          in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
+        _ -> ctx
   in if refIsApplicator
     then
       -- 2019-09+: $ref/$dynamicRef are applicators, combine with other keywords
       -- We need to pass ref annotations to content validation so unevaluatedProperties
       -- can see properties evaluated by the ref
-      let refResult = validateRef parentCtx ctx obj val
+      -- Use ctxWithDynamicScope so refs can see this schema in dynamic scope
+      let refResult = validateRef parentCtx ctxWithDynamicScope obj val
           refAnnotations = case refResult of
             ValidationSuccess anns -> anns
             ValidationFailure _ -> mempty
-          contentResult = validateObjectSchemaContentWithRefAnnotations ctx obj val refAnnotations
+          contentResult = validateObjectSchemaContentWithRefAnnotations ctxWithDynamicScope obj val refAnnotations
       in combineResults [refResult, contentResult]
     else
       -- Pre-2019-09: $ref short-circuits, ignores sibling keywords
@@ -226,8 +252,13 @@ validateAgainstObject parentCtx ctx obj val =
                                          Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
                           in ctxWithRef { contextBaseURI = Just baseDoc
                                         , contextRootSchema = rootValue
+                                        -- Preserve dynamic scope when following $ref
+                                        , contextDynamicScope = contextDynamicScope ctxWithRef
                                         }
-                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef }
+                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef
+                                              -- Preserve dynamic scope when following $ref
+                                              , contextDynamicScope = contextDynamicScope ctxWithRef
+                                              }
                   in validateValueWithContext ctxForRef resolvedSchema val
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
@@ -271,8 +302,13 @@ validateAgainstObject parentCtx ctx obj val =
                                          Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
                           in ctxWithRef { contextBaseURI = Just baseDoc
                                         , contextRootSchema = rootValue
+                                        -- Preserve dynamic scope when following $ref
+                                        , contextDynamicScope = contextDynamicScope ctxWithRef
                                         }
-                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef }
+                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef
+                                              -- Preserve dynamic scope when following $ref
+                                              , contextDynamicScope = contextDynamicScope ctxWithRef
+                                              }
                   in validateValueWithContext ctxForRef resolvedSchema val'
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
@@ -313,8 +349,13 @@ validateAgainstObject parentCtx ctx obj val =
                                           else Just baseDoc
                                   in ctxWithRef { contextBaseURI = baseToSet
                                                 , contextRootSchema = rootValue
+                                                -- Preserve dynamic scope when following $dynamicRef fallback
+                                                , contextDynamicScope = contextDynamicScope ctxWithRef
                                                 }
-                                Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef }
+                                Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef
+                                                      -- Preserve dynamic scope when following $dynamicRef fallback
+                                                      , contextDynamicScope = contextDynamicScope ctxWithRef
+                                                      }
                           in validateValueWithContext ctxForRef resolvedSchema val'
                         Nothing ->
                           ValidationFailure $ ValidationErrors $ pure $
@@ -336,20 +377,9 @@ validateAgainstObject parentCtx ctx obj val =
       validateObjectSchemaContentWithRefAnnotations ctx' obj' val' mempty
 
     -- Validate object schema content with additional annotations from refs
+    -- Note: Dynamic scope has already been updated in validateAgainstObject
     validateObjectSchemaContentWithRefAnnotations ctx' obj' val' refAnns =
-      -- Update context with dynamic anchor if present
-      let ctx'' = case schemaDynamicAnchor obj' of
-            Just _ ->
-              -- Push current schema onto dynamic scope
-              let schema' = Schema
-                    { schemaVersion = Just (validationVersion $ contextConfig ctx')
-                    , schemaId = contextBaseURI ctx'
-                    , schemaCore = ObjectSchema obj'
-                    , schemaVocabulary = Nothing
-                    , schemaExtensions = Map.empty
-                    }
-              in ctx' { contextDynamicScope = schema' : contextDynamicScope ctx' }
-            Nothing -> ctx'
+      let ctx'' = ctx'  -- Dynamic scope already set up
           -- Validate all keywords EXCEPT unevaluated ones
           results =
             [ validateTypeConstraint obj' val'
@@ -1318,12 +1348,19 @@ resolveReference (Reference refText) ctx
       let (uriPart, fragment) = T.breakOn "#" refText
           fragmentPart = T.drop 1 fragment
           registry = contextSchemaRegistry ctx
-          baseContext = if T.null uriPart then Nothing else Just uriPart
-      in case Map.lookup refText (registrySchemas registry) of
+          -- Resolve the URI part against the base URI before lookup
+          resolvedUriPart = if T.null uriPart
+                              then ""
+                              else resolveAgainstBaseURI (contextBaseURI ctx) uriPart
+          resolvedFullRef = if T.null uriPart
+                              then refText
+                              else resolvedUriPart <> "#" <> fragmentPart
+          baseContext = if T.null uriPart then Nothing else Just resolvedUriPart
+      in case Map.lookup resolvedFullRef (registrySchemas registry) of
             Just schema ->
               Just (schema, baseContext, Just schema)
             Nothing ->
-              case Map.lookup uriPart (registrySchemas registry) of
+              case Map.lookup resolvedUriPart (registrySchemas registry) of
                 Just baseSchema
                   | T.null fragmentPart ->
                       Just (baseSchema, baseContext, Just baseSchema)
@@ -1338,7 +1375,7 @@ resolveReference (Reference refText) ctx
                       in maybe
                            (lookupAnyAnchor fragmentPart registry)
                            (\resolved -> Just (resolved, baseContext, Just baseSchema))
-                           (Map.lookup (uriPart, fragmentPart) anchors)
+                           (Map.lookup (resolvedUriPart, fragmentPart) anchors)
                 Nothing ->
                   lookupAnyAnchor fragmentPart registry
   | otherwise =
@@ -1554,8 +1591,11 @@ resolveDynamicRef (Reference refText) ctx
       in if T.null uriPart
            then
              -- Simple fragment reference: #anchor
-             -- First search the dynamic scope for matching $dynamicAnchor
-             case findSchemaWithDynamicAnchor anchorName (contextDynamicScope ctx) of
+             -- Search the dynamic scope for matching $dynamicAnchor
+             -- Search from OUTERMOST (oldest/furthest) to INNERMOST (newest/current)
+             -- This implements the bookending requirement: we skip the current resource
+             -- and search outward from the dynamic scope
+             case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
                Just schema -> Just schema
                Nothing ->
                  -- If not in dynamic scope, check the registry's dynamic anchors
@@ -1568,7 +1608,8 @@ resolveDynamicRef (Reference refText) ctx
              case resolveReference (Reference refText) ctx of
                Just (resolvedSchema, maybeBase, _) ->
                  -- Search the dynamic scope for a schema with this anchor
-                 case findSchemaWithDynamicAnchor anchorName (contextDynamicScope ctx) of
+                 -- Search from outermost to innermost (reverse order)
+                 case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
                    Just schema -> Just schema
                    Nothing ->
                      -- If not in dynamic scope, check the registry
@@ -1579,14 +1620,35 @@ resolveDynamicRef (Reference refText) ctx
   | otherwise = Nothing  -- Not a valid $dynamicRef format
   where
     -- Search for a schema with matching $dynamicAnchor in the dynamic scope
+    -- According to the spec, we search schema resources (schemas with $id) and their $defs
     findSchemaWithDynamicAnchor :: Text -> [Schema] -> Maybe Schema
     findSchemaWithDynamicAnchor _anchor [] = Nothing
     findSchemaWithDynamicAnchor anchor (schema:rest) = case schemaCore schema of
       ObjectSchema obj ->
+        -- First check if this schema itself has the matching $dynamicAnchor
         case schemaDynamicAnchor obj of
           Just dynAnchor | dynAnchor == anchor -> Just schema
-          _ -> findSchemaWithDynamicAnchor anchor rest
+          _ ->
+            -- If not, search in $defs (part of the same schema resource)
+            case findInDefs anchor (schemaDefs obj) of
+              Just foundSchema -> Just foundSchema
+              Nothing -> findSchemaWithDynamicAnchor anchor rest
       _ -> findSchemaWithDynamicAnchor anchor rest
+
+    -- Search for a $dynamicAnchor in $defs
+    findInDefs :: Text -> Map Text Schema -> Maybe Schema
+    findInDefs anchor defs =
+      case [ defSchema
+           | defSchema <- Map.elems defs
+           , case schemaCore defSchema of
+               ObjectSchema defObj ->
+                 case schemaDynamicAnchor defObj of
+                   Just dynAnchor -> dynAnchor == anchor
+                   Nothing -> False
+               _ -> False
+           ] of
+        (found:_) -> Just found
+        [] -> Nothing
 
 -- | Compile regex pattern
 -- Automatically adds Unicode flag if pattern contains Unicode property escapes
@@ -1651,6 +1713,12 @@ validateFormatValue URI text
 validateFormatValue URIRef text
   | isValidURIReference text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid URI reference"
+validateFormatValue IRI text
+  | isValidIRI text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid IRI format"
+validateFormatValue IRIRef text
+  | isValidIRIReference text = ValidationSuccess mempty
+  | otherwise = validationFailure "format" "Invalid IRI reference"
 validateFormatValue IPv4 text
   | isValidIPv4 text = ValidationSuccess mempty
   | otherwise = validationFailure "format" "Invalid IPv4 address"
@@ -1833,6 +1901,43 @@ isValidURIReference :: Text -> Bool
 isValidURIReference text = case URI.parseURIReference (T.unpack text) of
   Just _ -> True
   Nothing -> False
+
+-- IRI validator (RFC 3987 - Internationalized Resource Identifiers)
+-- IRIs extend URIs to support Unicode characters
+isValidIRI :: Text -> Bool
+isValidIRI text =
+  -- Try to convert to ASCII URI using IDNA for domain parts
+  -- For now, we accept any valid URI or any text with Unicode chars that
+  -- matches URI structure
+  if T.all (\c -> fromEnum c < 128) text
+    then isValidURI text  -- Pure ASCII, validate as URI
+    else
+      -- Contains Unicode, do basic IRI validation
+      -- Must contain a scheme (before first colon)
+      case T.breakOn ":" text of
+        (scheme, rest) | not (T.null scheme) && not (T.null rest) ->
+          -- Has a scheme, check it's valid (alphanumeric + - .)
+          let validScheme = not (T.null scheme) &&
+                           T.all (\c -> (c >= 'a' && c <= 'z') ||
+                                       (c >= 'A' && c <= 'Z') ||
+                                       (c >= '0' && c <= '9') ||
+                                       c == '+' || c == '-' || c == '.') scheme
+              -- Rest should not contain invalid characters (space, <>\"{}|\\^`)
+              validRest = not $ T.any (\c -> c `elem` [' ', '<', '>', '"', '{', '}', '|', '\\', '^', '`']) rest
+          in validScheme && validRest
+        _ -> False
+
+-- IRI Reference validator (allows relative IRIs)
+isValidIRIReference :: Text -> Bool
+isValidIRIReference text =
+  -- If pure ASCII, validate as URI reference
+  if T.all (\c -> fromEnum c < 128) text
+    then isValidURIReference text
+    else
+      -- Contains Unicode, do basic IRI reference validation
+      -- Can be relative (no scheme) or absolute (with scheme)
+      -- Just check for invalid characters
+      not $ T.any (\c -> c `elem` [' ', '<', '>', '"', '{', '}', '|', '\\', '^', '`']) text
 
 -- Time validator (RFC3339 time format)
 isValidTime :: Text -> Bool
