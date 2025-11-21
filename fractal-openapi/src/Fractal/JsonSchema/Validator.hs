@@ -2009,16 +2009,81 @@ isValidIRIReference text =
       not $ T.any (\c -> c `elem` [' ', '<', '>', '"', '{', '}', '|', '\\', '^', '`']) text
 
 -- Time validator (RFC3339 time format)
+-- Per RFC 3339, time MUST include a timezone offset (Z or +/-HH:MM)
 isValidTime :: Text -> Bool
 isValidTime text =
-  -- Check for HH:MM:SS or HH:MM:SS.sss format with optional timezone
-  -- Allow :60 for leap seconds per RFC 3339
-  -- Also accept lowercase 'z' for timezone (case-insensitive per RFC 3339)
-  let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})?$"
+  -- Pattern: HH:MM:SS[.sss](Z|z|+HH:MM|-HH:MM)
+  -- Hour: 00-23, Minute: 00-59, Second: 00-60 (60 for leap seconds)
+  -- Timezone offset hour: 00-23, minute: 00-59
+  -- Timezone is REQUIRED per RFC 3339
+  let timePattern = "^([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9]|60)(\\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
       matches = case Regex.compileText timePattern [] of
                   Left _ -> False
                   Right regex -> Regex.test regex (TE.encodeUtf8 text)
-  in matches
+  in if not matches
+    then False
+    else validateLeapSecond text
+  where
+    -- Validate leap second rules:
+    -- 1. Must be at XX:59:60 (not other minutes)
+    -- 2. When converted to UTC, must be at 23:59:60
+    validateLeapSecond t =
+      if T.isInfixOf ":60" t || T.isInfixOf ":60." t
+        then
+          -- Parse time format: HH:MM:SS[.sss](Z|z|+HH:MM|-HH:MM)
+          -- Extract hour and minute from HH:MM at the start
+          case T.splitOn ":" t of
+            (hourStr:minStr:_) ->
+              case (Read.readMaybe (T.unpack hourStr) :: Maybe Int,
+                    Read.readMaybe (T.unpack minStr) :: Maybe Int) of
+                (Just hour, Just minute) ->
+                  -- Extract timezone and convert to UTC
+                  -- The UTC time (not local time) must be 23:59:60
+                  let tz = extractTimezone t
+                  in case parseOffset tz of
+                       Just offsetMinutes ->
+                         let totalLocalMinutes = hour * 60 + minute
+                             -- Subtract offset to get UTC (if offset is +05:30, UTC is 5.5 hours earlier)
+                             totalUtcMinutes = totalLocalMinutes - offsetMinutes
+                             -- Normalize to 0-1439 range (0-23:59)
+                             normalizedUtcMinutes = ((totalUtcMinutes `mod` 1440) + 1440) `mod` 1440
+                             utcHour = normalizedUtcMinutes `div` 60
+                             utcMinute = normalizedUtcMinutes `mod` 60
+                         in utcHour == 23 && utcMinute == 59
+                       Nothing -> False
+                _ -> False
+            _ -> False
+        else True  -- Not a leap second, basic pattern match is sufficient
+
+    -- Extract timezone from time string (Z, z, +HH:MM, or -HH:MM)
+    extractTimezone t
+      | T.isSuffixOf "Z" t || T.isSuffixOf "z" t = T.takeEnd 1 t
+      | T.length t >= 6 =
+          -- Look for +HH:MM or -HH:MM at the end
+          let lastSix = T.takeEnd 6 t
+          in if T.isPrefixOf "+" lastSix || T.isPrefixOf "-" lastSix
+            then lastSix
+            else ""
+      | otherwise = ""
+
+    -- Parse timezone offset into minutes
+    parseOffset tz
+      | T.toUpper tz == "Z" = Just 0
+      | T.length tz == 6 =
+          case T.uncons tz of
+            Just (sign, rest) ->
+              let offsetParts = T.splitOn ":" rest
+              in case offsetParts of
+                [hourStr, minStr] ->
+                  case (Read.readMaybe (T.unpack hourStr) :: Maybe Int,
+                        Read.readMaybe (T.unpack minStr) :: Maybe Int) of
+                    (Just h, Just m) ->
+                      let totalMinutes = h * 60 + m
+                      in Just $ if sign == '+' then totalMinutes else -totalMinutes
+                    _ -> Nothing
+                _ -> Nothing
+            _ -> Nothing
+      | otherwise = Nothing
 
 -- ISO 8601 Duration validator
 isValidDuration :: Text -> Bool
