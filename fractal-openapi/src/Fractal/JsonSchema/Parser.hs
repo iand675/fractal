@@ -322,9 +322,8 @@ parseValidationKeywords version obj = do
   let dependentSchemas' = if version >= Draft201909
                           then KeyMap.lookup "dependentSchemas" obj >>= parsePropertySchemas version
                           else Nothing
-  let dependencies' = if version < Draft201909
-                      then KeyMap.lookup "dependencies" obj >>= parseDependencies version
-                      else Nothing
+  -- Dependencies keyword: deprecated in 2019-09+ but still supported for backward compatibility
+  let dependencies' = KeyMap.lookup "dependencies" obj >>= parseDependencies version
   
   pure $ SchemaValidation
     { validationMultipleOf = multipleOf
@@ -405,6 +404,11 @@ parseDependencies _ _ = Nothing
 --- | Parse a single dependency
 parseDependency :: JsonSchemaVersion -> Value -> Maybe Dependency
 parseDependency version v@(Object _) =
+  case parseSubschema version v of
+    Right schema -> Just $ DependencySchema schema
+    Left _ -> Nothing
+parseDependency version v@(Bool _) =
+  -- Boolean schemas (true/false) are valid dependencies
   case parseSubschema version v of
     Right schema -> Just $ DependencySchema schema
     Left _ -> Nothing
