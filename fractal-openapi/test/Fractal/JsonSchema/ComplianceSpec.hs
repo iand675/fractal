@@ -7,6 +7,7 @@ import Test.Hspec
 import Fractal.JsonSchema
 import Fractal.JsonSchema.Validator (validateValueWithRegistry)
 import Fractal.JsonSchema.ReferenceLoader
+import Fractal.JsonSchema.EmbeddedMetaschemas (standardMetaschemaLoader)
 import Fractal.JsonSchema.Types (buildRegistryWithExternalRefs)
 import qualified Data.Map.Strict as Map
 import Data.Aeson (Value, FromJSON(..), (.:), (.=), eitherDecodeFileStrict, object)
@@ -124,28 +125,30 @@ relativePath version uri
   | otherwise = loadFromRemotes version uri
 
 -- | Loader for known metaschemas
+-- Now uses embedded metaschemas with fallback to stubs
 metaschemaLoader :: ReferenceLoader
-metaschemaLoader uri =
-  case normalizeMetaURI uri of
-    Just "http://json-schema.org/draft-04/schema" ->
-      pure $ Right draft04MetaSchema
-    Just "http://json-schema.org/draft-06/schema" ->
-      pure $ Right draft06MetaSchema
-    Just "http://json-schema.org/draft-07/schema" ->
-      pure $ Right draft07MetaSchema
-    Just "https://json-schema.org/draft/2020-12/schema" ->
-      pure $ Right draft202012MetaSchema
-    Just "http://json-schema.org/draft/2019-09/schema" ->
-      pure $ Right draft201909MetaSchema
-    Just "https://json-schema.org/draft/2019-09/schema" ->
-      pure $ Right draft201909MetaSchema
-    -- Sub-metaschemas (vocabularies) - return empty stubs
-    Just u | "/meta/" `T.isInfixOf` u ->
-      pure $ Right $ case parseSchemaWithVersion Draft202012 (object []) of
-        Right s -> s
-        Left _ -> error "Failed to create empty schema stub"
-    _ ->
-      pure $ Left $ "Unknown URI: " <> uri
+metaschemaLoader uri = do
+  -- First try embedded metaschemas
+  embeddedResult <- standardMetaschemaLoader uri
+  case embeddedResult of
+    Right schema -> pure $ Right schema
+    Left _ ->
+      -- Fall back to legacy stub metaschemas for tests
+      case normalizeMetaURI uri of
+        Just "http://json-schema.org/draft-04/schema" ->
+          pure $ Right draft04MetaSchema
+        Just "http://json-schema.org/draft-06/schema" ->
+          pure $ Right draft06MetaSchema
+        Just "http://json-schema.org/draft-07/schema" ->
+          pure $ Right draft07MetaSchema
+        Just "https://json-schema.org/draft/2020-12/schema" ->
+          pure $ Right draft202012MetaSchema
+        Just "http://json-schema.org/draft/2019-09/schema" ->
+          pure $ Right draft201909MetaSchema
+        Just "https://json-schema.org/draft/2019-09/schema" ->
+          pure $ Right draft201909MetaSchema
+        _ ->
+          pure $ Left $ "Unknown URI: " <> uri
   where
     normalizeMetaURI u =
       let base = T.takeWhile (/= '#') u

@@ -17,6 +17,8 @@ maintainer:         ian@iankduncan.com
 category:           Web, Data
 build-type:         Simple
 extra-source-files: README.md, SPEC.md
+data-files:         data/metaschemas/2019-09/*.json
+                  , data/metaschemas/2020-12/*.json
 
 source-repository head
   type:     git
@@ -57,6 +59,7 @@ library
                     , Fractal.JsonSchema.Dialect
                     , Fractal.JsonSchema.Vocabulary
                     , Fractal.JsonSchema.ReferenceLoader
+                    , Fractal.JsonSchema.EmbeddedMetaschemas
                     , Fractal.JsonSchema.Regex
                     , Fractal.OpenApi
                     , Fractal.OpenApi.Types
@@ -83,9 +86,11 @@ library
                     , ecma262-regex
                     , idn
 
-                    -- Template Haskell
+                    -- Template Haskell & Embedded Resources
                     , template-haskell >= 2.19 && < 3
                     , th-lift >= 0.8 && < 1
+                    , file-embed >= 0.0.15 && < 1
+                    , filepath >= 1.4 && < 2
                     , mtl >= 2.2 && < 3
                     , http-client >= 0.7 && < 1
                     , http-client-tls >= 0.3 && < 1

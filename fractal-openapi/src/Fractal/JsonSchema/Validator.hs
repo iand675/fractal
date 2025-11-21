@@ -197,12 +197,18 @@ validationVocabularyURI202012 :: Text
 validationVocabularyURI202012 = "https://json-schema.org/draft/2020-12/vocab/validation"
 
 -- | Check if validation vocabulary is active for a schema
+-- Uses the root schema from context to determine vocabulary restrictions
 isValidationVocabularyActive :: ValidationContext -> Schema -> Bool
-isValidationVocabularyActive ctx schema =
-  case schemaVersion schema of
-    Just Draft201909 -> isVocabularyActive ctx schema validationVocabularyURI201909
-    Just Draft202012 -> isVocabularyActive ctx schema validationVocabularyURI202012
-    _ -> True  -- Pre-2019-09 or no version: validation is always active
+isValidationVocabularyActive ctx _schema =
+  -- Use the root schema for vocabulary checking, as sub-schemas inherit
+  -- vocabulary restrictions from their root
+  case contextRootSchema ctx of
+    Nothing -> True  -- No root schema, assume validation is active
+    Just rootSchema ->
+      case schemaVersion rootSchema of
+        Just Draft201909 -> isVocabularyActive ctx rootSchema validationVocabularyURI201909
+        Just Draft202012 -> isVocabularyActive ctx rootSchema validationVocabularyURI202012
+        _ -> True  -- Pre-2019-09 or no version: validation is always active
 
 -- | Apply schema-specific context updates (base URI, root schema)
 applySchemaContext :: ValidationContext -> Schema -> ValidationContext
