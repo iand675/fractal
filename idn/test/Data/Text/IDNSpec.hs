@@ -54,8 +54,9 @@ spec = do
       toASCII "example-.com" `shouldSatisfy` isLeft
       toASCII "ab--cd.com" `shouldSatisfy` isLeft
     
-    it "accepts valid xn-- Punycode prefix" $ do
-      toASCII "xn--test.com" `shouldSatisfy` isRight
+    it "rejects xn-- prefix with pure ASCII (RFC 5891 violation)" $ do
+      -- RFC 5891: Punycode should only be used for labels with non-ASCII characters
+      toASCII "xn--test.com" `shouldSatisfy` isLeft
     
     it "handles multi-label domains" $ do
       toASCII "sub.example.com" `shouldBe` Right "sub.example.com"

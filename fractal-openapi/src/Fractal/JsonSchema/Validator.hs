@@ -1999,9 +1999,13 @@ isValidIPv4 text =
     then False
     else
       let parts = T.splitOn "." text
-          isValidOctet part = case reads (T.unpack part) :: [(Int, String)] of
-            [(n, "")] -> n >= 0 && n <= 255
-            _ -> False
+          isValidOctet part =
+            -- Reject leading zeroes (except for "0" itself) to avoid octal ambiguity
+            if T.length part > 1 && T.head part == '0'
+              then False
+              else case reads (T.unpack part) :: [(Int, String)] of
+                [(n, "")] -> n >= 0 && n <= 255
+                _ -> False
       in length parts == 4 && all isValidOctet parts
 
 isValidIPv6 :: Text -> Bool
@@ -2105,19 +2109,31 @@ isValidDate text =
     Just _ -> True
     Nothing -> False
 
--- Hostname validator (RFC 1123)
+-- Hostname validator (RFC 1123 + RFC 5890-5893 for A-labels)
+-- Validates both regular ASCII hostnames and Punycode A-labels
 isValidHostname :: Text -> Bool
 isValidHostname text =
   let labels = T.splitOn "." text
-      validLabel lbl =
-        not (T.null lbl) &&
-        T.length lbl <= 63 &&
-        not (T.isPrefixOf "-" lbl) &&
-        not (T.isSuffixOf "-" lbl) &&
-        T.all (\c -> c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) lbl
-  in not (null labels) &&
-     T.length text <= 253 &&
-     all validLabel labels
+      -- Check if any label is a Punycode A-label or has "--" in positions 3-4
+      -- These require IDNA validation per RFC 5890
+      needsIDNValidation lbl =
+        T.isPrefixOf "xn--" (T.toLower lbl) ||
+        (T.length lbl >= 4 && T.take 2 (T.drop 2 lbl) == "--")
+  in if any needsIDNValidation labels
+       then case IDN.toASCII text of
+              Right _ -> True   -- IDNA validation passed
+              Left _ -> False   -- IDNA validation failed
+       else
+         -- Pure ASCII hostname, use RFC 1123 rules
+         let validLabel lbl =
+               not (T.null lbl) &&
+               T.length lbl <= 63 &&
+               not (T.isPrefixOf "-" lbl) &&
+               not (T.isSuffixOf "-" lbl) &&
+               T.all (\c -> c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) lbl
+         in not (null labels) &&
+            T.length text <= 253 &&
+            all validLabel labels
 
 -- IDN Hostname validator (RFC 5890-5893)
 isValidIDNHostname :: Text -> Bool
@@ -2251,12 +2267,63 @@ isValidTime text =
 isValidDuration :: Text -> Bool
 isValidDuration text =
   -- ISO 8601 duration: P[nY][nM][nW][nD][T[nH][nM][nS]]
+  -- Must start with P and have at least one date or time element
   -- Note: Weeks (W) cannot be combined with other date units
-  let durationPattern = "^P(?:(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?)?|[0-9]+W)$"
-      matches = case Regex.compileText durationPattern [] of
-                  Left _ -> False
-                  Right regex -> Regex.test regex (TE.encodeUtf8 text)
-  in T.isPrefixOf "P" text && matches
+  if not (T.isPrefixOf "P" text)
+    then False
+    else
+      let body = T.drop 1 text
+      in case T.uncons body of
+           Nothing -> False  -- Just "P" with no elements
+           Just (c, _) ->
+             -- Check for week-only format (e.g., P3W)
+             if c >= '0' && c <= '9' && T.isSuffixOf "W" body
+               then validateWeekDuration body
+             -- Check for date/time format
+             else validateDateTimeDuration body
+  where
+    -- Week-only duration: must be just digits followed by W
+    validateWeekDuration t =
+      case T.unsnoc t of
+        Just (digits, 'W') -> T.all (\c -> c >= '0' && c <= '9') digits && not (T.null digits)
+        _ -> False
+
+    -- Date/time duration: [nY][nM][nD][T[nH][nM][nS]]
+    -- At least one date or time element must be present
+    validateDateTimeDuration t =
+      let (datePart, timePart) = T.breakOn "T" t
+          hasDateElements = hasDatePart datePart
+          hasTimeElements = if T.null timePart
+                            then False
+                            else hasTimePart (T.drop 1 timePart)
+      in case T.null timePart of
+           True -> hasDateElements  -- No T, must have date elements
+           False -> if T.length timePart == 1
+                    then False  -- Just "T" with no time elements
+                    else hasDateElements || hasTimeElements  -- Either date or time elements present
+
+    -- Check if date part has valid elements (Y, M, D)
+    hasDatePart t =
+      let hasY = T.isInfixOf "Y" t
+          hasM = T.isInfixOf "M" t
+          hasD = T.isInfixOf "D" t
+          pattern = "^(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?$"
+      in (hasY || hasM || hasD) &&
+         case Regex.compileText pattern [] of
+           Left _ -> False
+           Right regex -> Regex.test regex (TE.encodeUtf8 t)
+
+    -- Check if time part has valid elements (H, M, S)
+    hasTimePart t =
+      let hasH = T.isInfixOf "H" t
+          hasM = T.isInfixOf "M" t
+          hasS = T.isInfixOf "S" t
+          -- Allow decimal seconds
+          pattern = "^(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?$"
+      in (hasH || hasM || hasS) &&
+         case Regex.compileText pattern [] of
+           Left _ -> False
+           Right regex -> Regex.test regex (TE.encodeUtf8 t)
 
 -- JSON Pointer validator (RFC 6901)
 isValidJSONPointer :: Text -> Bool

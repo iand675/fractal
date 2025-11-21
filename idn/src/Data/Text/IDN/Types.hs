@@ -185,8 +185,13 @@ mkLabel :: Text -> Either IDNError Label
 mkLabel text
   | T.null text = Left EmptyLabel
   | T.length text > 63 = Left (LabelTooLong (T.length text) 63)
-  | "xn--" `T.isPrefixOf` text = Right (ALabel text)
-  | otherwise = Right (ULabel text)
+  | otherwise =
+      -- RFC 5891/3490: Domain labels are case-insensitive, normalize to lowercase
+      let normalized = T.toLower text
+      -- RFC 5891 Section 5.1: A-labels start with "xn--"
+      in if "xn--" `T.isPrefixOf` normalized
+           then Right (ALabel normalized)
+           else Right (ULabel normalized)
 
 -- | Smart constructor for 'DomainName' with invariant enforcement.
 --
