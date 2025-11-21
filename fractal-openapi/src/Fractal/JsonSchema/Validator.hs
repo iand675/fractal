@@ -2006,10 +2006,35 @@ isValidIPv6 text =
   if T.any (\c -> c == ' ' || c == '\t' || c == '\n' || c == '\r') text
     then False
     else
-      let str = T.unpack text
-      in case reads str :: [(IP.IPv6, String)] of
-        [(_, "")] -> True
-        _ -> False
+      -- Additional pre-validation checks for RFC 4291 compliance
+      -- These catch cases where the iproute parser is too lenient
+      let validChars = T.all (\c -> (c >= '0' && c <= '9') ||
+                                     (c >= 'a' && c <= 'f') ||
+                                     (c >= 'A' && c <= 'F') ||
+                                     c == ':' || c == '.') text
+          -- Must not start or end with single colon (:: is ok)
+          invalidColons = (T.isPrefixOf ":" text && not (T.isPrefixOf "::" text)) ||
+                          (T.isSuffixOf ":" text && not (T.isSuffixOf "::" text))
+          -- Check for groups with more than 4 hex digits (but allow IPv4 addresses in last group)
+          groups = T.splitOn ":" text
+          -- The last group might be an IPv4 address (contains dots)
+          (ipv6Groups, ipv4Group) = case reverse groups of
+            (lastGroup:rest) | T.any (== '.') lastGroup -> (reverse rest, Just lastGroup)
+            _ -> (groups, Nothing)
+          -- IPv6 groups must be <= 4 hex digits
+          validGroupLengths = all (\g -> T.null g || T.length g <= 4) ipv6Groups
+          -- Each non-empty IPv6 group must have only hex digits
+          validGroupContent = all (\g -> T.null g ||
+                                         T.all (\c -> (c >= '0' && c <= '9') ||
+                                                     (c >= 'a' && c <= 'f') ||
+                                                     (c >= 'A' && c <= 'F')) g) ipv6Groups
+      in if not validChars || invalidColons || not validGroupLengths || not validGroupContent
+        then False
+        else
+          let str = T.unpack text
+          in case reads str :: [(IP.IPv6, String)] of
+            [(_, "")] -> True
+            _ -> False
 
 isValidUUID :: Text -> Bool
 isValidUUID text = case UUID.fromText text of
@@ -2251,14 +2276,23 @@ isValidJSONPointer text =
       in checkEscapes t
 
 -- Relative JSON Pointer validator
+-- Format: <non-negative-integer>[#|<json-pointer>]
+-- Where:
+-- - non-negative-integer cannot have leading zeros (except "0" itself)
+-- - # gets the member name/index
+-- - json-pointer starts with /
 isValidRelativeJSONPointer :: Text -> Bool
 isValidRelativeJSONPointer text =
   case T.uncons text of
     Just (c, _) | c >= '0' && c <= '9' ->
       -- Starts with a digit, followed by optional # or JSON pointer
       let (digits, remainder) = T.span (\x -> x >= '0' && x <= '9') text
-      in not (T.null digits) &&
-         (T.null remainder || T.isPrefixOf "#" remainder || T.isPrefixOf "/" remainder)
+          -- Check for leading zero followed by other digits (invalid)
+          hasLeadingZero = T.isPrefixOf "0" digits && T.length digits > 1
+      in not (T.null digits) && not hasLeadingZero &&
+         (T.null remainder ||  -- Just the number
+          remainder == "#" ||  -- Number followed by # (get member name)
+          T.isPrefixOf "/" remainder)  -- Number followed by JSON pointer
     _ -> False
 
 -- ECMA-262 Regex validator
