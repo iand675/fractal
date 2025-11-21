@@ -61,6 +61,7 @@ testSuiteLoader :: JsonSchemaVersion -> ReferenceLoader
 testSuiteLoader version =
   let registry = registerDefaultLoader (relativePath version)
                $ registerScheme "http" (localhostLoader version)
+               $ registerScheme "https" metaschemaLoader
                $ emptyLoaderRegistry
   in makeLoader registry
 
@@ -109,11 +110,17 @@ relativePath version uri
 metaschemaLoader :: ReferenceLoader
 metaschemaLoader uri =
   case normalizeMetaURI uri of
+    Just "http://json-schema.org/draft-04/schema" ->
+      pure $ Right draft04MetaSchema
+    Just "http://json-schema.org/draft-06/schema" ->
+      pure $ Right draft06MetaSchema
     Just "http://json-schema.org/draft-07/schema" ->
       pure $ Right draft07MetaSchema
     Just "https://json-schema.org/draft/2020-12/schema" ->
       pure $ Right draft202012MetaSchema
     Just "http://json-schema.org/draft/2019-09/schema" ->
+      pure $ Right draft201909MetaSchema
+    Just "https://json-schema.org/draft/2019-09/schema" ->
       pure $ Right draft201909MetaSchema
     _ ->
       pure $ Left $ "Unknown URI: " <> uri
@@ -122,7 +129,45 @@ metaschemaLoader uri =
       let base = T.takeWhile (/= '#') u
       in if T.null base then Nothing else Just base
 
--- | Minimal stub meta-schema to support remote ref tests
+-- | Minimal stub meta-schemas to support remote ref tests
+draft04MetaSchema :: Schema
+draft04MetaSchema =
+  case parseSchemaWithVersion Draft04 metaValue of
+    Right schema -> schema
+    Left err -> error $ "Failed to build draft-04 meta schema stub: " <> show err
+  where
+    metaValue =
+      object
+        [ "id" .= ("http://json-schema.org/draft-04/schema#" :: Text)
+        , "type" .= ("object" :: Text)
+        , "properties" .= object
+            [ "minLength" .= object
+                [ "type" .= ("integer" :: Text)
+                , "minimum" .= (0 :: Int)
+                ]
+            ]
+        , "additionalProperties" .= True
+        ]
+
+draft06MetaSchema :: Schema
+draft06MetaSchema =
+  case parseSchemaWithVersion Draft06 metaValue of
+    Right schema -> schema
+    Left err -> error $ "Failed to build draft-06 meta schema stub: " <> show err
+  where
+    metaValue =
+      object
+        [ "$id" .= ("http://json-schema.org/draft-06/schema#" :: Text)
+        , "type" .= ("object" :: Text)
+        , "properties" .= object
+            [ "minLength" .= object
+                [ "type" .= ("integer" :: Text)
+                , "minimum" .= (0 :: Int)
+                ]
+            ]
+        , "additionalProperties" .= True
+        ]
+
 draft07MetaSchema :: Schema
 draft07MetaSchema =
   case parseSchema metaValue of
