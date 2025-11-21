@@ -184,6 +184,20 @@ annotateItems indices =
     else ValidationAnnotations $ Map.singleton emptyPointer $
            Map.singleton "items" (Aeson.Array $ fromList $ map (Aeson.Number . fromIntegral) $ Set.toList indices)
 
+-- | Shift all annotation pointers by prepending a prefix
+-- Used when collecting annotations from child validations
+shiftAnnotations :: JSONPointer -> ValidationAnnotations -> ValidationAnnotations
+shiftAnnotations prefix (ValidationAnnotations annMap) =
+  ValidationAnnotations $ Map.mapKeys (prefix <>) annMap
+
+-- | Create a JSON Pointer for an array index
+arrayIndexPointer :: Int -> JSONPointer
+arrayIndexPointer idx = JSONPointer [T.pack (show idx)]
+
+-- | Create a JSON Pointer for an object property
+propertyPointer :: Text -> JSONPointer
+propertyPointer prop = JSONPointer [prop]
+
 -- | Validate against object schema
 validateAgainstObject :: ValidationContext -> ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateAgainstObject parentCtx ctx obj val =
@@ -707,21 +721,31 @@ validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
           let prefixResults = zipWith (validateValueWithContext ctx') (NE.toList prefixSchemas) (toList array)
               prefixFailures = [errs | ValidationFailure errs <- prefixResults]
               prefixIndices = Set.fromList [0 .. length prefixSchemas - 1]
+              -- Shift annotations from prefixItems validations to correct instance locations
+              prefixAnnotations =
+                [ shiftAnnotations (arrayIndexPointer idx) anns
+                | (idx, ValidationSuccess anns) <- zip [0..] prefixResults
+                ]
               -- In 2020-12, "items" applies to items beyond prefixItems
               additionalItemsFromPrefix = drop (length prefixSchemas) (toList array)
               additionalStartIdx = length prefixSchemas
-              (additionalResults, additionalIndices) = case validationItems (schemaValidation schemaObj) of
+              (additionalResults, additionalIndices, additionalAnnotations) = case validationItems (schemaValidation schemaObj) of
                 Just (ItemsSchema itemSchema) ->
-                  let results = [validateValueWithContext ctx' itemSchema item | item <- additionalItemsFromPrefix]
+                  let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' itemSchema item))
+                                  [additionalStartIdx..] additionalItemsFromPrefix
                       indices = if null additionalItemsFromPrefix
                                 then Set.empty
                                 else Set.fromList [additionalStartIdx .. length array - 1]
-                  in (results, indices)
-                _ -> ([], Set.empty)  -- No items schema, don't annotate additional items
+                      -- Shift annotations from items validations
+                      anns = [ shiftAnnotations (arrayIndexPointer idx) ann
+                             | (idx, ValidationSuccess ann) <- results
+                             ]
+                  in (map snd results, indices, anns)
+                _ -> ([], Set.empty, [])  -- No items schema, don't annotate additional items
               additionalFailures = [errs | ValidationFailure errs <- additionalResults]
               allFailures = prefixFailures <> additionalFailures
               allIndices = prefixIndices <> additionalIndices
-              allAnnotations = [anns | ValidationSuccess anns <- prefixResults <> additionalResults]
+              allAnnotations = prefixAnnotations <> additionalAnnotations
           in case allFailures of
             [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
             (e:es) -> ValidationFailure $ foldl (<>) e es
@@ -731,10 +755,14 @@ validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
             Nothing -> ValidationSuccess mempty
             Just (ItemsSchema itemSchema) ->
               -- All items must validate against the schema
-              let results = [validateValueWithContext ctx' itemSchema item | item <- toList array]
-                  failures = [errs | ValidationFailure errs <- results]
+              let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' itemSchema item))
+                              [0..] (toList array)
+                  failures = [errs | (_, ValidationFailure errs) <- results]
                   allIndices = Set.fromList [0 .. length array - 1]
-                  annotations = [anns | ValidationSuccess anns <- results]
+                  -- Shift annotations from each item validation
+                  annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
+                                | (idx, ValidationSuccess anns) <- results
+                                ]
               in case failures of
                 [] -> ValidationSuccess $ annotateItems allIndices <> mconcat annotations
                 (e:es) -> ValidationFailure $ foldl (<>) e es
@@ -743,24 +771,33 @@ validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
               let tupleResults = zipWith (validateValueWithContext ctx') (NE.toList tupleSchemas) (toList array)
                   tupleFailures = [errs | ValidationFailure errs <- tupleResults]
                   tupleIndices = Set.fromList [0 .. length tupleSchemas - 1]
+                  -- Shift annotations from tuple validations
+                  tupleAnnotations =
+                    [ shiftAnnotations (arrayIndexPointer idx) anns
+                    | (idx, ValidationSuccess anns) <- zip [0..] tupleResults
+                    ]
                   -- Handle additional items beyond tuple length
                   additionalItems = drop (length tupleSchemas) (toList array)
                   additionalStartIdx = length tupleSchemas
                   -- In draft 2019-09/2020-12, additional items are allowed by default when items is an array
                   -- They are only rejected if additionalItems is explicitly false
-                  (additionalResults, additionalIndices) = case maybeAdditional of
+                  (additionalResults, additionalIndices, additionalAnnotations) = case maybeAdditional of
                     Just addlSchema ->
                       -- additionalItems is explicitly set, validate against it
-                      let results = [validateValueWithContext ctx' addlSchema item | item <- additionalItems]
+                      let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' addlSchema item))
+                                      [additionalStartIdx..] additionalItems
                           indices = Set.fromList [additionalStartIdx .. length array - 1]
-                      in (results, if null additionalItems then Set.empty else indices)
+                          anns = [ shiftAnnotations (arrayIndexPointer idx) ann
+                                 | (idx, ValidationSuccess ann) <- results
+                                 ]
+                      in (map snd results, if null additionalItems then Set.empty else indices, anns)
                     Nothing ->
                       -- additionalItems not specified - don't validate or annotate (let unevaluatedItems handle it)
-                      ([], Set.empty)
+                      ([], Set.empty, [])
                   additionalFailures = [errs | ValidationFailure errs <- additionalResults]
                   allFailures = tupleFailures <> additionalFailures
                   allIndices = tupleIndices <> additionalIndices
-                  allAnnotations = [anns | ValidationSuccess anns <- tupleResults <> additionalResults]
+                  allAnnotations = tupleAnnotations <> additionalAnnotations
               in case allFailures of
                 [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
                 (e:es) -> ValidationFailure $ foldl (<>) e es
@@ -886,10 +923,14 @@ validateArrayConstraints ctx obj (Array arr) =
             Nothing -> ValidationSuccess mempty
             Just (ItemsSchema itemSchema) ->
               -- All items must validate against the schema
-              let results = [validateValueWithContext ctx' itemSchema item | item <- toList array]
-                  failures = [errs | ValidationFailure errs <- results]
+              let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' itemSchema item))
+                              [0..] (toList array)
+                  failures = [errs | (_, ValidationFailure errs) <- results]
                   allIndices = Set.fromList [0 .. length array - 1]
-                  annotations = [anns | ValidationSuccess anns <- results]
+                  -- Shift annotations from each item validation
+                  annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
+                                | (idx, ValidationSuccess anns) <- results
+                                ]
               in case failures of
                 [] -> ValidationSuccess $ annotateItems allIndices <> mconcat annotations
                 (e:es) -> ValidationFailure $ foldl (<>) e es
@@ -898,24 +939,33 @@ validateArrayConstraints ctx obj (Array arr) =
               let tupleResults = zipWith (validateValueWithContext ctx') (NE.toList tupleSchemas) (toList array)
                   tupleFailures = [errs | ValidationFailure errs <- tupleResults]
                   tupleIndices = Set.fromList [0 .. length tupleSchemas - 1]
+                  -- Shift annotations from tuple validations
+                  tupleAnnotations =
+                    [ shiftAnnotations (arrayIndexPointer idx) anns
+                    | (idx, ValidationSuccess anns) <- zip [0..] tupleResults
+                    ]
                   -- Handle additional items beyond tuple length
                   additionalItems = drop (length tupleSchemas) (toList array)
                   additionalStartIdx = length tupleSchemas
                   -- In draft 2019-09/2020-12, additional items are allowed by default when items is an array
                   -- They are only rejected if additionalItems is explicitly false
-                  (additionalResults, additionalIndices) = case maybeAdditional of
+                  (additionalResults, additionalIndices, additionalAnnotations) = case maybeAdditional of
                     Just addlSchema ->
                       -- additionalItems is explicitly set, validate against it
-                      let results = [validateValueWithContext ctx' addlSchema item | item <- additionalItems]
+                      let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' addlSchema item))
+                                      [additionalStartIdx..] additionalItems
                           indices = Set.fromList [additionalStartIdx .. length array - 1]
-                      in (results, if null additionalItems then Set.empty else indices)
+                          anns = [ shiftAnnotations (arrayIndexPointer idx) ann
+                                 | (idx, ValidationSuccess ann) <- results
+                                 ]
+                      in (map snd results, if null additionalItems then Set.empty else indices, anns)
                     Nothing ->
                       -- additionalItems not specified - don't validate or annotate (let unevaluatedItems handle it)
-                      ([], Set.empty)
+                      ([], Set.empty, [])
                   additionalFailures = [errs | ValidationFailure errs <- additionalResults]
                   allFailures = tupleFailures <> additionalFailures
                   allIndices = tupleIndices <> additionalIndices
-                  allAnnotations = [anns | ValidationSuccess anns <- tupleResults <> additionalResults]
+                  allAnnotations = tupleAnnotations <> additionalAnnotations
               in case allFailures of
                 [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
                 (e:es) -> ValidationFailure $ foldl (<>) e es
@@ -1036,13 +1086,18 @@ validateObjectPropertyConstraints ctx obj objMap =
               | propName <- Map.keys propSchemas
               , KeyMap.member (Key.fromText propName) om
               ]
-          results = case maybePropSchemas of
+          propertyResults = case maybePropSchemas of
             Nothing -> []
             Just propSchemas ->
-              [ validateValueWithContext ctx' propSchema propValue
+              [ (propName, validateValueWithContext ctx' propSchema propValue)
               | (propName, propSchema) <- Map.toList propSchemas
               , Just propValue <- [KeyMap.lookup (Key.fromText propName) om]
               ]
+          -- Shift annotations from property validations to correct locations
+          propertyAnnotations =
+            [ shiftAnnotations (propertyPointer propName) anns
+            | (propName, ValidationSuccess anns) <- propertyResults
+            ]
 
           -- Also check pattern properties (independent of 'properties' keyword)
           patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
@@ -1056,10 +1111,10 @@ validateObjectPropertyConstraints ctx obj objMap =
                   Right regex -> matchRegex regex propName
                   Left _ -> False
               ]
-          patternResults = case validationPatternProperties (schemaValidation schemaObj) of
+          patternResultsList = case validationPatternProperties (schemaValidation schemaObj) of
             Nothing -> []
             Just patternSchemas ->
-              [ validateValueWithContext ctx' patternSchema propValue
+              [ (Key.toText k, validateValueWithContext ctx' patternSchema propValue)
               | (k, propValue) <- KeyMap.toList om
               , let propName = Key.toText k
               , (Regex pattern, patternSchema) <- Map.toList patternSchemas
@@ -1067,13 +1122,18 @@ validateObjectPropertyConstraints ctx obj objMap =
                   Right regex -> matchRegex regex propName
                   Left _ -> False
               ]
+          -- Shift annotations from pattern property validations
+          patternAnnotations =
+            [ shiftAnnotations (propertyPointer propName) anns
+            | (propName, ValidationSuccess anns) <- patternResultsList
+            ]
 
-          allResults = results <> patternResults
+          allResults = map snd propertyResults <> map snd patternResultsList
           allEvaluatedProps = evaluatedProps <> patternCoveredProps
+          allAnnotations = propertyAnnotations <> patternAnnotations
           failures = [errs | ValidationFailure errs <- allResults]
-          annotations = [anns | ValidationSuccess anns <- allResults]
       in case failures of
-        [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat annotations
+        [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat allAnnotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
     
     validateAdditionalProperties ctx' schemaObj om = case validationAdditionalProperties (schemaValidation schemaObj) of
@@ -1081,7 +1141,7 @@ validateObjectPropertyConstraints ctx obj objMap =
       Just addlSchema ->
         -- Properties covered by 'properties' keyword
         let definedProps = maybe Set.empty Map.keysSet (validationProperties $ schemaValidation schemaObj)
-            
+
             -- Properties covered by 'patternProperties' keyword
             patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
               Nothing -> Set.empty
@@ -1094,15 +1154,18 @@ validateObjectPropertyConstraints ctx obj objMap =
                     Right regex -> matchRegex regex propName
                     Left _ -> False
                 ]
-            
+
             -- Additional properties are those not covered by either
             allCoveredProps = definedProps <> patternCoveredProps
             additionalPropsList = [(k, v) | (k, v) <- KeyMap.toList om
                               , not $ Set.member (Key.toText k) allCoveredProps]
             additionalPropNames = Set.fromList [Key.toText k | (k, _) <- additionalPropsList]
-            results = [validateValueWithContext ctx' addlSchema v | (_, v) <- additionalPropsList]
-            failures = [errs | ValidationFailure errs <- results]
-            annotations = [anns | ValidationSuccess anns <- results]
+            results = [(Key.toText k, validateValueWithContext ctx' addlSchema v) | (k, v) <- additionalPropsList]
+            -- Shift annotations from additional property validations
+            annotations = [ shiftAnnotations (propertyPointer propName) anns
+                          | (propName, ValidationSuccess anns) <- results
+                          ]
+            failures = [errs | (_, ValidationFailure errs) <- results]
         in case failures of
           [] -> ValidationSuccess $ annotateProperties additionalPropNames <> mconcat annotations
           (e:es) -> ValidationFailure $ foldl (<>) e es
@@ -1157,19 +1220,18 @@ validateUnevaluatedProperties ctx obj objMap collectedAnnotations =
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
 -- | Extract evaluated properties from collected annotations
+-- Only considers annotations at the current instance location (empty pointer)
 extractEvaluatedProperties :: ValidationAnnotations -> Set Text
 extractEvaluatedProperties (ValidationAnnotations annMap) =
-  -- Debug: trace the annotations being processed
-  let result = Set.unions
-        [ case Map.lookup "properties" innerMap of
-            Just (Aeson.Array arr) -> Set.fromList
-              [ txt
-              | Aeson.String txt <- toList arr
-              ]
-            _ -> Set.empty
-        | innerMap <- Map.elems annMap
+  -- Only look at annotations at the current location (empty pointer)
+  case Map.lookup emptyPointer annMap of
+    Nothing -> Set.empty
+    Just innerMap -> case Map.lookup "properties" innerMap of
+      Just (Aeson.Array arr) -> Set.fromList
+        [ txt
+        | Aeson.String txt <- toList arr
         ]
-  in result -- Debug output removed for production
+      _ -> Set.empty
 
 -- | Validate unevaluatedItems (2019-09+)
 -- Array items that weren't evaluated by items, prefixItems, or contains
@@ -1198,18 +1260,19 @@ validateUnevaluatedItems ctx obj arr collectedAnnotations =
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
 -- | Extract evaluated items indices from collected annotations
+-- Only considers annotations at the current instance location (empty pointer)
 extractEvaluatedItems :: ValidationAnnotations -> Set Int
 extractEvaluatedItems (ValidationAnnotations annMap) =
-  Set.unions
-    [ case Map.lookup "items" innerMap of
-        Just (Aeson.Array arr) -> Set.fromList
-          [ idx
-          | Aeson.Number n <- toList arr
-          , Just idx <- [Sci.toBoundedInteger n]
-          ]
-        _ -> Set.empty
-    | innerMap <- Map.elems annMap
-    ]
+  -- Only look at annotations at the current location (empty pointer)
+  case Map.lookup emptyPointer annMap of
+    Nothing -> Set.empty
+    Just innerMap -> case Map.lookup "items" innerMap of
+      Just (Aeson.Array arr) -> Set.fromList
+        [ idx
+        | Aeson.Number n <- toList arr
+        , Just idx <- [Sci.toBoundedInteger n]
+        ]
+      _ -> Set.empty
 
 -- | Validate dependentRequired (2019-09+)
 -- If a property exists, then the properties in the value set must also exist
