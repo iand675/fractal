@@ -39,6 +39,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Scientific as Sci
 import Data.Foldable (toList)
 import Data.Maybe (fromJust, fromMaybe)
+import Control.Monad (mplus)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
 import qualified Text.Regex.ECMA262 as R
@@ -211,27 +212,22 @@ validateAgainstObject parentCtx ctx obj val =
             else
               let ctxWithRef = ctx { contextResolvingRefs = Set.insert refText (contextResolvingRefs ctx) }
               in case resolveReference ref refCtx of
-                Just (resolvedSchema, maybeBase) ->
+                Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
                           let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
-                              -- When base URI changes (remote ref), use resolvedSchema as root
+                              -- When base URI changes (remote ref), use the root schema for refs
+                              -- This is either the base schema (for fragments) or resolved schema
                               rootValue =
                                 if baseChanged
-                                  then Just resolvedSchema
+                                  then maybeRootForRefs `mplus` Just resolvedSchema
                                   else case contextRootSchema ctxWithRef of
                                          Just existing -> Just existing
-                                         Nothing -> Just resolvedSchema
-                              -- For remote refs with relative $id, keep parent base to avoid
-                              -- double-applying the $id during applySchemaContext
-                              baseToSet =
-                                if baseChanged && schemaId resolvedSchema /= Nothing
-                                  then contextBaseURI ctxWithRef  -- Keep parent base
-                                  else Just baseDoc
-                          in ctxWithRef { contextBaseURI = baseToSet
+                                         Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
+                          in ctxWithRef { contextBaseURI = Just baseDoc
                                         , contextRootSchema = rootValue
                                         }
-                        Nothing -> ctxWithRef
+                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef }
                   in validateValueWithContext ctxForRef resolvedSchema val
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
@@ -261,27 +257,22 @@ validateAgainstObject parentCtx ctx obj val =
             else
               let ctxWithRef = ctx' { contextResolvingRefs = Set.insert refText (contextResolvingRefs ctx') }
               in case resolveReference ref refCtx of
-                Just (resolvedSchema, maybeBase) ->
+                Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
                   let ctxForRef = case maybeBase of
                         Just baseDoc ->
                           let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
-                              -- When base URI changes (remote ref), use resolvedSchema as root
+                              -- When base URI changes (remote ref), use the root schema for refs
+                              -- This is either the base schema (for fragments) or resolved schema
                               rootValue =
                                 if baseChanged
-                                  then Just resolvedSchema
+                                  then maybeRootForRefs `mplus` Just resolvedSchema
                                   else case contextRootSchema ctxWithRef of
                                          Just existing -> Just existing
-                                         Nothing -> Just resolvedSchema
-                              -- For remote refs with relative $id, keep parent base to avoid
-                              -- double-applying the $id during applySchemaContext
-                              baseToSet =
-                                if baseChanged && schemaId resolvedSchema /= Nothing
-                                  then contextBaseURI ctxWithRef  -- Keep parent base
-                                  else Just baseDoc
-                          in ctxWithRef { contextBaseURI = baseToSet
+                                         Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
+                          in ctxWithRef { contextBaseURI = Just baseDoc
                                         , contextRootSchema = rootValue
                                         }
-                        Nothing -> ctxWithRef
+                        Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef }
                   in validateValueWithContext ctxForRef resolvedSchema val'
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $
@@ -303,17 +294,17 @@ validateAgainstObject parentCtx ctx obj val =
                     Nothing ->
                       -- Fallback: treat as regular $ref (resolve statically)
                       case resolveReference dynRef refCtx of
-                        Just (resolvedSchema, maybeBase) ->
+                        Just (resolvedSchema, maybeBase, maybeRootForRefs) ->
                           let ctxForRef = case maybeBase of
                                 Just baseDoc ->
                                   let baseChanged = contextBaseURI ctxWithRef /= Just baseDoc
-                                      -- When base URI changes (remote ref), use resolvedSchema as root
+                                      -- When base URI changes (remote ref), use the root schema for refs
                                       rootValue =
                                         if baseChanged
-                                          then Just resolvedSchema
+                                          then maybeRootForRefs `mplus` Just resolvedSchema
                                           else case contextRootSchema ctxWithRef of
                                                  Just existing -> Just existing
-                                                 Nothing -> Just resolvedSchema
+                                                 Nothing -> maybeRootForRefs `mplus` Just resolvedSchema
                                       -- For remote refs with relative $id, keep parent base to avoid
                                       -- double-applying the $id during applySchemaContext
                                       baseToSet =
@@ -323,7 +314,7 @@ validateAgainstObject parentCtx ctx obj val =
                                   in ctxWithRef { contextBaseURI = baseToSet
                                                 , contextRootSchema = rootValue
                                                 }
-                                Nothing -> ctxWithRef
+                                Nothing -> ctxWithRef { contextRootSchema = maybeRootForRefs `mplus` contextRootSchema ctxWithRef }
                           in validateValueWithContext ctxForRef resolvedSchema val'
                         Nothing ->
                           ValidationFailure $ ValidationErrors $ pure $
@@ -1278,44 +1269,47 @@ validateDependencies ctx validation objMap = case validationDependencies validat
 -- - Relative URI references: definitions.json#/foo
 -- - Absolute URI references: http://example.com/schema#/foo
 -- Also handles URL-encoded fragments (e.g., #/definitions/percent%25field)
-resolveReference :: Reference -> ValidationContext -> Maybe (Schema, Maybe Text)
+-- Returns: (resolved schema, base URI, root schema for internal refs)
+resolveReference :: Reference -> ValidationContext -> Maybe (Schema, Maybe Text, Maybe Schema)
 resolveReference (Reference refText) ctx
   | T.null refText = Nothing
   | refText == "#" =
       -- Root schema reference
-      fmap (\schema -> (schema, contextBaseURI ctx)) (contextRootSchema ctx)
+      fmap (\schema -> (schema, contextBaseURI ctx, Just schema)) (contextRootSchema ctx)
   | T.isPrefixOf "#/" refText =
       -- JSON Pointer reference within current document
       -- parsePointer handles URL decoding internally
       let pointer = T.drop 1 refText  -- Remove #
+          rootSchema = contextRootSchema ctx
       in resolvePointerInCurrentSchema pointer ctx >>= \schema ->
-           Just (schema, contextBaseURI ctx)
+           Just (schema, contextBaseURI ctx, rootSchema)
   | T.isPrefixOf "#" refText =
       -- Anchor reference (#foo) or JSON Pointer in compact form
       let anchorName = T.drop 1 refText
           baseURI = contextBaseURI ctx
           registry = contextSchemaRegistry ctx
+          rootSchema = contextRootSchema ctx
           -- First try as an anchor
           tryAnchor = case baseURI of
             Just uri ->
               -- Try with explicit base URI first
               case Map.lookup (uri, anchorName) (registryAnchors registry) of
-                Just s -> Just (s, Just uri)
+                Just s -> Just (s, Just uri, Just s)
                 Nothing ->
                   -- Fallback: try with empty string base (for fragment-only $id)
                   case Map.lookup ("", anchorName) (registryAnchors registry) of
-                    Just s -> Just (s, Nothing)
+                    Just s -> Just (s, Nothing, Just s)
                     Nothing -> lookupAnyAnchor anchorName registry
             Nothing ->
               -- No base URI, try with empty string base first
               case Map.lookup ("", anchorName) (registryAnchors registry) of
-                Just s -> Just (s, Nothing)
+                Just s -> Just (s, Nothing, Just s)
                 Nothing ->
                   -- Fallback: try looking up with any base
                   lookupAnyAnchor anchorName registry
           -- If not found as anchor, try as JSON Pointer (without leading slash)
           tryPointer = resolvePointerInCurrentSchema ("/" <> anchorName) ctx >>= \schema ->
-            Just (schema, contextBaseURI ctx)
+            Just (schema, contextBaseURI ctx, rootSchema)
       in case tryAnchor of
         Just result -> Just result
         Nothing -> tryPointer
@@ -1327,25 +1321,23 @@ resolveReference (Reference refText) ctx
           baseContext = if T.null uriPart then Nothing else Just uriPart
       in case Map.lookup refText (registrySchemas registry) of
             Just schema ->
-              Just (schema, baseContext)
+              Just (schema, baseContext, Just schema)
             Nothing ->
               case Map.lookup uriPart (registrySchemas registry) of
                 Just baseSchema
                   | T.null fragmentPart ->
-                      Just (baseSchema, baseContext)
+                      Just (baseSchema, baseContext, Just baseSchema)
                   | T.isPrefixOf "/" fragmentPart ->
-                      -- When resolving a fragment, we need to return the resolved fragment
-                      -- but we also need the context to remember the full base schema for
-                      -- subsequent fragment resolution within that schema
+                      -- When resolving a fragment, return the resolved fragment as the schema
+                      -- to validate against, but return the base schema as the root for
+                      -- resolving subsequent internal references.
                       resolvePointerInSchema fragmentPart baseSchema >>= \resolved ->
-                        -- Return the resolved fragment, but mark the base context
-                        -- The caller should set contextRootSchema to baseSchema, not resolved
-                        Just (resolved, baseContext)
+                        Just (resolved, baseContext, Just baseSchema)
                   | otherwise ->
                       let anchors = registryAnchors registry
                       in maybe
                            (lookupAnyAnchor fragmentPart registry)
-                           (\resolved -> Just (resolved, baseContext))
+                           (\resolved -> Just (resolved, baseContext, Just baseSchema))
                            (Map.lookup (uriPart, fragmentPart) anchors)
                 Nothing ->
                   lookupAnyAnchor fragmentPart registry
@@ -1358,9 +1350,9 @@ resolveReference (Reference refText) ctx
               then contextBaseURI ctx
               else Just resolved
       in Map.lookup resolved (registrySchemas registry) >>= \schema ->
-           Just (schema, baseForContext)
+           Just (schema, baseForContext, Just schema)
   where
-    lookupAnyAnchor :: Text -> SchemaRegistry -> Maybe (Schema, Maybe Text)
+    lookupAnyAnchor :: Text -> SchemaRegistry -> Maybe (Schema, Maybe Text, Maybe Schema)
     lookupAnyAnchor anchorName registry =
       case [ (base, schema)
            | ((base, name), schema) <- Map.toList (registryAnchors registry)
@@ -1368,7 +1360,7 @@ resolveReference (Reference refText) ctx
            ] of
         ((baseUri, schema):_) ->
           let baseResult = if T.null baseUri then Nothing else Just baseUri
-          in Just (schema, baseResult)
+          in Just (schema, baseResult, Just schema)
         [] -> Nothing
 
 -- | Resolve a JSON Pointer within the current schema context
@@ -1550,12 +1542,40 @@ showReference (Reference t) = t
 -- | Resolve a $dynamicRef by searching the dynamic scope stack (2020-12+)
 -- $dynamicRef references are resolved by looking for a schema with a matching
 -- $dynamicAnchor in the dynamic scope stack (most recent first)
+-- Supports both simple anchors (#anchor) and URI references (uri#anchor)
 resolveDynamicRef :: Reference -> ValidationContext -> Maybe Schema
 resolveDynamicRef (Reference refText) ctx
-  -- $dynamicRef should start with # to indicate an anchor reference
-  | T.isPrefixOf "#" refText =
-      let anchorName = T.drop 1 refText  -- Remove the # prefix
-      in findSchemaWithDynamicAnchor anchorName (contextDynamicScope ctx)
+  | T.any (== '#') refText =
+      -- Reference contains a fragment - could be "#anchor" or "uri#anchor"
+      let (uriPart, fragment) = T.breakOn "#" refText
+          anchorName = T.drop 1 fragment  -- Remove the # prefix
+          registry = contextSchemaRegistry ctx
+          baseURI = contextBaseURI ctx
+      in if T.null uriPart
+           then
+             -- Simple fragment reference: #anchor
+             -- First search the dynamic scope for matching $dynamicAnchor
+             case findSchemaWithDynamicAnchor anchorName (contextDynamicScope ctx) of
+               Just schema -> Just schema
+               Nothing ->
+                 -- If not in dynamic scope, check the registry's dynamic anchors
+                 case baseURI of
+                   Just uri -> Map.lookup (uri, anchorName) (registryDynamicAnchors registry)
+                   Nothing -> Nothing
+           else
+             -- URI with fragment: uri#anchor
+             -- First resolve the URI part statically
+             case resolveReference (Reference refText) ctx of
+               Just (resolvedSchema, maybeBase, _) ->
+                 -- Search the dynamic scope for a schema with this anchor
+                 case findSchemaWithDynamicAnchor anchorName (contextDynamicScope ctx) of
+                   Just schema -> Just schema
+                   Nothing ->
+                     -- If not in dynamic scope, check the registry
+                     case maybeBase of
+                       Just uri -> Map.lookup (uri, anchorName) (registryDynamicAnchors registry)
+                       Nothing -> Nothing
+               Nothing -> Nothing
   | otherwise = Nothing  -- Not a valid $dynamicRef format
   where
     -- Search for a schema with matching $dynamicAnchor in the dynamic scope
@@ -1817,18 +1837,21 @@ isValidURIReference text = case URI.parseURIReference (T.unpack text) of
 -- Time validator (RFC3339 time format)
 isValidTime :: Text -> Bool
 isValidTime text =
-  -- Simple check for HH:MM:SS or HH:MM:SS.sss format with optional timezone
-  let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?$"
+  -- Check for HH:MM:SS or HH:MM:SS.sss format with optional timezone
+  -- Allow :60 for leap seconds per RFC 3339
+  -- Also accept lowercase 'z' for timezone (case-insensitive per RFC 3339)
+  let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})?$"
       matches = case Regex.compileText timePattern [] of
                   Left _ -> False
                   Right regex -> Regex.test regex (TE.encodeUtf8 text)
-  in matches && not (T.isInfixOf ":60" text)  -- Reject leap seconds
+  in matches
 
 -- ISO 8601 Duration validator
 isValidDuration :: Text -> Bool
 isValidDuration text =
-  -- Simple regex for ISO 8601 duration: P[nY][nM][nD][T[nH][nM][nS]]
-  let durationPattern = "^P(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?)?$"
+  -- ISO 8601 duration: P[nY][nM][nW][nD][T[nH][nM][nS]]
+  -- Note: Weeks (W) cannot be combined with other date units
+  let durationPattern = "^P(?:(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?)?|[0-9]+W)$"
       matches = case Regex.compileText durationPattern [] of
                   Left _ -> False
                   Right regex -> Regex.test regex (TE.encodeUtf8 text)

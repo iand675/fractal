@@ -960,11 +960,11 @@ buildRegistryWithExternalRefs loader rootSchema = do
       case schemaCore schema of
         BooleanSchema _ -> []
         ObjectSchema obj ->
-          let info = schemaRegistrationInfo parentBase schema
-              baseUri = sriBaseURI info
-              directRefs = maybe [] (resolveRef baseUri) (schemaRef obj)
-              dynamicRefs = maybe [] (resolveRef baseUri) (schemaDynamicRef obj)
-              subRefs = collectFromObject baseUri obj
+          -- Compute the effective base URI for this schema, accounting for its $id
+          let effectiveBase = schemaEffectiveBase parentBase schema
+              directRefs = maybe [] (resolveRef effectiveBase) (schemaRef obj)
+              dynamicRefs = maybe [] (resolveRef effectiveBase) (schemaDynamicRef obj)
+              subRefs = collectFromObject effectiveBase obj
           in uniqueTexts (directRefs <> dynamicRefs <> subRefs)
 
     resolveRef :: Maybe Text -> Reference -> [Text]
