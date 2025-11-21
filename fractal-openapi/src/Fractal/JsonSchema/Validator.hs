@@ -1348,12 +1348,19 @@ resolveReference (Reference refText) ctx
       let (uriPart, fragment) = T.breakOn "#" refText
           fragmentPart = T.drop 1 fragment
           registry = contextSchemaRegistry ctx
-          baseContext = if T.null uriPart then Nothing else Just uriPart
-      in case Map.lookup refText (registrySchemas registry) of
+          -- Resolve the URI part against the base URI before lookup
+          resolvedUriPart = if T.null uriPart
+                              then ""
+                              else resolveAgainstBaseURI (contextBaseURI ctx) uriPart
+          resolvedFullRef = if T.null uriPart
+                              then refText
+                              else resolvedUriPart <> "#" <> fragmentPart
+          baseContext = if T.null uriPart then Nothing else Just resolvedUriPart
+      in case Map.lookup resolvedFullRef (registrySchemas registry) of
             Just schema ->
               Just (schema, baseContext, Just schema)
             Nothing ->
-              case Map.lookup uriPart (registrySchemas registry) of
+              case Map.lookup resolvedUriPart (registrySchemas registry) of
                 Just baseSchema
                   | T.null fragmentPart ->
                       Just (baseSchema, baseContext, Just baseSchema)
@@ -1368,7 +1375,7 @@ resolveReference (Reference refText) ctx
                       in maybe
                            (lookupAnyAnchor fragmentPart registry)
                            (\resolved -> Just (resolved, baseContext, Just baseSchema))
-                           (Map.lookup (uriPart, fragmentPart) anchors)
+                           (Map.lookup (resolvedUriPart, fragmentPart) anchors)
                 Nothing ->
                   lookupAnyAnchor fragmentPart registry
   | otherwise =
