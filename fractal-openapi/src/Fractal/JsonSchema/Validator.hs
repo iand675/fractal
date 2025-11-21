@@ -54,6 +54,7 @@ import qualified Network.URI as URI
 import qualified Data.IP as IP
 import qualified Data.Text.IDN as IDN
 import qualified Numeric
+import qualified Network.URI.Template.Parser as URITemplate
 
 -- | Error during validator compilation
 data CompileError = CompileError Text
@@ -2071,18 +2072,12 @@ isValidRegex text =
     Left _ -> False
 
 -- URI Template validator (RFC 6570)
+-- Uses uri-templater library (>= 1.0.0.1) for proper RFC 6570 compliance
 isValidURITemplate :: Text -> Bool
 isValidURITemplate text =
-  -- Basic validation: check for balanced braces and valid variable syntax
-  let checkBraces 0 "" = True
-      checkBraces _ "" = False  -- Unbalanced braces
-      checkBraces depth s
-        | depth < 0 = False  -- More closing than opening braces
-        | Just ('{', rest) <- T.uncons s = checkBraces (depth + 1) rest
-        | Just ('}', rest) <- T.uncons s = checkBraces (depth - 1) rest
-        | Just (_, rest) <- T.uncons s = checkBraces depth rest
-        | otherwise = depth == 0
-  in checkBraces 0 text
+  case URITemplate.parseTemplate (T.unpack text) of
+    Right _ -> True
+    Left _ -> False
 
 -- | Validate custom keywords from schema extensions
 -- Executes user-provided validators for keywords not in the standard vocabulary
