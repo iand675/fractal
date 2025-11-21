@@ -1,6 +1,6 @@
 cabal-version: 2.2
 name: idn
-version: 0.1.1.0
+version: 0.1.2.0
 synopsis: Pure Haskell IDN and Punycode implementation
 description: 
     Pure Haskell implementation of Internationalized Domain Names (IDN)

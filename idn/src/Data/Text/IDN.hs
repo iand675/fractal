@@ -50,14 +50,14 @@ import Data.Char (ord, isAscii)
 --
 -- Converts each label in the domain name to its ASCII-compatible form.
 -- Unicode labels are encoded using Punycode and prefixed with "xn--".
--- ASCII labels are validated and passed through unchanged.
+-- ASCII labels are normalized to lowercase (case-insensitive per DNS).
 --
 -- === Examples
 --
 -- >>> toASCII "münchen.de"
 -- Right "xn--mnchen-3ya.de"
 --
--- >>> toASCII "example.com"
+-- >>> toASCII "EXAMPLE.COM"
 -- Right "example.com"
 --
 -- === Errors
@@ -113,6 +113,7 @@ toUnicode input = do
 -- | Process a single label to ASCII form.
 processLabelToASCII :: Label -> Either IDNError Label
 processLabelToASCII (ALabel t)
+  -- Labels are already normalized to lowercase by mkLabel
   | "xn--" `T.isPrefixOf` t = do
       -- It's a Punycode A-label, validate it by decoding and re-encoding
       -- This uses processLabelToUnicode which validates Punycode properly
@@ -120,12 +121,12 @@ processLabelToASCII (ALabel t)
       -- Then re-process back to ASCII to get a validated A-label
       processLabelToASCII ulabel
   | otherwise =
-      -- Regular ASCII label, just validate
+      -- Regular ASCII label (already normalized), just validate
       validateLabel t >> return (ALabel t)
-  
+
 processLabelToASCII (ULabel t)
   | isAsciiLabel t = do
-      -- Pure ASCII label, validate and return as-is
+      -- Pure ASCII label (already normalized), just validate
       validateLabel t
       return (ULabel t)
   
@@ -144,21 +145,18 @@ processLabelToASCII (ULabel t)
 
 -- | Process a single label to Unicode form.
 processLabelToUnicode :: Label -> Either IDNError Label
-processLabelToUnicode (ULabel t) = 
+processLabelToUnicode (ULabel t) =
   -- Already Unicode, validate and return
   validateLabel t >> return (ULabel t)
-  
+
 processLabelToUnicode (ALabel t)
-  | "xn--" `T.isPrefixOf` t = do
+  -- RFC 5891 Section 5.1: A-labels are case-insensitive for matching
+  | "xn--" `T.isPrefixOf` T.toLower t = do
       -- Punycode A-label, decode it
-      -- RFC 5891 Section 5.4: A-labels must be lowercase
+      -- RFC 5891 Section 5.1: Accept case-insensitive input, normalize to lowercase
+      -- Drop the prefix (which might be XN--, Xn--, xN--, or xn--)
       let encoded = T.drop 4 t
           encodedLower = T.toLower encoded
-
-      -- Check if original was already lowercase (uppercase in Punycode is invalid)
-      if encoded /= encodedLower
-        then Left (PunycodeDecodeError encoded "A-label must be lowercase")
-        else pure ()
 
       decoded <- case decodePunycode encodedLower of
         Left err -> Left (PunycodeDecodeError encoded (T.pack (show err)))
@@ -246,13 +244,15 @@ checkHyphens label = do
   case T.uncons label of
     Just ('-', _) -> Left (InvalidHyphenPosition StartsWithHyphen)
     _ -> pure ()
-  
+
   case T.unsnoc label of
     Just (_, '-') -> Left (InvalidHyphenPosition EndsWithHyphen)
     _ -> pure ()
-  
+
   -- Check for "--" in positions 3-4 (unless it's an A-label with xn--)
-  if T.length label >= 4 && not ("xn--" `T.isPrefixOf` label)
+  -- RFC 5891: A-labels are case-insensitive for matching
+  let labelLower = T.toLower label
+  if T.length label >= 4 && not ("xn--" `T.isPrefixOf` labelLower)
     then if T.index label 2 == '-' && T.index label 3 == '-'
       then Left (InvalidHyphenPosition HyphensAt3And4NotPunycode)
       else pure ()
