@@ -22,6 +22,10 @@ module Fractal.JsonSchema.Keywords.Standard
   , minItemsKeyword
   , maxItemsKeyword
   , uniqueItemsKeyword
+    -- * Object Keywords
+  , requiredKeyword
+  , minPropertiesKeyword
+  , maxPropertiesKeyword
     -- * Registry
   , standardKeywordRegistry
   ) where
@@ -39,6 +43,8 @@ import Data.Typeable (Typeable)
 import Data.Foldable (toList)
 import qualified Data.Set as Set
 import Numeric.Natural (Natural)
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Aeson.Key as Key
 
 -- | Compiled data for the 'const' keyword
 data ConstData = ConstData
@@ -484,6 +490,104 @@ uniqueItemsKeyword = KeywordDefinition
   , keywordValidate = validateUniqueItems
   }
 
+-- ============================================================================
+-- Object Validation Keywords
+-- ============================================================================
+
+-- | Compiled data for the 'required' keyword
+newtype RequiredData = RequiredData (Set.Set Text)
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'required' keyword
+compileRequired :: CompileFunc RequiredData
+compileRequired value _schema _ctx = case value of
+  Array arr -> do
+    let items = toList arr
+    -- All items must be strings
+    strings <- mapM extractString items
+    Right $ RequiredData (Set.fromList strings)
+  _ -> Left "required must be an array of strings"
+  where
+    extractString (String s) = Right s
+    extractString _ = Left "required array must contain only strings"
+
+-- | Validate function for 'required' keyword
+validateRequired :: ValidateFunc RequiredData
+validateRequired (RequiredData requiredProps) (Object objMap) =
+  let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+      missingProps = Set.difference requiredProps presentProps
+  in if Set.null missingProps
+     then []
+     else ["Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)]
+validateRequired _ _ = []  -- Only applies to objects
+
+-- | The 'required' keyword definition
+requiredKeyword :: KeywordDefinition
+requiredKeyword = KeywordDefinition
+  { keywordName = "required"
+  , keywordScope = AnyScope
+  , keywordCompile = compileRequired
+  , keywordValidate = validateRequired
+  }
+
+-- | Compiled data for the 'minProperties' keyword
+newtype MinPropertiesData = MinPropertiesData Natural
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'minProperties' keyword
+compileMinProperties :: CompileFunc MinPropertiesData
+compileMinProperties value _schema _ctx = case value of
+  Number n | Sci.isInteger n && n >= 0 ->
+    Right $ MinPropertiesData (fromInteger $ truncate n)
+  _ -> Left "minProperties must be a non-negative integer"
+
+-- | Validate function for 'minProperties' keyword
+validateMinProperties :: ValidateFunc MinPropertiesData
+validateMinProperties (MinPropertiesData minProps) (Object objMap) =
+  let propCount = fromIntegral (KeyMap.size objMap) :: Natural
+  in if propCount >= minProps
+     then []
+     else ["Object has " <> T.pack (show propCount) <> " properties, but minProperties is " <> T.pack (show minProps)]
+validateMinProperties _ _ = []  -- Only applies to objects
+
+-- | The 'minProperties' keyword definition
+minPropertiesKeyword :: KeywordDefinition
+minPropertiesKeyword = KeywordDefinition
+  { keywordName = "minProperties"
+  , keywordScope = AnyScope
+  , keywordCompile = compileMinProperties
+  , keywordValidate = validateMinProperties
+  }
+
+-- | Compiled data for the 'maxProperties' keyword
+newtype MaxPropertiesData = MaxPropertiesData Natural
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'maxProperties' keyword
+compileMaxProperties :: CompileFunc MaxPropertiesData
+compileMaxProperties value _schema _ctx = case value of
+  Number n | Sci.isInteger n && n >= 0 ->
+    Right $ MaxPropertiesData (fromInteger $ truncate n)
+  _ -> Left "maxProperties must be a non-negative integer"
+
+-- | Validate function for 'maxProperties' keyword
+validateMaxProperties :: ValidateFunc MaxPropertiesData
+validateMaxProperties (MaxPropertiesData maxProps) (Object objMap) =
+  let propCount = fromIntegral (KeyMap.size objMap) :: Natural
+  in if propCount <= maxProps
+     then []
+     else ["Object has " <> T.pack (show propCount) <> " properties, but maxProperties is " <> T.pack (show maxProps)]
+validateMaxProperties _ _ = []  -- Only applies to objects
+
+-- | The 'maxProperties' keyword definition
+maxPropertiesKeyword :: KeywordDefinition
+maxPropertiesKeyword = KeywordDefinition
+  { keywordName = "maxProperties"
+  , keywordScope = AnyScope
+  , keywordCompile = compileMaxProperties
+  , keywordValidate = validateMaxProperties
+  }
+
 -- | Registry containing all standard keywords
 --
 -- This registry can be extended with custom keywords or used as-is
@@ -507,5 +611,9 @@ standardKeywordRegistry =
   -- Array validation
   registerKeyword minItemsKeyword $
   registerKeyword maxItemsKeyword $
-  registerKeyword uniqueItemsKeyword
+  registerKeyword uniqueItemsKeyword $
+  -- Object validation
+  registerKeyword requiredKeyword $
+  registerKeyword minPropertiesKeyword $
+  registerKeyword maxPropertiesKeyword
   emptyKeywordRegistry
