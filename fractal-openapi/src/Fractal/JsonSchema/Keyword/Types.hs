@@ -12,6 +12,7 @@ module Fractal.JsonSchema.Keyword.Types
   ( -- * Keyword Definition
     KeywordDefinition(..)
   , KeywordScope(..)
+  , KeywordNavigation(..)
   , CompileFunc
   , ValidateFunc
     -- * Keyword Registry
@@ -174,6 +175,29 @@ modifyCompilationState f = CompileM $ modify' f
 liftEither :: Either Text a -> CompileM a
 liftEither = CompileM . lift
 
+-- | Navigation modes for keywords that contain subschemas
+--
+-- Defines how JSON Pointer navigation should work for a keyword
+data KeywordNavigation
+  = NoNavigation
+    -- ^ Keyword doesn't contain subschemas (e.g., type, enum, const)
+  
+  | SingleSchema (Schema -> Maybe Schema)
+    -- ^ Single subschema (e.g., not, contains, propertyNames)
+  
+  | SchemaMap (Schema -> Maybe (Map Text Schema))
+    -- ^ Map of subschemas keyed by Text (e.g., properties, dependentSchemas)
+    -- Next pointer segment is used as map key
+  
+  | SchemaArray (Schema -> Maybe [Schema])
+    -- ^ Array of subschemas (e.g., allOf, anyOf, oneOf)
+    -- Next pointer segment must be numeric index
+  
+  | CustomNavigation (Schema -> Text -> [Text] -> Maybe (Schema, [Text]))
+    -- ^ Custom navigation logic for complex cases (e.g., items with dual behavior)
+    -- Takes: parent schema, current segment, remaining segments
+    -- Returns: (resolved schema, remaining segments to process)
+
 -- | Definition of a custom keyword
 --
 -- This is the main registration point for custom keywords. Users provide:
@@ -181,6 +205,7 @@ liftEither = CompileM . lift
 -- - A scope restriction (what schema types it applies to)
 -- - A compile function that processes the keyword value at schema parse time
 -- - A validate function that uses the compiled data to validate instances
+-- - Optional navigation support for subschema resolution
 data KeywordDefinition = forall a. Typeable a => KeywordDefinition
   { keywordName :: Text
     -- ^ Unique identifier for this keyword (e.g., "maxLength", "x-creditCard")
@@ -190,6 +215,8 @@ data KeywordDefinition = forall a. Typeable a => KeywordDefinition
     -- ^ Compile phase: process keyword value and schema structure
   , keywordValidate :: ValidateFunc a
     -- ^ Validate phase: check instance against compiled keyword
+  , keywordNavigation :: KeywordNavigation
+    -- ^ How to navigate into subschemas (if any)
   }
 
 -- | Registry of custom keywords

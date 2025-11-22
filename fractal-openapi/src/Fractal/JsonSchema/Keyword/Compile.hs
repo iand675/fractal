@@ -88,7 +88,7 @@ compileKeyword
   -> Schema                  -- ^ Schema containing the keyword
   -> CompilationContext      -- ^ Compilation context
   -> Either Text CompiledKeyword
-compileKeyword (KeywordDefinition name _scope compile validate) value schema ctx = do
+compileKeyword (KeywordDefinition name _scope compile validate _nav) value schema ctx = do
   -- Execute the compile function
   compiledData <- compile value schema ctx
 
