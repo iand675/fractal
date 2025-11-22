@@ -93,6 +93,7 @@ library
                     , Fractal.JsonSchema.Keywords.Registry
                     -- Draft-04 Specific
                     , Fractal.JsonSchema.Keywords.Draft04.Minimum
+                    , Fractal.JsonSchema.Keywords.Draft04.Maximum
                     , Fractal.JsonSchema.Keywords.Draft04.ExclusiveMinimum
                     -- Applicator Keywords (composition and conditional)
                     , Fractal.JsonSchema.Keywords.AllOf

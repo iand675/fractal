@@ -29,6 +29,12 @@ import qualified Fractal.JsonSchema.Keywords.Const as KW
 import qualified Fractal.JsonSchema.Keywords.Numeric as KW
 import qualified Fractal.JsonSchema.Keywords.String as KW
 import qualified Fractal.JsonSchema.Keywords.Format as KW
+-- Pluggable keyword system
+import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry)
+import Fractal.JsonSchema.Keywords.Registry (draft04Registry, draft06Registry, draft07Registry, draft201909Registry, draft202012Registry)
+import Fractal.JsonSchema.Keyword (keywordMap, lookupKeyword)
+import Fractal.JsonSchema.Keyword.Compile (compileKeywords, buildCompilationContext, CompiledKeywords(..))
+import qualified Fractal.JsonSchema.Keyword.Validate as KeywordValidate
 -- Applicator keywords (composition and conditional)
 import qualified Fractal.JsonSchema.Keywords.AllOf as AllOf
 import qualified Fractal.JsonSchema.Keywords.AnyOf as AnyOf
@@ -312,6 +318,7 @@ validateAgainstObject parentCtx ctx schema obj val =
                   , schemaCore = ObjectSchema obj
                   , schemaVocabulary = Nothing
                   , schemaExtensions = Map.empty
+                  , schemaRawKeywords = Map.empty  -- No raw keywords for dynamically constructed schema
                   }
             in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
           else ctx
@@ -527,6 +534,71 @@ validateAgainstObject parentCtx ctx schema obj val =
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
+    -- Validate basic validation keywords using pluggable keyword system
+    -- Handles: type, enum, const, numeric (multipleOf, maximum, exclusiveMaximum, minimum, exclusiveMinimum),
+    --          string (maxLength, minLength, pattern)
+    -- Note: Array and object keywords are handled separately due to their complexity
+    -- 
+    -- Falls back to old validation functions for:
+    -- - Draft-04 schemas (different exclusiveMinimum/exclusiveMaximum semantics)
+    -- - Manually constructed schemas (empty schemaRawKeywords)
+    validateBasicKeywords :: ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
+    validateBasicKeywords ctx schema obj val =
+      let rawKeywords = schemaRawKeywords schema
+          schemaVersion' = schemaVersion schema
+          schemaRegistry = contextSchemaRegistry ctx
+          registryMap = registrySchemas schemaRegistry  -- Extract Map Text Schema from SchemaRegistry
+          
+          -- Select appropriate keyword registry based on schema version
+          keywordRegistry = case schemaVersion' of
+            Just Draft04 -> draft04Registry
+            Just Draft06 -> draft06Registry
+            Just Draft07 -> draft07Registry
+            Just Draft201909 -> draft201909Registry
+            Just Draft202012 -> draft202012Registry
+            _ -> standardKeywordRegistry  -- Default to standard (Draft-06+)
+          
+          -- Filter to only basic validation keywords (exclude array/object/composition keywords)
+          basicKeywordNames = 
+            [ "type", "enum", "const"
+            , "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum"
+            , "maxLength", "minLength", "pattern"
+            ]
+          basicKeywords = Map.filterWithKey (\k _ -> k `elem` basicKeywordNames) rawKeywords
+      in
+        -- Fall back to old validation functions for manually constructed schemas (empty schemaRawKeywords)
+        if Map.null rawKeywords
+        then
+          -- Fall back to old validation functions for backward compatibility
+          combineResults
+            [ KW.validateTypeConstraint obj val
+            , KW.validateEnumConstraint obj val
+            , KW.validateConstConstraint obj val
+            , KW.validateNumericConstraints obj val
+            , KW.validateStringConstraints ctx obj val
+            ]
+        else if Map.null basicKeywords
+        then ValidationSuccess mempty
+        else
+          -- Use pluggable keyword system with version-appropriate registry
+          -- Build compilation context
+          let compilationCtx = buildCompilationContext registryMap keywordRegistry schema []
+              -- Get keyword definitions from registry
+              keywordDefs = keywordMap keywordRegistry
+              -- Compile keywords
+              compiledResult = compileKeywords keywordDefs basicKeywords schema compilationCtx
+          in case compiledResult of
+            Left err -> validationFailure "compilation" $ "Failed to compile keywords: " <> err
+            Right compiled ->
+              -- Build keyword validation context (just paths for now)
+              let keywordCtx = KeywordValidate.buildValidationContext [] []
+                  -- Validate using compiled keywords
+                  errors = KeywordValidate.validateKeywords compiled val keywordCtx
+              in if null errors
+                then ValidationSuccess mempty
+                else ValidationFailure $ ValidationErrors $ NE.fromList $
+                  map (\msg -> ValidationError "keyword" emptyPointer emptyPointer msg Nothing) errors
+
     -- Validate object schema content without ref annotations (for pre-2019-09 or when no ref)
     validateObjectSchemaContent ctx' obj' val' =
       validateObjectSchemaContentWithRefAnnotations ctx' obj' val' mempty
@@ -541,11 +613,8 @@ validateAgainstObject parentCtx ctx schema obj val =
           -- Only apply validation keywords if validation vocabulary is active
           results =
             (if validationActive
-             then [ KW.validateTypeConstraint obj' val'
-                  , KW.validateEnumConstraint obj' val'
-                  , KW.validateConstConstraint obj' val'
-                  , KW.validateNumericConstraints obj' val'
-                  , KW.validateStringConstraints ctx'' obj' val'
+             then [ validateBasicKeywords ctx'' schema obj' val'
+                  , KW.validateStringConstraints ctx'' obj' val'  -- Content encoding/media type validation
                   ]
              else [])
             ++

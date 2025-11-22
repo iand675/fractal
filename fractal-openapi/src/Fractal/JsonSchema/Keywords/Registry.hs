@@ -16,6 +16,8 @@ module Fractal.JsonSchema.Keywords.Registry
 
 import Fractal.JsonSchema.Keyword (KeywordRegistry, emptyKeywordRegistry, registerKeyword)
 import qualified Fractal.JsonSchema.Keywords.Standard as Std
+import qualified Fractal.JsonSchema.Keywords.Draft04.Minimum as Draft04Min
+import qualified Fractal.JsonSchema.Keywords.Draft04.Maximum as Draft04Max
 
 -- | Keyword registry for JSON Schema Draft-04
 --
@@ -25,9 +27,6 @@ import qualified Fractal.JsonSchema.Keywords.Standard as Std
 -- - No prefixItems keyword (uses items for tuple validation)
 draft04Registry :: KeywordRegistry
 draft04Registry =
-  -- Note: Draft-04 exclusive keywords need special handling
-  -- For now, using the standard (Draft-06+ style) implementations
-  -- TODO: Implement Draft-04 specific minimum/maximum that check for boolean exclusives
   -- Basic validation
   registerKeyword Std.constKeyword $
   registerKeyword Std.enumKeyword $
@@ -36,10 +35,12 @@ draft04Registry =
   registerKeyword Std.minLengthKeyword $
   registerKeyword Std.maxLengthKeyword $
   registerKeyword Std.patternKeyword $
-  -- Numeric validation (Draft-04 note: exclusive keywords are booleans, not standalone)
-  registerKeyword Std.minimumKeyword $
-  registerKeyword Std.maximumKeyword $
+  -- Numeric validation (Draft-04: exclusive keywords are booleans that modify min/max)
+  registerKeyword Draft04Min.minimumKeyword $
+  registerKeyword Draft04Max.maximumKeyword $
   registerKeyword Std.multipleOfKeyword $
+  registerKeyword Draft04Min.exclusiveMinimumKeyword $
+  registerKeyword Draft04Max.exclusiveMaximumKeyword $
   -- Array validation
   registerKeyword Std.minItemsKeyword $
   registerKeyword Std.maxItemsKeyword $

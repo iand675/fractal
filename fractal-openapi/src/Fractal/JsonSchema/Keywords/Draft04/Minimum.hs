@@ -10,6 +10,7 @@ module Fractal.JsonSchema.Keywords.Draft04.Minimum
   ) where
 
 import Fractal.JsonSchema.Keyword.Types
+import Fractal.JsonSchema.Types (Schema(..), schemaRawKeywords)
 import Data.Aeson (Value(..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,11 +31,11 @@ data MinimumData = MinimumData
 compileMinimum :: CompileFunc MinimumData
 compileMinimum value schema _ctx = case value of
   Number n ->
-    -- Access the schema to look for exclusiveMinimum keyword
-    -- Note: This requires access to the schema's raw keywords
-    -- For now, we'll default to non-exclusive and note this limitation
-    -- TODO: Need to access schema extensions or raw keyword map
-    let exclusive = False  -- Would need to inspect schema.schemaExtensions
+    -- Check for exclusiveMinimum boolean in schemaRawKeywords
+    -- In Draft-04, exclusiveMinimum is a boolean that modifies minimum behavior
+    let exclusive = case Map.lookup "exclusiveMinimum" (schemaRawKeywords schema) of
+          Just (Bool True) -> True
+          _ -> False
     in Right $ MinimumData n exclusive
   _ -> Left "minimum must be a number"
 
