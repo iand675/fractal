@@ -67,6 +67,12 @@ library
                     , Fractal.JsonSchema.Keywords.Numeric
                     , Fractal.JsonSchema.Keywords.String
                     , Fractal.JsonSchema.Keywords.Format
+                    -- Pluggable Architecture Modules
+                    , Fractal.JsonSchema.Keyword.Types
+                    , Fractal.JsonSchema.Vocabulary.Types
+                    , Fractal.JsonSchema.Validator.Result
+                    , Fractal.JsonSchema.Codegen.Types
+                    -- OpenAPI
                     , Fractal.OpenApi
                     , Fractal.OpenApi.Types
                     , Fractal.OpenApi.Parser
