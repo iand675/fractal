@@ -16,6 +16,8 @@ module Fractal.JsonSchema.Keywords.Standard
   , minimumKeyword
   , maximumKeyword
   , multipleOfKeyword
+  , exclusiveMinimumKeyword
+  , exclusiveMaximumKeyword
     -- * Array Keywords
   , minItemsKeyword
   , maxItemsKeyword
@@ -332,6 +334,60 @@ multipleOfKeyword = KeywordDefinition
   , keywordValidate = validateMultipleOf
   }
 
+-- | Compiled data for the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
+newtype ExclusiveMinimumData = ExclusiveMinimumData Sci.Scientific
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'exclusiveMinimum' keyword
+compileExclusiveMinimum :: CompileFunc ExclusiveMinimumData
+compileExclusiveMinimum value _schema _ctx = case value of
+  Number n -> Right $ ExclusiveMinimumData n
+  _ -> Left "exclusiveMinimum must be a number"
+
+-- | Validate function for 'exclusiveMinimum' keyword
+validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
+validateExclusiveMinimum (ExclusiveMinimumData minVal) (Number n) =
+  if n > minVal
+    then []
+    else ["Value " <> T.pack (show n) <> " must be greater than exclusiveMinimum " <> T.pack (show minVal)]
+validateExclusiveMinimum _ _ = []  -- Only applies to numbers
+
+-- | The 'exclusiveMinimum' keyword definition (Draft-06+ style)
+exclusiveMinimumKeyword :: KeywordDefinition
+exclusiveMinimumKeyword = KeywordDefinition
+  { keywordName = "exclusiveMinimum"
+  , keywordScope = AnyScope
+  , keywordCompile = compileExclusiveMinimum
+  , keywordValidate = validateExclusiveMinimum
+  }
+
+-- | Compiled data for the 'exclusiveMaximum' keyword (Draft-06+ standalone numeric)
+newtype ExclusiveMaximumData = ExclusiveMaximumData Sci.Scientific
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'exclusiveMaximum' keyword
+compileExclusiveMaximum :: CompileFunc ExclusiveMaximumData
+compileExclusiveMaximum value _schema _ctx = case value of
+  Number n -> Right $ ExclusiveMaximumData n
+  _ -> Left "exclusiveMaximum must be a number"
+
+-- | Validate function for 'exclusiveMaximum' keyword
+validateExclusiveMaximum :: ValidateFunc ExclusiveMaximumData
+validateExclusiveMaximum (ExclusiveMaximumData maxVal) (Number n) =
+  if n < maxVal
+    then []
+    else ["Value " <> T.pack (show n) <> " must be less than exclusiveMaximum " <> T.pack (show maxVal)]
+validateExclusiveMaximum _ _ = []  -- Only applies to numbers
+
+-- | The 'exclusiveMaximum' keyword definition (Draft-06+ style)
+exclusiveMaximumKeyword :: KeywordDefinition
+exclusiveMaximumKeyword = KeywordDefinition
+  { keywordName = "exclusiveMaximum"
+  , keywordScope = AnyScope
+  , keywordCompile = compileExclusiveMaximum
+  , keywordValidate = validateExclusiveMaximum
+  }
+
 -- ============================================================================
 -- Array Validation Keywords
 -- ============================================================================
@@ -446,6 +502,8 @@ standardKeywordRegistry =
   registerKeyword minimumKeyword $
   registerKeyword maximumKeyword $
   registerKeyword multipleOfKeyword $
+  registerKeyword exclusiveMinimumKeyword $
+  registerKeyword exclusiveMaximumKeyword $
   -- Array validation
   registerKeyword minItemsKeyword $
   registerKeyword maxItemsKeyword $
