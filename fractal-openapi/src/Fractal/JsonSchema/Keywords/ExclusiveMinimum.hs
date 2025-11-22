@@ -28,11 +28,11 @@ compileExclusiveMinimum value _schema _ctx = case value of
 
 -- | Validate function for 'exclusiveMinimum' keyword
 validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
-validateExclusiveMinimum (ExclusiveMinimumData minVal) (Number n) =
+validateExclusiveMinimum _recursiveValidator (ExclusiveMinimumData minVal) _ctx (Number n) =
   if n > minVal
     then []
     else ["Value " <> T.pack (show n) <> " must be greater than exclusiveMinimum " <> T.pack (show minVal)]
-validateExclusiveMinimum _ _ = []  -- Only applies to numbers
+validateExclusiveMinimum _ _ _ _ = []  -- Only applies to numbers
 
 -- | The 'exclusiveMinimum' keyword definition (Draft-06+ style)
 exclusiveMinimumKeyword :: KeywordDefinition

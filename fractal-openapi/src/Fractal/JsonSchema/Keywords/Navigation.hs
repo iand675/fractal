@@ -47,7 +47,7 @@ propertiesKeyword = mkNavigableKeyword
   "properties"
   AnyScope
   (\_ _ _ -> Right ())  -- No compilation needed for navigation-only
-  (\_ _ -> [])          -- No validation needed for navigation-only
+  (\_ _ _ _ -> [])      -- No validation needed for navigation-only
   (SchemaMap $ \schema -> case schemaCore schema of
     ObjectSchema obj -> validationProperties (schemaValidation obj)
     _ -> Nothing)
@@ -58,7 +58,7 @@ patternPropertiesKeyword = mkNavigableKeyword
   "patternProperties"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SchemaMap $ \schema -> case schemaCore schema of
     ObjectSchema obj ->
       case validationPatternProperties (schemaValidation obj) of
@@ -74,7 +74,7 @@ additionalPropertiesKeyword = mkNavigableKeyword
   "additionalProperties"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> validationAdditionalProperties (schemaValidation obj)
     _ -> Nothing)
@@ -85,7 +85,7 @@ itemsKeyword = mkNavigableKeyword
   "items"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (CustomNavigation $ \schema _seg rest -> case schemaCore schema of
     ObjectSchema obj ->
       case validationItems (schemaValidation obj) of
@@ -110,7 +110,7 @@ prefixItemsKeyword = mkNavigableKeyword
   "prefixItems"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SchemaArray $ \schema -> case schemaCore schema of
     ObjectSchema obj -> case validationPrefixItems (schemaValidation obj) of
       Just prefixSchemas -> Just (NE.toList prefixSchemas)
@@ -123,7 +123,7 @@ containsKeyword = mkNavigableKeyword
   "contains"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> validationContains (schemaValidation obj)
     _ -> Nothing)
@@ -134,7 +134,7 @@ allOfKeyword = mkNavigableKeyword
   "allOf"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SchemaArray $ \schema -> case schemaCore schema of
     ObjectSchema obj -> fmap NE.toList (schemaAllOf obj)
     _ -> Nothing)
@@ -145,7 +145,7 @@ anyOfKeyword = mkNavigableKeyword
   "anyOf"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SchemaArray $ \schema -> case schemaCore schema of
     ObjectSchema obj -> fmap NE.toList (schemaAnyOf obj)
     _ -> Nothing)
@@ -156,7 +156,7 @@ oneOfKeyword = mkNavigableKeyword
   "oneOf"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SchemaArray $ \schema -> case schemaCore schema of
     ObjectSchema obj -> fmap NE.toList (schemaOneOf obj)
     _ -> Nothing)
@@ -167,7 +167,7 @@ notKeyword = mkNavigableKeyword
   "not"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> schemaNot obj
     _ -> Nothing)
@@ -178,7 +178,7 @@ ifKeyword = mkNavigableKeyword
   "if"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> schemaIf obj
     _ -> Nothing)
@@ -189,7 +189,7 @@ thenKeyword = mkNavigableKeyword
   "then"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> schemaThen obj
     _ -> Nothing)
@@ -200,7 +200,7 @@ elseKeyword = mkNavigableKeyword
   "else"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> schemaElse obj
     _ -> Nothing)
@@ -211,7 +211,7 @@ dependentSchemasKeyword = mkNavigableKeyword
   "dependentSchemas"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SchemaMap $ \schema -> case schemaCore schema of
     ObjectSchema obj -> validationDependentSchemas (schemaValidation obj)
     _ -> Nothing)
@@ -222,7 +222,7 @@ propertyNamesKeyword = mkNavigableKeyword
   "propertyNames"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> validationPropertyNames (schemaValidation obj)
     _ -> Nothing)
@@ -233,7 +233,7 @@ unevaluatedPropertiesKeyword = mkNavigableKeyword
   "unevaluatedProperties"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SingleSchema $ \schema -> case schemaCore schema of
     ObjectSchema obj -> validationUnevaluatedProperties (schemaValidation obj)
     _ -> Nothing)
@@ -244,7 +244,7 @@ defsKeyword = mkNavigableKeyword
   "$defs"
   AnyScope
   (\_ _ _ -> Right ())
-  (\_ _ -> [])
+  (\_ _ _ _ -> [])
   (SchemaMap $ \schema -> case schemaCore schema of
     ObjectSchema obj ->
       let defs = schemaDefs obj

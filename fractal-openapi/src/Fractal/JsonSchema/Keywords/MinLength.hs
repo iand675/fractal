@@ -28,11 +28,11 @@ compileMinLength value _schema _ctx = case value of
 
 -- | Validate function for 'minLength' keyword
 validateMinLength :: ValidateFunc MinLengthData
-validateMinLength (MinLengthData minLen) (String txt) =
+validateMinLength _recursiveValidator (MinLengthData minLen) _ctx (String txt) =
   if T.length txt >= minLen
     then []
     else ["String length " <> T.pack (show (T.length txt)) <> " is less than minLength " <> T.pack (show minLen)]
-validateMinLength _ _ = []  -- Only applies to strings
+validateMinLength _ _ _ _ = []  -- Only applies to strings
 
 -- | The 'minLength' keyword definition
 minLengthKeyword :: KeywordDefinition

@@ -13,7 +13,7 @@ import Fractal.JsonSchema.Keyword
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword.Compile
 import Fractal.JsonSchema.Keyword.Validate
-import Fractal.JsonSchema.Types (Schema, emptyPointer)
+import Fractal.JsonSchema.Types (Schema, emptyPointer, ValidationResult(..), ValidationAnnotations)
 import Fractal.JsonSchema.Parser (parseSchema)
 
 -- | Test compiled data: minimum value for numbers
@@ -27,11 +27,11 @@ compileMinValue _ _schema _ctx = Left "x-min-value must be a number"
 
 -- | Validate function: check instance is >= minimum
 validateMinValue :: ValidateFunc MinValueData
-validateMinValue (MinValueData minVal) (Number n) =
+validateMinValue _recursiveValidator (MinValueData minVal) _ctx (Number n) =
   if realToFrac n >= minVal
     then []
     else ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinValue _ _ = ["x-min-value can only validate numbers"]
+validateMinValue _ _ _ _ = ["x-min-value can only validate numbers"]
 
 -- | Test compiled data: string must match pattern
 data PatternData = PatternData Text
@@ -42,11 +42,11 @@ compilePattern (String s) _schema _ctx = Right $ PatternData s
 compilePattern _ _schema _ctx = Left "x-pattern must be a string"
 
 validatePattern :: ValidateFunc PatternData
-validatePattern (PatternData pat) (String s) =
+validatePattern _recursiveValidator (PatternData pat) _ctx (String s) =
   if pat `T.isInfixOf` s
     then []
     else ["String does not contain pattern: " <> pat]
-validatePattern _ _ = ["x-pattern can only validate strings"]
+validatePattern _ _ _ _ = ["x-pattern can only validate strings"]
 
 spec :: Spec
 spec = describe "Keyword System" $ do
@@ -145,13 +145,15 @@ spec = describe "Keyword System" $ do
           ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
           compiled = either (error . T.unpack) id $ compileKeyword def value schema ctx
           compiledKeywords = addCompiledKeyword compiled emptyCompiledKeywords
-          validationCtx = buildValidationContext [] []
+          validationCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          -- Dummy recursive validator (not used in these simple tests)
+          recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Valid: 15 >= 10
-      validateKeywords compiledKeywords (Number 15) validationCtx `shouldBe` []
+      validateKeywords recursiveValidator compiledKeywords (Number 15) validationCtx `shouldBe` []
 
       -- Invalid: 5 < 10
-      let errors = validateKeywords compiledKeywords (Number 5) validationCtx
+      let errors = validateKeywords recursiveValidator compiledKeywords (Number 5) validationCtx
       length errors `shouldBe` 1
       head errors `shouldSatisfy` T.isInfixOf "less than minimum"
 
@@ -169,16 +171,17 @@ spec = describe "Keyword System" $ do
           schema = either (error . show) id $ parseSchema (Aeson.object [])
           ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
           compiled = either (error . T.unpack) id $ compileKeywords definitions keywordValues schema ctx
-          validationCtx = buildValidationContext [] []
+          validationCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Test number validation
-      let numErrors = validateKeywords compiled (Number 10) validationCtx
+      let numErrors = validateKeywords recursiveValidator compiled (Number 10) validationCtx
       -- x-min succeeds (10 >= 5), x-pattern fails (can only validate strings)
       length numErrors `shouldBe` 1
       head numErrors `shouldSatisfy` T.isInfixOf "can only validate strings"
 
       -- Test string validation
-      let strErrors = validateKeywords compiled (String "hello world") validationCtx
+      let strErrors = validateKeywords recursiveValidator compiled (String "hello world") validationCtx
       -- x-pattern succeeds (contains "hello"), x-min fails (can only validate numbers)
       length strErrors `shouldBe` 1
       head strErrors `shouldSatisfy` T.isInfixOf "can only validate numbers"
@@ -190,10 +193,11 @@ spec = describe "Keyword System" $ do
           schema = either (error . show) id $ parseSchema (Aeson.object [])
           ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
           compiled = either (error . T.unpack) id $ compileKeywords definitions keywordValues schema ctx
-          validationCtx = buildValidationContext [] []
+          validationCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Value way below minimum
-      let errors = validateKeywords compiled (Number 1) validationCtx
+      let errors = validateKeywords recursiveValidator compiled (Number 1) validationCtx
       length errors `shouldBe` 1
       head errors `shouldSatisfy` T.isInfixOf "less than minimum"
 

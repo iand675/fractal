@@ -38,13 +38,13 @@ compileRequired value _schema _ctx = case value of
 
 -- | Validate function for 'required' keyword
 validateRequired :: ValidateFunc RequiredData
-validateRequired (RequiredData requiredProps) (Object objMap) =
+validateRequired _recursiveValidator (RequiredData requiredProps) _ctx (Object objMap) =
   let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
       missingProps = Set.difference requiredProps presentProps
   in if Set.null missingProps
      then []
      else ["Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)]
-validateRequired _ _ = []  -- Only applies to objects
+validateRequired _ _ _ _ = []  -- Only applies to objects
 
 -- | The 'required' keyword definition
 requiredKeyword :: KeywordDefinition

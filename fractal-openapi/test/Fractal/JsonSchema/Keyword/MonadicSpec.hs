@@ -29,7 +29,7 @@ compileDraft04ExclusiveMin value _schema _ctx = case value of
   _ -> Left "exclusiveMinimum must be a boolean"
 
 validateDraft04ExclusiveMin :: ValidateFunc Draft04ExclusiveMinData
-validateDraft04ExclusiveMin _ _ = []  -- Validation handled by minimum keyword
+validateDraft04ExclusiveMin _ _ _ _ = []  -- Validation handled by minimum keyword
 
 draft04ExclusiveMinKeyword :: KeywordDefinition
 draft04ExclusiveMinKeyword = KeywordDefinition

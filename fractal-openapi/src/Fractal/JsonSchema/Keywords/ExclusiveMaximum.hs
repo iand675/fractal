@@ -28,11 +28,11 @@ compileExclusiveMaximum value _schema _ctx = case value of
 
 -- | Validate function for 'exclusiveMaximum' keyword
 validateExclusiveMaximum :: ValidateFunc ExclusiveMaximumData
-validateExclusiveMaximum (ExclusiveMaximumData maxVal) (Number n) =
+validateExclusiveMaximum _recursiveValidator (ExclusiveMaximumData maxVal) _ctx (Number n) =
   if n < maxVal
     then []
     else ["Value " <> T.pack (show n) <> " must be less than exclusiveMaximum " <> T.pack (show maxVal)]
-validateExclusiveMaximum _ _ = []  -- Only applies to numbers
+validateExclusiveMaximum _ _ _ _ = []  -- Only applies to numbers
 
 -- | The 'exclusiveMaximum' keyword definition (Draft-06+ style)
 exclusiveMaximumKeyword :: KeywordDefinition

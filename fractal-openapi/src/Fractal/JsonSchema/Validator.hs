@@ -34,6 +34,7 @@ import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry, draft04Reg
 import Fractal.JsonSchema.Keywords.Registry (draft06Registry, draft07Registry, draft201909Registry, draft202012Registry)
 import Fractal.JsonSchema.Keyword (keywordMap, lookupKeyword)
 import qualified Fractal.JsonSchema.Keyword as Keyword
+import qualified Fractal.JsonSchema.Keyword.Types as Keyword.Types
 import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeywords, buildCompilationContext, CompiledKeywords(..))
 import qualified Fractal.JsonSchema.Keyword.Validate as KeywordValidate
@@ -592,10 +593,15 @@ validateAgainstObject parentCtx ctx schema obj val =
           in case compiledResult of
             Left err -> validationFailure "compilation" $ "Failed to compile keywords: " <> err
             Right compiled ->
-              -- Build keyword validation context (just paths for now)
-              let keywordCtx = KeywordValidate.buildValidationContext [] []
-                  -- Validate using compiled keywords
-                  errors = KeywordValidate.validateKeywords compiled val keywordCtx
+              -- Create recursive validator for subschemas
+              let recursiveValidator sch v = validateValueWithContext ctx sch v
+                  -- Build keyword validation context (just paths for now)
+                  keywordCtx = Keyword.Types.ValidationContext'
+                    { Keyword.Types.kwContextInstancePath = []
+                    , Keyword.Types.kwContextSchemaPath = []
+                    }
+                  -- Validate using compiled keywords with recursive validator
+                  errors = KeywordValidate.validateKeywords recursiveValidator compiled val keywordCtx
               in if null errors
                 then ValidationSuccess mempty
                 else ValidationFailure $ ValidationErrors $ NE.fromList $

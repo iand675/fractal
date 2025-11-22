@@ -28,11 +28,11 @@ compileMinimum value _schema _ctx = case value of
 
 -- | Validate function for 'minimum' keyword
 validateMinimum :: ValidateFunc MinimumData
-validateMinimum (MinimumData minVal) (Number n) =
+validateMinimum _recursiveValidator (MinimumData minVal) _ctx (Number n) =
   if n >= minVal
     then []
     else ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinimum _ _ = []  -- Only applies to numbers
+validateMinimum _ _ _ _ = []  -- Only applies to numbers
 
 -- | The 'minimum' keyword definition
 minimumKeyword :: KeywordDefinition

@@ -32,7 +32,7 @@ compileMultipleOf value _schema _ctx = case value of
 -- of a small divisor (e.g., 1e308 / 0.5), we avoid division overflow by checking
 -- if the divisor's reciprocal is an integer. If so, any integer is a multiple.
 validateMultipleOf :: ValidateFunc MultipleOfData
-validateMultipleOf (MultipleOfData divisor) (Number n) =
+validateMultipleOf _recursiveValidator (MultipleOfData divisor) _ctx (Number n) =
   let numDouble = Sci.toRealFloat n :: Double
       divisorDouble = Sci.toRealFloat divisor :: Double
       
@@ -61,7 +61,7 @@ validateMultipleOf (MultipleOfData divisor) (Number n) =
            then []
            else ["Value is not a multiple of " <> T.pack (show divisor)]
   in handleOverflowCase
-validateMultipleOf _ _ = []  -- Only applies to numbers
+validateMultipleOf _ _ _ _ = []  -- Only applies to numbers
 
 -- | The 'multipleOf' keyword definition
 multipleOfKeyword :: KeywordDefinition

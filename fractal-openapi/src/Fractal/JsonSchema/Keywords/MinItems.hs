@@ -30,12 +30,12 @@ compileMinItems value _schema _ctx = case value of
 
 -- | Validate function for 'minItems' keyword
 validateMinItems :: ValidateFunc MinItemsData
-validateMinItems (MinItemsData minLen) (Array arr) =
+validateMinItems _recursiveValidator (MinItemsData minLen) _ctx (Array arr) =
   let arrLength = fromIntegral (length arr) :: Natural
   in if arrLength >= minLen
      then []
      else ["Array length " <> T.pack (show arrLength) <> " is less than minItems " <> T.pack (show minLen)]
-validateMinItems _ _ = []  -- Only applies to arrays
+validateMinItems _ _ _ _ = []  -- Only applies to arrays
 
 -- | The 'minItems' keyword definition
 minItemsKeyword :: KeywordDefinition

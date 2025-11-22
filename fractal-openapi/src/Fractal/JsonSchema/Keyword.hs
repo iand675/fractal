@@ -121,13 +121,13 @@ mkSimpleKeyword
   => Text                    -- ^ Keyword name
   -> KeywordScope            -- ^ Scope restriction
   -> (Value -> Either Text a)  -- ^ Parse keyword value
-  -> (a -> Value -> [Text])    -- ^ Validate function
+  -> (a -> Value -> [Text])    -- ^ Validate function (old signature for backward compat)
   -> KeywordDefinition
 mkSimpleKeyword name scope parseValue validateValue =
   KeywordDefinition
     { keywordName = name
     , keywordScope = scope
     , keywordCompile = \val _schema _ctx -> parseValue val
-    , keywordValidate = validateValue
+    , keywordValidate = \_ compiledData _ val -> validateValue compiledData val  -- Adapt to new signature
     , keywordNavigation = NoNavigation
     }

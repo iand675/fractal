@@ -21,6 +21,8 @@ module Fractal.JsonSchema.Keyword.Types
   , CompilationContext(..)
   , CompiledKeyword(..)
   , SomeCompiledData(..)
+    -- * Validation Context
+  , ValidationContext'(..)
     -- * Monadic Compilation
   , CompileM
   , CompilationState(..)
@@ -40,7 +42,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, ValidationResult)
 
 -- | Scope restriction for keywords - defines which schema types they apply to
 data KeywordScope
@@ -95,13 +97,35 @@ type CompileFunc a = Value -> Schema -> CompilationContext -> Either Text a
 -- | Validate function signature: validates instance data using compiled keyword
 --
 -- The validate function receives:
--- 1. The compiled data from the compile phase
--- 2. The instance value being validated
--- 3. A validation context (to be defined in Validator.Result module)
+-- 1. A recursive validator for subschemas (Schema -> Value -> ValidationResult)
+-- 2. The compiled data from the compile phase
+-- 3. A validation context (instance and schema paths)
+-- 4. The instance value being validated
 --
 -- Returns validation errors (empty list = success), not a ValidationResult
 -- to allow composition of multiple keyword validators.
-type ValidateFunc a = a -> Value -> [Text]  -- TODO: Use proper ValidationError type
+--
+-- For simple keywords that don't need recursive validation (e.g., type, enum),
+-- the recursive validator parameter can be ignored.
+type ValidateFunc a = 
+  (Schema -> Value -> ValidationResult)  -- ^ Recursive validator for subschemas
+  -> a                                    -- ^ Compiled data
+  -> ValidationContext'                  -- ^ Validation context (paths)
+  -> Value                                -- ^ Instance value
+  -> [Text]                              -- ^ Validation errors
+
+-- | Validation context for keyword validators
+--
+-- Provides path information for error reporting during validation.
+-- This is simpler than the main ValidationContext and used specifically
+-- for keyword validation.
+data ValidationContext' = ValidationContext'
+  { kwContextInstancePath :: [Text]
+    -- ^ Path to current location in instance (for error reporting)
+  , kwContextSchemaPath :: [Text]
+    -- ^ Path to current location in schema (for error reporting)
+  }
+  deriving (Show, Eq)
 
 -- | Existentially quantified compiled keyword data
 --
@@ -115,8 +139,10 @@ data CompiledKeyword = CompiledKeyword
     -- ^ Name of the keyword
   , compiledData :: SomeCompiledData
     -- ^ The compiled data (existentially quantified)
-  , compiledValidate :: Value -> [Text]
+  , compiledValidate :: (Schema -> Value -> ValidationResult) -> ValidationContext' -> Value -> [Text]
     -- ^ Type-erased validate function (closed over compiled data)
+    -- Takes: recursive validator, validation context, value
+    -- Returns: list of validation errors
   , compiledAdjacentData :: Map Text Value
     -- ^ Values from adjacent keywords accessed during compilation
   }

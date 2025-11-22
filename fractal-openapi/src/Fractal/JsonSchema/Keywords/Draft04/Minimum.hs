@@ -41,7 +41,7 @@ compileMinimum value schema _ctx = case value of
 
 -- | Validate function for Draft-04 'minimum' keyword
 validateMinimum :: ValidateFunc MinimumData
-validateMinimum (MinimumData minVal exclusive) (Number n) =
+validateMinimum _recursiveValidator (MinimumData minVal exclusive) _ctx (Number n) =
   if exclusive
     then if n > minVal
          then []
@@ -49,7 +49,7 @@ validateMinimum (MinimumData minVal exclusive) (Number n) =
     else if n >= minVal
          then []
          else ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinimum _ _ = []  -- Only applies to numbers
+validateMinimum _ _ _ _ = []  -- Only applies to numbers
 
 -- | The Draft-04 'minimum' keyword definition
 minimumKeyword :: KeywordDefinition
@@ -78,7 +78,7 @@ compileExclusiveMinimum value _schema _ctx = case value of
 -- This keyword doesn't validate on its own - it only modifies
 -- the behavior of the 'minimum' keyword via adjacent data.
 validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
-validateExclusiveMinimum _ _ = []
+validateExclusiveMinimum _ _ _ _ = []
 
 -- | The Draft-04 'exclusiveMinimum' keyword definition
 exclusiveMinimumKeyword :: KeywordDefinition

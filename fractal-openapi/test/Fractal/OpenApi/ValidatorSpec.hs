@@ -5,5 +5,6 @@ import Test.Hspec
 spec :: Spec
 spec = describe "OpenAPI Validator" $ do
   it "placeholder test" $ do
-    1 `shouldBe` 1
+    -- TODO: Implement OpenAPI validation tests
+    (1 :: Int) `shouldBe` (1 :: Int)
 

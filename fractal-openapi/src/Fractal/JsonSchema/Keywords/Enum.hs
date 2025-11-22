@@ -32,7 +32,7 @@ compileEnum value _schema _ctx = case value of
 
 -- | Validate function for 'enum' keyword
 validateEnum :: ValidateFunc EnumData
-validateEnum (EnumData allowedValues) actual =
+validateEnum _recursiveValidator (EnumData allowedValues) _ctx actual =
   if actual `elem` allowedValues
     then []
     else ["Value not in enum: " <> T.pack (show actual)]

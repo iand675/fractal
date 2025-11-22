@@ -20,7 +20,7 @@ testCompile :: CompileFunc ()
 testCompile _ _ _ = Right ()
 
 testValidate :: ValidateFunc ()
-testValidate _ _ = []
+testValidate _ _ _ _ = []
 
 mkTestKeyword :: Text -> KeywordDefinition
 mkTestKeyword name = KeywordDefinition
@@ -28,6 +28,7 @@ mkTestKeyword name = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = testCompile
   , keywordValidate = testValidate
+  , keywordNavigation = NoNavigation
   }
 
 spec :: Spec

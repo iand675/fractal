@@ -30,12 +30,12 @@ compileMaxItems value _schema _ctx = case value of
 
 -- | Validate function for 'maxItems' keyword
 validateMaxItems :: ValidateFunc MaxItemsData
-validateMaxItems (MaxItemsData maxLen) (Array arr) =
+validateMaxItems _recursiveValidator (MaxItemsData maxLen) _ctx (Array arr) =
   let arrLength = fromIntegral (length arr) :: Natural
   in if arrLength <= maxLen
      then []
      else ["Array length " <> T.pack (show arrLength) <> " exceeds maxItems " <> T.pack (show maxLen)]
-validateMaxItems _ _ = []  -- Only applies to arrays
+validateMaxItems _ _ _ _ = []  -- Only applies to arrays
 
 -- | The 'maxItems' keyword definition
 maxItemsKeyword :: KeywordDefinition

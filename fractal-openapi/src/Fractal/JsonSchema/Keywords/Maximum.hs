@@ -28,11 +28,11 @@ compileMaximum value _schema _ctx = case value of
 
 -- | Validate function for 'maximum' keyword
 validateMaximum :: ValidateFunc MaximumData
-validateMaximum (MaximumData maxVal) (Number n) =
+validateMaximum _recursiveValidator (MaximumData maxVal) _ctx (Number n) =
   if n <= maxVal
     then []
     else ["Value " <> T.pack (show n) <> " exceeds maximum " <> T.pack (show maxVal)]
-validateMaximum _ _ = []  -- Only applies to numbers
+validateMaximum _ _ _ _ = []  -- Only applies to numbers
 
 -- | The 'maximum' keyword definition
 maximumKeyword :: KeywordDefinition

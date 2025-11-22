@@ -53,7 +53,7 @@ compileType value _schema _ctx = case value of
 
 -- | Validate function for 'type' keyword
 validateType :: ValidateFunc TypeData
-validateType (TypeData expectedTypes) actual =
+validateType _recursiveValidator (TypeData expectedTypes) _ctx actual =
   if any (matchesType actual) expectedTypes
     then []
     else ["Expected one of: " <> T.intercalate ", " (map (T.pack . show) expectedTypes)]

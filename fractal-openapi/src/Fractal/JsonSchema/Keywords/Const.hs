@@ -26,7 +26,7 @@ compileConst value _schema _ctx = Right $ ConstData { constExpectedValue = value
 
 -- | Validate function for 'const' keyword
 validateConst :: ValidateFunc ConstData
-validateConst (ConstData expected) actual =
+validateConst _recursiveValidator (ConstData expected) _ctx actual =
   if actual == expected
     then []
     else ["Value does not match const"]

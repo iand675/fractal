@@ -31,12 +31,12 @@ compileMinProperties value _schema _ctx = case value of
 
 -- | Validate function for 'minProperties' keyword
 validateMinProperties :: ValidateFunc MinPropertiesData
-validateMinProperties (MinPropertiesData minProps) (Object objMap) =
+validateMinProperties _recursiveValidator (MinPropertiesData minProps) _ctx (Object objMap) =
   let propCount = fromIntegral (KeyMap.size objMap) :: Natural
   in if propCount >= minProps
      then []
      else ["Object has " <> T.pack (show propCount) <> " properties, but minProperties is " <> T.pack (show minProps)]
-validateMinProperties _ _ = []  -- Only applies to objects
+validateMinProperties _ _ _ _ = []  -- Only applies to objects
 
 -- | The 'minProperties' keyword definition
 minPropertiesKeyword :: KeywordDefinition

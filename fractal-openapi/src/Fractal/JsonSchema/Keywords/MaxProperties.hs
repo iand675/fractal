@@ -31,12 +31,12 @@ compileMaxProperties value _schema _ctx = case value of
 
 -- | Validate function for 'maxProperties' keyword
 validateMaxProperties :: ValidateFunc MaxPropertiesData
-validateMaxProperties (MaxPropertiesData maxProps) (Object objMap) =
+validateMaxProperties _recursiveValidator (MaxPropertiesData maxProps) _ctx (Object objMap) =
   let propCount = fromIntegral (KeyMap.size objMap) :: Natural
   in if propCount <= maxProps
      then []
      else ["Object has " <> T.pack (show propCount) <> " properties, but maxProperties is " <> T.pack (show maxProps)]
-validateMaxProperties _ _ = []  -- Only applies to objects
+validateMaxProperties _ _ _ _ = []  -- Only applies to objects
 
 -- | The 'maxProperties' keyword definition
 maxPropertiesKeyword :: KeywordDefinition

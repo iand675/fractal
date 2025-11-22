@@ -85,7 +85,8 @@ compileAdjacent keywordName = do
 
               -- Create the compiled keyword
               let someData = SomeCompiledData result
-                  validateErased = validate result
+                  -- Create closure over compiled data, recursive validator will be provided at validation time
+                  validateErased recursiveValidator valCtx val = validate recursiveValidator result valCtx val
                   compiled = CompiledKeyword
                     { compiledKeywordName = keywordName
                     , compiledData = someData

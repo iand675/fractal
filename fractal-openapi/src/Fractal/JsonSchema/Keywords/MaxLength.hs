@@ -28,11 +28,11 @@ compileMaxLength value _schema _ctx = case value of
 
 -- | Validate function for 'maxLength' keyword
 validateMaxLength :: ValidateFunc MaxLengthData
-validateMaxLength (MaxLengthData maxLen) (String txt) =
+validateMaxLength _recursiveValidator (MaxLengthData maxLen) _ctx (String txt) =
   if T.length txt <= maxLen
     then []
     else ["String length " <> T.pack (show (T.length txt)) <> " exceeds maxLength " <> T.pack (show maxLen)]
-validateMaxLength _ _ = []  -- Only applies to strings
+validateMaxLength _ _ _ _ = []  -- Only applies to strings
 
 -- | The 'maxLength' keyword definition
 maxLengthKeyword :: KeywordDefinition

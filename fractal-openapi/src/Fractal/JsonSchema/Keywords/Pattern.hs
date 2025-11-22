@@ -38,11 +38,11 @@ compilePattern value _schema _ctx = case value of
 
 -- | Validate function for 'pattern' keyword
 validatePattern :: ValidateFunc PatternData
-validatePattern (PatternData regex patternStr) (String txt) =
+validatePattern _recursiveValidator (PatternData regex patternStr) _ctx (String txt) =
   if Regex.matchRegex regex txt
     then []
     else ["String does not match pattern: " <> patternStr]
-validatePattern _ _ = []  -- Only applies to strings
+validatePattern _ _ _ _ = []  -- Only applies to strings
 
 -- | The 'pattern' keyword definition
 patternKeyword :: KeywordDefinition

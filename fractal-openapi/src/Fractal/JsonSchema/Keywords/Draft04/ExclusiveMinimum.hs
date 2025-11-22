@@ -44,7 +44,7 @@ compileExclusiveMinimum value _schema _ctx = case value of
 -- This implementation is provided for completeness but may need
 -- coordination with the minimum keyword validator.
 validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
-validateExclusiveMinimum _ _ = []  -- No validation on its own
+validateExclusiveMinimum _ _ _ _ = []  -- No validation on its own
 
 -- | The Draft-04 'exclusiveMinimum' keyword definition
 exclusiveMinimumKeyword :: KeywordDefinition

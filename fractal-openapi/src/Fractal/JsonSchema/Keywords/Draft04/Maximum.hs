@@ -41,7 +41,7 @@ compileMaximum value schema _ctx = case value of
 
 -- | Validate function for Draft-04 'maximum' keyword
 validateMaximum :: ValidateFunc MaximumData
-validateMaximum (MaximumData maxVal exclusive) (Number n) =
+validateMaximum _recursiveValidator (MaximumData maxVal exclusive) _ctx (Number n) =
   if exclusive
     then if n < maxVal
          then []
@@ -49,7 +49,7 @@ validateMaximum (MaximumData maxVal exclusive) (Number n) =
     else if n <= maxVal
          then []
          else ["Value " <> T.pack (show n) <> " is greater than maximum " <> T.pack (show maxVal)]
-validateMaximum _ _ = []  -- Only applies to numbers
+validateMaximum _ _ _ _ = []  -- Only applies to numbers
 
 -- | The Draft-04 'maximum' keyword definition
 maximumKeyword :: KeywordDefinition
@@ -78,7 +78,7 @@ compileExclusiveMaximum value _schema _ctx = case value of
 -- This keyword doesn't validate on its own - it only modifies
 -- the behavior of the 'maximum' keyword via adjacent data.
 validateExclusiveMaximum :: ValidateFunc ExclusiveMaximumData
-validateExclusiveMaximum _ _ = []
+validateExclusiveMaximum _ _ _ _ = []
 
 -- | The Draft-04 'exclusiveMaximum' keyword definition
 exclusiveMaximumKeyword :: KeywordDefinition

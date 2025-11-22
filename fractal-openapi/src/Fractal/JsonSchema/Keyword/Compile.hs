@@ -96,7 +96,8 @@ compileKeyword (KeywordDefinition name _scope compile validate _nav) value schem
   let someData = SomeCompiledData compiledData
 
   -- Create type-erased validate function (closure over compiled data)
-  let validateErased = validate compiledData
+  -- The recursive validator will be provided at validation time
+  let validateErased recursiveValidator valCtx val = validate recursiveValidator compiledData valCtx val
 
   -- Create compiled keyword (no adjacent data collection yet)
   return $ CompiledKeyword

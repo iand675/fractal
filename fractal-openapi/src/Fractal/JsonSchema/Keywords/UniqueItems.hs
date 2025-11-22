@@ -28,7 +28,7 @@ compileUniqueItems value _schema _ctx = case value of
 
 -- | Validate function for 'uniqueItems' keyword
 validateUniqueItems :: ValidateFunc UniqueItemsData
-validateUniqueItems (UniqueItemsData True) (Array arr) =
+validateUniqueItems _recursiveValidator (UniqueItemsData True) _ctx (Array arr) =
   let items = toList arr
       uniqueItems = length items == length (nubOrd items)
   in if uniqueItems
@@ -38,8 +38,8 @@ validateUniqueItems (UniqueItemsData True) (Array arr) =
     -- Simple deduplication using Ord (works for most JSON values)
     nubOrd :: Ord a => [a] -> [a]
     nubOrd = Set.toList . Set.fromList
-validateUniqueItems (UniqueItemsData False) _ = []  -- uniqueItems: false means no constraint
-validateUniqueItems _ _ = []  -- Only applies to arrays when true
+validateUniqueItems _ (UniqueItemsData False) _ _ = []  -- uniqueItems: false means no constraint
+validateUniqueItems _ _ _ _ = []  -- Only applies to arrays when true
 
 -- | The 'uniqueItems' keyword definition
 uniqueItemsKeyword :: KeywordDefinition

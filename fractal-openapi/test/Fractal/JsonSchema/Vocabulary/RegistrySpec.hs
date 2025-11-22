@@ -18,7 +18,7 @@ testCompile :: CompileFunc ()
 testCompile _ _ _ = Right ()
 
 testValidate :: ValidateFunc ()
-testValidate _ _ = []
+testValidate _ _ _ _ = []
 
 mkTestKeyword :: Text -> KeywordDefinition
 mkTestKeyword name = KeywordDefinition
