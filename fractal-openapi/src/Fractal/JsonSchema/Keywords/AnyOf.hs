@@ -6,13 +6,50 @@
 -- validates subschemas and collects annotations from all passing branches.
 module Fractal.JsonSchema.Keywords.AnyOf
   ( validateAnyOf
+  , anyOfKeyword
+  , compileAnyOf
+  , AnyOfData(..)
   ) where
 
-import Data.Aeson (Value)
+import Data.Aeson (Value(..))
+import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Vector as V
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema, ValidationResult(..), ValidationAnnotations, validationFailure)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult(..), ValidationAnnotations, validationFailure, schemaAnyOf)
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
+import Fractal.JsonSchema.Parser (parseSchema, ParseError)
+
+-- | Compiled data for anyOf keyword
+newtype AnyOfData = AnyOfData (NonEmpty Schema)
+  deriving (Typeable)
+
+-- | Compile the anyOf keyword
+compileAnyOf :: CompileFunc AnyOfData
+compileAnyOf value schema ctx = case value of
+  Array arr | not (V.null arr) -> do
+    -- Parse each element as a schema
+    parsedSchemas <- mapM parseSchemaElem (V.toList arr)
+    case NE.nonEmpty parsedSchemas of
+      Just schemas' -> Right (AnyOfData schemas')
+      Nothing -> Left "anyOf must contain at least one schema"
+  _ -> Left "anyOf must be a non-empty array"
+  where
+    parseSchemaElem v = case parseSchema v of
+      Left err -> Left $ "Invalid schema in anyOf: " <> T.pack (show err)
+      Right s -> Right s
+
+-- | Validate anyOf using the pluggable keyword system
+validateAnyOfKeyword :: ValidateFunc AnyOfData
+validateAnyOfKeyword recursiveValidator (AnyOfData schemas) _ctx value =
+  case validateAnyOf recursiveValidator schemas value of
+    ValidationSuccess _ -> []
+    ValidationFailure errs -> [T.pack $ show errs]  -- TODO: proper error formatting
 
 -- | Validate that a value satisfies AT LEAST ONE schema in anyOf
 --
@@ -37,3 +74,14 @@ validateAnyOf validateSchema schemas value =
     -- Collect annotations from ALL passing branches in anyOf
     else ValidationSuccess $ mconcat successes
 
+-- | Keyword definition for anyOf
+anyOfKeyword :: KeywordDefinition
+anyOfKeyword = KeywordDefinition
+  { keywordName = "anyOf"
+  , keywordScope = AnyScope
+  , keywordCompile = compileAnyOf
+  , keywordValidate = validateAnyOfKeyword
+  , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of
+      ObjectSchema obj -> fmap NE.toList (schemaAnyOf obj)
+      _ -> Nothing
+  }

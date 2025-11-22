@@ -57,6 +57,9 @@ import Fractal.JsonSchema.Keywords.MinProperties (minPropertiesKeyword)
 import Fractal.JsonSchema.Keywords.MaxProperties (maxPropertiesKeyword)
 -- Navigable keywords (for $ref resolution)
 import qualified Fractal.JsonSchema.Keywords.Navigation as Nav
+import qualified Fractal.JsonSchema.Keywords.AllOf as AllOf
+import qualified Fractal.JsonSchema.Keywords.AnyOf as AnyOf
+import qualified Fractal.JsonSchema.Keywords.OneOf as OneOf
 -- Draft-04 specific keywords
 import qualified Fractal.JsonSchema.Keywords.Draft04.Minimum as D04
 import qualified Fractal.JsonSchema.Keywords.Draft04.Maximum as D04
@@ -96,9 +99,9 @@ standardKeywordRegistry =
   registerKeyword Nav.itemsKeyword $
   registerKeyword Nav.prefixItemsKeyword $
   registerKeyword Nav.containsKeyword $
-  registerKeyword Nav.allOfKeyword $
-  registerKeyword Nav.anyOfKeyword $
-  registerKeyword Nav.oneOfKeyword $
+  registerKeyword AllOf.allOfKeyword $
+  registerKeyword AnyOf.anyOfKeyword $
+  registerKeyword OneOf.oneOfKeyword $
   registerKeyword Nav.notKeyword $
   registerKeyword Nav.ifKeyword $
   registerKeyword Nav.thenKeyword $
@@ -143,9 +146,9 @@ draft04Registry =
   registerKeyword Nav.additionalPropertiesKeyword $
   registerKeyword Nav.itemsKeyword $
   registerKeyword Nav.containsKeyword $
-  registerKeyword Nav.allOfKeyword $
-  registerKeyword Nav.anyOfKeyword $
-  registerKeyword Nav.oneOfKeyword $
+  registerKeyword AllOf.allOfKeyword $
+  registerKeyword AnyOf.anyOfKeyword $
+  registerKeyword OneOf.oneOfKeyword $
   registerKeyword Nav.notKeyword $
   registerKeyword Nav.ifKeyword $
   registerKeyword Nav.thenKeyword $
