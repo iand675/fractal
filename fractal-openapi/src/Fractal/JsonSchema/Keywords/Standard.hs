@@ -29,6 +29,7 @@ module Fractal.JsonSchema.Keywords.Standard
   , maxPropertiesKeyword
     -- * Registry
   , standardKeywordRegistry
+  , draft04Registry
   ) where
 
 import Fractal.JsonSchema.Keyword (KeywordRegistry, emptyKeywordRegistry, registerKeyword)
@@ -54,8 +55,13 @@ import Fractal.JsonSchema.Keywords.UniqueItems (uniqueItemsKeyword)
 import Fractal.JsonSchema.Keywords.Required (requiredKeyword)
 import Fractal.JsonSchema.Keywords.MinProperties (minPropertiesKeyword)
 import Fractal.JsonSchema.Keywords.MaxProperties (maxPropertiesKeyword)
+-- Navigable keywords (for $ref resolution)
+import qualified Fractal.JsonSchema.Keywords.Navigation as Nav
+-- Draft-04 specific keywords
+import qualified Fractal.JsonSchema.Keywords.Draft04.Minimum as D04
+import qualified Fractal.JsonSchema.Keywords.Draft04.Maximum as D04
 
--- | Registry containing all standard keywords
+-- | Registry containing all standard keywords (Draft-06+)
 --
 -- This registry can be extended with custom keywords or used as-is
 -- for standard JSON Schema validation.
@@ -83,4 +89,68 @@ standardKeywordRegistry =
   registerKeyword requiredKeyword $
   registerKeyword minPropertiesKeyword $
   registerKeyword maxPropertiesKeyword $
+  -- Navigable keywords (for $ref resolution)
+  registerKeyword Nav.propertiesKeyword $
+  registerKeyword Nav.patternPropertiesKeyword $
+  registerKeyword Nav.additionalPropertiesKeyword $
+  registerKeyword Nav.itemsKeyword $
+  registerKeyword Nav.prefixItemsKeyword $
+  registerKeyword Nav.containsKeyword $
+  registerKeyword Nav.allOfKeyword $
+  registerKeyword Nav.anyOfKeyword $
+  registerKeyword Nav.oneOfKeyword $
+  registerKeyword Nav.notKeyword $
+  registerKeyword Nav.ifKeyword $
+  registerKeyword Nav.thenKeyword $
+  registerKeyword Nav.elseKeyword $
+  registerKeyword Nav.dependentSchemasKeyword $
+  registerKeyword Nav.propertyNamesKeyword $
+  registerKeyword Nav.unevaluatedPropertiesKeyword $
+  registerKeyword Nav.defsKeyword $
+  emptyKeywordRegistry
+
+-- | Registry for Draft-04 schemas
+--
+-- Uses Draft-04 specific numeric keywords where exclusiveMinimum/Maximum
+-- are boolean modifiers rather than standalone numeric keywords.
+draft04Registry :: KeywordRegistry
+draft04Registry =
+  -- Basic validation
+  registerKeyword constKeyword $
+  registerKeyword enumKeyword $
+  registerKeyword typeKeyword $
+  -- String validation
+  registerKeyword minLengthKeyword $
+  registerKeyword maxLengthKeyword $
+  registerKeyword patternKeyword $
+  -- Numeric validation (Draft-04 specific)
+  registerKeyword D04.minimumKeyword $
+  registerKeyword D04.maximumKeyword $
+  registerKeyword D04.exclusiveMinimumKeyword $
+  registerKeyword D04.exclusiveMaximumKeyword $
+  registerKeyword multipleOfKeyword $
+  -- Array validation
+  registerKeyword minItemsKeyword $
+  registerKeyword maxItemsKeyword $
+  registerKeyword uniqueItemsKeyword $
+  -- Object validation
+  registerKeyword requiredKeyword $
+  registerKeyword minPropertiesKeyword $
+  registerKeyword maxPropertiesKeyword $
+  -- Navigable keywords (for $ref resolution)
+  registerKeyword Nav.propertiesKeyword $
+  registerKeyword Nav.patternPropertiesKeyword $
+  registerKeyword Nav.additionalPropertiesKeyword $
+  registerKeyword Nav.itemsKeyword $
+  registerKeyword Nav.containsKeyword $
+  registerKeyword Nav.allOfKeyword $
+  registerKeyword Nav.anyOfKeyword $
+  registerKeyword Nav.oneOfKeyword $
+  registerKeyword Nav.notKeyword $
+  registerKeyword Nav.ifKeyword $
+  registerKeyword Nav.thenKeyword $
+  registerKeyword Nav.elseKeyword $
+  registerKeyword Nav.dependentSchemasKeyword $
+  registerKeyword Nav.propertyNamesKeyword $
+  registerKeyword Nav.defsKeyword $
   emptyKeywordRegistry

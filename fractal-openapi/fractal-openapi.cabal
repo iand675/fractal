@@ -91,6 +91,7 @@ library
                     -- Standard Registry
                     , Fractal.JsonSchema.Keywords.Standard
                     , Fractal.JsonSchema.Keywords.Registry
+                    , Fractal.JsonSchema.Keywords.Navigation
                     -- Draft-04 Specific
                     , Fractal.JsonSchema.Keywords.Draft04.Minimum
                     , Fractal.JsonSchema.Keywords.Draft04.Maximum

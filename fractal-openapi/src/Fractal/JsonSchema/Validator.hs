@@ -33,6 +33,8 @@ import qualified Fractal.JsonSchema.Keywords.Format as KW
 import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry)
 import Fractal.JsonSchema.Keywords.Registry (draft04Registry, draft06Registry, draft07Registry, draft201909Registry, draft202012Registry)
 import Fractal.JsonSchema.Keyword (keywordMap, lookupKeyword)
+import qualified Fractal.JsonSchema.Keyword as Keyword
+import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeywords, buildCompilationContext, CompiledKeywords(..))
 import qualified Fractal.JsonSchema.Keyword.Validate as KeywordValidate
 -- Applicator keywords (composition and conditional)
@@ -1518,186 +1520,118 @@ resolvePointerInSchema pointer schema =
 
 -- | Resolve a JSON Pointer within a specific schema, tracking base URI changes
 -- Returns (resolved schema, effective base URI after navigating through schemas with $id)
+--
+-- This now uses the pluggable keyword navigation system, allowing custom keywords
+-- to define their own schema containment and navigation behavior.
 resolvePointerInSchemaWithBase :: Text -> Schema -> Maybe Text -> Maybe (Schema, Maybe Text)
 resolvePointerInSchemaWithBase pointer schema currentBase =
   case parsePointer pointer of
     Left _ -> Nothing
     Right (JSONPointer segments) -> followPointer segments schema currentBase
   where
+    -- Get the appropriate keyword registry based on schema version
+    getRegistry :: Schema -> Keyword.KeywordRegistry
+    getRegistry s = case schemaVersion s of
+      Just Draft04 -> draft04Registry
+      _ -> standardKeywordRegistry
+
     followPointer :: [Text] -> Schema -> Maybe Text -> Maybe (Schema, Maybe Text)
     followPointer [] s base = Just (s, base)
     followPointer (seg:rest) s base = case schemaCore s of
       BooleanSchema _ -> Nothing
-      ObjectSchema obj -> navigateObject seg rest s obj base
+      ObjectSchema obj -> navigateKeyword seg rest s obj base
 
-    navigateObject :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Text -> Maybe (Schema, Maybe Text)
-    navigateObject seg rest parentSchema obj currentBase
-      -- Navigate into $defs or definitions
+    navigateKeyword :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Text -> Maybe (Schema, Maybe Text)
+    navigateKeyword seg rest parentSchema obj currentBase =
+      let registry = getRegistry parentSchema
+          keywordDef = Keyword.lookupKeyword seg registry
+      in case keywordDef of
+        -- If keyword has navigation, use it
+        Just kwDef -> case Keyword.keywordNavigation kwDef of
+          NoNavigation -> Nothing
+          
+          SingleSchema navFunc ->
+            case navFunc parentSchema of
+              Just subSchema -> updateBaseAndFollow subSchema
+              Nothing -> Nothing
+          
+          SchemaMap navFunc ->
+            case rest of
+              (key:remaining) ->
+                case navFunc parentSchema of
+                  Just schemaMap ->
+                    case Map.lookup key schemaMap of
+                      Just subSchema -> followPointerFrom remaining subSchema
+                      Nothing -> Nothing
+                  Nothing -> Nothing
+              [] -> Nothing  -- Need a key for SchemaMap navigation
+          
+          SchemaArray navFunc ->
+            case rest of
+              (idx:remaining) ->
+                case reads (T.unpack idx) :: [(Int, String)] of
+                  [(n, "")] | n >= 0 ->
+                    case navFunc parentSchema of
+                      Just schemas | n < length schemas ->
+                        followPointerFrom remaining (schemas !! n)
+                      _ -> Nothing
+                  _ -> Nothing
+              [] -> Nothing  -- Need an index for SchemaArray navigation
+          
+          CustomNavigation navFunc ->
+            -- CustomNavigation gets the current segment and remaining path
+            -- and returns (nextSchema, remainingPath)
+            case navFunc parentSchema seg rest of
+              Just (nextSchema, remaining) -> followPointerFrom remaining nextSchema
+              Nothing -> Nothing
+        
+        -- No registered keyword - check special cases and extensions
+        Nothing -> navigateFallback seg rest parentSchema obj currentBase
+      where
+        -- Update base URI if subschema has $id, then continue following
+        updateBaseAndFollow :: Schema -> Maybe (Schema, Maybe Text)
+        updateBaseAndFollow subSchema =
+          let newBase = case schemaId subSchema of
+                Just sid -> Just $ resolveAgainstBaseURI currentBase sid
+                Nothing -> currentBase
+          in followPointer rest subSchema newBase
+        
+        followPointerFrom :: [Text] -> Schema -> Maybe (Schema, Maybe Text)
+        followPointerFrom remaining subSchema =
+          let newBase = case schemaId subSchema of
+                Just sid -> Just $ resolveAgainstBaseURI currentBase sid
+                Nothing -> currentBase
+          in followPointer remaining subSchema newBase
+    
+    -- Fallback for special cases not handled by registered keywords
+    navigateFallback :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Text -> Maybe (Schema, Maybe Text)
+    navigateFallback seg rest parentSchema obj currentBase
+      -- Special case: $defs and definitions are aliases (handled as SchemaMap)
       | seg == "$defs" || seg == "definitions" =
           case rest of
             (defName:remaining) ->
               case Map.lookup defName (schemaDefs obj) of
                 Just subSchema ->
-                  -- If subSchema has $id, it changes the base URI
                   let newBase = case schemaId subSchema of
                         Just sid -> Just $ resolveAgainstBaseURI currentBase sid
                         Nothing -> currentBase
                   in followPointer remaining subSchema newBase
                 Nothing -> Nothing
-            [] -> Nothing  -- Need a definition name
-      
-      -- Navigate into properties
-      | seg == "properties" =
-          case rest of
-            (propName:remaining) ->
-              case validationProperties (schemaValidation obj) >>= Map.lookup propName of
-                Just propSchema -> followPointer remaining propSchema currentBase
-                Nothing -> Nothing
-            [] -> Nothing  -- Need a property name
-
-      -- Navigate into patternProperties
-      | seg == "patternProperties" =
-          case rest of
-            (patternKey:remaining) ->
-              case validationPatternProperties (schemaValidation obj) of
-                Just patterns ->
-                  case [(patSchema, pat) | (Regex pat, patSchema) <- Map.toList patterns, pat == patternKey] of
-                    ((patSchema, _):_) -> followPointer remaining patSchema currentBase
-                    [] -> Nothing
-                Nothing -> Nothing
             [] -> Nothing
-
-      -- Navigate into additionalProperties
-      | seg == "additionalProperties" =
-          case validationAdditionalProperties (schemaValidation obj) of
-            Just apSchema -> followPointer rest apSchema currentBase
-            Nothing -> Nothing
       
-      -- Navigate into items
-      | seg == "items" =
-          case validationItems (schemaValidation obj) of
-            Just (ItemsSchema itemSchema) -> followPointer rest itemSchema currentBase
-            Just (ItemsTuple schemas _) ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into prefixItems (2020-12+)
-      | seg == "prefixItems" =
-          case validationPrefixItems (schemaValidation obj) of
-            Just prefixSchemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length prefixSchemas ->
-                      followPointer remaining (NE.toList prefixSchemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into allOf
-      | seg == "allOf" =
-          case schemaAllOf obj of
-            Just schemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into anyOf
-      | seg == "anyOf" =
-          case schemaAnyOf obj of
-            Just schemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into oneOf
-      | seg == "oneOf" =
-          case schemaOneOf obj of
-            Just schemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into not
-      | seg == "not" =
-          case schemaNot obj of
-            Just notSchema -> followPointer rest notSchema currentBase
-            Nothing -> Nothing
-
-      -- Navigate into if/then/else
-      | seg == "if" = case schemaIf obj of
-          Just ifSchema -> followPointer rest ifSchema currentBase
-          Nothing -> Nothing
-      | seg == "then" = case schemaThen obj of
-          Just thenSchema -> followPointer rest thenSchema currentBase
-          Nothing -> Nothing
-      | seg == "else" = case schemaElse obj of
-          Just elseSchema -> followPointer rest elseSchema currentBase
-          Nothing -> Nothing
-
-      -- Navigate into dependentSchemas
-      | seg == "dependentSchemas" =
-          case rest of
-            (propName:remaining) ->
-              case validationDependentSchemas (schemaValidation obj) >>= Map.lookup propName of
-                Just depSchema -> followPointer remaining depSchema currentBase
-                Nothing -> Nothing
-            [] -> Nothing
-
-      -- Navigate into contains
-      | seg == "contains" =
-          case validationContains (schemaValidation obj) of
-            Just containsSchema -> followPointer rest containsSchema currentBase
-            Nothing -> Nothing
-
-      -- Navigate into propertyNames
-      | seg == "propertyNames" =
-          case validationPropertyNames (schemaValidation obj) of
-            Just propNamesSchema -> followPointer rest propNamesSchema currentBase
-            Nothing -> Nothing
-
-      -- Navigate into unevaluatedProperties
-      | seg == "unevaluatedProperties" =
-          case validationUnevaluatedProperties (schemaValidation obj) of
-            Just unevalPropsSchema -> followPointer rest unevalPropsSchema currentBase
-            Nothing -> Nothing
-      
-      -- Fallback: check schemaExtensions for arbitrary keywords
+      -- Check schemaExtensions for arbitrary/unknown keywords
       | otherwise =
           case Map.lookup seg (schemaExtensions parentSchema) of
             Just val ->
-              -- Try to parse the value as a schema
               let version = fromMaybe Draft07 (schemaVersion parentSchema)
               in case Parser.parseSchemaWithVersion version val of
                 Right schema -> followPointer rest schema currentBase
                 Left _ ->
-                  -- Not a schema - check if we need array indexing
+                  -- Not a direct schema - might be an array of schemas
                   case (val, rest) of
                     (Aeson.Array arr, (idx:remaining)) ->
                       case reads (T.unpack idx) :: [(Int, String)] of
                         [(n, "")] | n >= 0 && n < length arr ->
-                          -- Try to parse the array element as a schema
                           case Parser.parseSchemaWithVersion version (arr ! n) of
                             Right schema -> followPointer remaining schema currentBase
                             Left _ -> Nothing
