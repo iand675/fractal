@@ -68,6 +68,7 @@ library
                     , Fractal.JsonSchema.Keywords.String
                     , Fractal.JsonSchema.Keywords.Format
                     -- Pluggable Architecture Modules
+                    , Fractal.JsonSchema.Keyword
                     , Fractal.JsonSchema.Keyword.Types
                     , Fractal.JsonSchema.Vocabulary.Types
                     , Fractal.JsonSchema.Validator.Result
