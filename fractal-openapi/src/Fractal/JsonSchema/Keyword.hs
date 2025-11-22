@@ -20,7 +20,7 @@
 -- @
 module Fractal.JsonSchema.Keyword
   ( -- * Keyword Registry
-    KeywordRegistry
+    KeywordRegistry(..)
   , emptyKeywordRegistry
   , registerKeyword
   , lookupKeyword
@@ -46,18 +46,6 @@ import Data.Aeson (Value)
 
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Types (Schema)
-
--- | Registry of custom keywords
---
--- Maps keyword names to their definitions. Used during schema parsing
--- and validation to look up custom keyword handlers.
-newtype KeywordRegistry = KeywordRegistry
-  { keywordMap :: Map Text KeywordDefinition
-  }
-
-instance Show KeywordRegistry where
-  show (KeywordRegistry m) =
-    "KeywordRegistry{keywords=" ++ show (Map.keys m) ++ "}"
 
 -- | Empty keyword registry with no custom keywords
 emptyKeywordRegistry :: KeywordRegistry

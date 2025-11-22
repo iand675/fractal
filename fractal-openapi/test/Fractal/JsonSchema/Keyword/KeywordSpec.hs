@@ -97,7 +97,7 @@ spec = describe "Keyword System" $ do
       let def = mkKeywordDefinition "x-min-value" AnyScope compileMinValue validateMinValue
           value = Number 10
           schema = either (error . show) id $ parseSchema (Aeson.object [])
-          ctx = buildCompilationContext Map.empty schema []
+          ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
 
       case compileKeyword def value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
@@ -107,7 +107,7 @@ spec = describe "Keyword System" $ do
       let def = mkKeywordDefinition "x-min-value" AnyScope compileMinValue validateMinValue
           value = String "not a number"
           schema = either (error . show) id $ parseSchema (Aeson.object [])
-          ctx = buildCompilationContext Map.empty schema []
+          ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
 
       case compileKeyword def value schema ctx of
         Left err -> err `shouldBe` "x-min-value must be a number"
@@ -125,7 +125,7 @@ spec = describe "Keyword System" $ do
             , ("x-pattern", String "test")
             ]
           schema = either (error . show) id $ parseSchema (Aeson.object [])
-          ctx = buildCompilationContext Map.empty schema []
+          ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
 
       case compileKeywords definitions keywordValues schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
@@ -142,7 +142,7 @@ spec = describe "Keyword System" $ do
       let def = mkKeywordDefinition "x-min-value" AnyScope compileMinValue validateMinValue
           value = Number 10
           schema = either (error . show) id $ parseSchema (Aeson.object [])
-          ctx = buildCompilationContext Map.empty schema []
+          ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
           compiled = either (error . T.unpack) id $ compileKeyword def value schema ctx
           compiledKeywords = addCompiledKeyword compiled emptyCompiledKeywords
           validationCtx = buildValidationContext [] []
@@ -167,7 +167,7 @@ spec = describe "Keyword System" $ do
             , ("x-pattern", String "hello")
             ]
           schema = either (error . show) id $ parseSchema (Aeson.object [])
-          ctx = buildCompilationContext Map.empty schema []
+          ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
           compiled = either (error . T.unpack) id $ compileKeywords definitions keywordValues schema ctx
           validationCtx = buildValidationContext [] []
 
@@ -188,7 +188,7 @@ spec = describe "Keyword System" $ do
           definitions = Map.fromList [("x-min", minDef)]
           keywordValues = Map.fromList [("x-min", Number 100)]
           schema = either (error . show) id $ parseSchema (Aeson.object [])
-          ctx = buildCompilationContext Map.empty schema []
+          ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
           compiled = either (error . T.unpack) id $ compileKeywords definitions keywordValues schema ctx
           validationCtx = buildValidationContext [] []
 

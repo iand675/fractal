@@ -1,5 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Core types for the pluggable keyword system
 --
@@ -12,14 +13,28 @@ module Fractal.JsonSchema.Keyword.Types
   , KeywordScope(..)
   , CompileFunc
   , ValidateFunc
+    -- * Keyword Registry
+  , KeywordRegistry(..)
     -- * Compilation Context
   , CompilationContext(..)
   , CompiledKeyword(..)
   , SomeCompiledData(..)
+    -- * Monadic Compilation
+  , CompileM
+  , CompilationState(..)
+  , runCompileM
+  , getCompilationState
+  , modifyCompilationState
+  , liftEither
   ) where
 
+import Control.Monad.Trans.State.Strict (StateT, runStateT, get, modify')
+import Control.Monad.Trans.Class (lift)
 import Data.Aeson (Value)
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 
@@ -49,6 +64,7 @@ instance Show KeywordScope where
 -- - A function to resolve $ref URIs
 -- - The current schema being compiled
 -- - The parent schema path for error reporting
+-- - The keyword registry for monadic compilation (optional)
 data CompilationContext = CompilationContext
   { contextRegistry :: Map Text Schema
     -- ^ Access to the full schema registry (keyed by URI as Text)
@@ -58,6 +74,9 @@ data CompilationContext = CompilationContext
     -- ^ The schema currently being compiled
   , contextParentPath :: [Text]
     -- ^ Path from root to current schema (for error messages)
+  , contextKeywordRegistry :: KeywordRegistry
+    -- ^ Keyword registry for monadic compilation
+    -- This allows compile functions to access adjacent keywords on-demand
   }
 
 -- | Compile function signature: processes keyword value at schema parse time
@@ -100,6 +119,54 @@ data CompiledKeyword = CompiledKeyword
     -- ^ Values from adjacent keywords accessed during compilation
   }
 
+-- ============================================================================
+-- Monadic Compilation
+-- ============================================================================
+
+-- | Compilation state for monadic keyword compilation
+--
+-- Tracks compiled keywords and compilation progress to support:
+-- - Lazy, on-demand compilation of adjacent keywords
+-- - Memoization of compiled results
+-- - Circular dependency detection
+data CompilationState = CompilationState
+  { stateCompiled :: Map Text CompiledKeyword
+    -- ^ Keywords that have been compiled so far
+  , stateCompiling :: Set Text
+    -- ^ Keywords currently being compiled (for cycle detection)
+  , stateSchema :: Schema
+    -- ^ The schema currently being compiled
+  , stateContext :: CompilationContext
+    -- ^ Additional compilation context
+  }
+
+-- | Monadic compilation context
+--
+-- Provides stateful keyword compilation with:
+-- - Access to already-compiled keywords
+-- - Ability to request compilation of adjacent keywords
+-- - Automatic memoization and cycle detection
+newtype CompileM a = CompileM
+  { unCompileM :: StateT CompilationState (Either Text) a
+  }
+  deriving (Functor, Applicative, Monad)
+
+-- | Run a monadic compilation
+runCompileM :: CompileM a -> CompilationState -> Either Text (a, CompilationState)
+runCompileM (CompileM action) state = runStateT action state
+
+-- | Get the current compilation state
+getCompilationState :: CompileM CompilationState
+getCompilationState = CompileM get
+
+-- | Modify the compilation state
+modifyCompilationState :: (CompilationState -> CompilationState) -> CompileM ()
+modifyCompilationState f = CompileM $ modify' f
+
+-- | Lift an Either into the compilation monad
+liftEither :: Either Text a -> CompileM a
+liftEither = CompileM . lift
+
 -- | Definition of a custom keyword
 --
 -- This is the main registration point for custom keywords. Users provide:
@@ -117,3 +184,15 @@ data KeywordDefinition = forall a. Typeable a => KeywordDefinition
   , keywordValidate :: ValidateFunc a
     -- ^ Validate phase: check instance against compiled keyword
   }
+
+-- | Registry of custom keywords
+--
+-- Maps keyword names to their definitions. Used during schema parsing
+-- and validation to look up custom keyword handlers.
+newtype KeywordRegistry = KeywordRegistry
+  { keywordMap :: Map Text KeywordDefinition
+  }
+
+instance Show KeywordRegistry where
+  show (KeywordRegistry m) =
+    "KeywordRegistry{keywords=" ++ show (Map.keys m) ++ "}"

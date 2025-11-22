@@ -58,15 +58,17 @@ lookupCompiledKeyword name (CompiledKeywords m) = Map.lookup name m
 -- resolution function.
 buildCompilationContext
   :: Map Text Schema         -- ^ Schema registry
+  -> KeywordRegistry         -- ^ Keyword registry
   -> Schema                  -- ^ Current schema being compiled
   -> [Text]                  -- ^ Parent path for error reporting
   -> CompilationContext
-buildCompilationContext registry schema parentPath =
+buildCompilationContext registry keywordRegistry schema parentPath =
   CompilationContext
     { contextRegistry = registry
     , contextResolveRef = resolveRef registry
     , contextCurrentSchema = schema
     , contextParentPath = parentPath
+    , contextKeywordRegistry = keywordRegistry
     }
   where
     -- Simple reference resolution - looks up URI in registry

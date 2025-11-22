@@ -77,6 +77,7 @@ library
                     , Fractal.JsonSchema.Keyword.Types
                     , Fractal.JsonSchema.Keyword.Compile
                     , Fractal.JsonSchema.Keyword.Validate
+                    , Fractal.JsonSchema.Keyword.Monadic
                     , Fractal.JsonSchema.Vocabulary.Types
                     , Fractal.JsonSchema.Vocabulary.Registry
                     , Fractal.JsonSchema.Vocabulary.Validation
@@ -109,6 +110,9 @@ library
                     , uri-templater >= 1.0.0 && < 2
                     , ecma262-regex
                     , idn
+
+                    -- Monad transformers
+                    , transformers >= 0.5 && < 1
 
                     -- Template Haskell & Embedded Resources
                     , template-haskell >= 2.19 && < 3
