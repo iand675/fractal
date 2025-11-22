@@ -30,8 +30,8 @@ import qualified Fractal.JsonSchema.Keywords.Numeric as KW
 import qualified Fractal.JsonSchema.Keywords.String as KW
 import qualified Fractal.JsonSchema.Keywords.Format as KW
 -- Pluggable keyword system
-import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry)
-import Fractal.JsonSchema.Keywords.Registry (draft04Registry, draft06Registry, draft07Registry, draft201909Registry, draft202012Registry)
+import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry, draft04Registry)
+import Fractal.JsonSchema.Keywords.Registry (draft06Registry, draft07Registry, draft201909Registry, draft202012Registry)
 import Fractal.JsonSchema.Keyword (keywordMap, lookupKeyword)
 import qualified Fractal.JsonSchema.Keyword as Keyword
 import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..))
