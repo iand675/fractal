@@ -69,6 +69,9 @@ library
                     , Fractal.JsonSchema.Keywords.String
                     , Fractal.JsonSchema.Keywords.Format
                     , Fractal.JsonSchema.Keywords.Standard
+                    , Fractal.JsonSchema.Keywords.Registry
+                    , Fractal.JsonSchema.Keywords.Draft04.Minimum
+                    , Fractal.JsonSchema.Keywords.Draft04.ExclusiveMinimum
                     -- Pluggable Architecture Modules
                     , Fractal.JsonSchema.Keyword
                     , Fractal.JsonSchema.Keyword.Types
