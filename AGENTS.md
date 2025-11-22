@@ -22,6 +22,24 @@ bd ready --json
 ```bash
 bd create "Issue title" -t bug|feature|task -p 0-4 --json
 bd create "Issue title" -p 1 --deps discovered-from:bd-123 --json
+bd create "Issue title" -p 1 --deps blocks:bd-123 --json
+```
+
+**Manage dependencies:**
+```bash
+# Add dependency: issue-A blocks issue-B (A must complete before B can start)
+bd dep add issue-A issue-B -t blocks --json
+
+# Other dependency types
+bd dep add issue-A issue-B -t related --json
+bd dep add parent-id child-id -t parent-child --json
+bd dep add source-id discovered-id -t discovered-from --json
+
+# View dependency tree
+bd dep tree issue-id --json
+
+# Remove dependency
+bd dep remove issue-A issue-B --json
 ```
 
 **Claim and update:**
@@ -67,6 +85,40 @@ bd automatically syncs with git:
 - Exports to `.beads/issues.jsonl` after changes (5s debounce)
 - Imports from JSONL when newer (e.g., after `git pull`)
 - No manual export/import needed!
+
+### Git Worktree Usage
+
+When working in a git worktree, special care is needed with bd:
+
+**Problem**: Git worktrees share the `.beads/` directory from the main repository. Running bd in daemon mode can cause it to commit/push changes to the wrong branch.
+
+**Solution**: Always use `--no-daemon` mode in worktrees:
+
+```bash
+# Import after git operations (pull, checkout, etc.)
+bd --no-daemon import -i .beads/issues.jsonl
+
+# All other commands
+bd --no-daemon ready --json
+bd --no-daemon create "Task" --json
+bd --no-daemon update bd-42 --status in_progress --json
+bd --no-daemon close bd-42 --reason "Done" --json
+```
+
+**Why the explicit path?** The `-i .beads/issues.jsonl` flag is required because bd's auto-detection doesn't work reliably in worktree environments. The explicit path ensures bd reads from the correct shared issues file.
+
+**When to import manually:**
+- After `git pull` or `git fetch`
+- After switching branches with `git checkout`
+- When you see "Database out of sync with JSONL" errors
+- Before starting work in a fresh worktree
+
+**Workflow in worktrees:**
+1. Enter worktree: `cd /path/to/worktree`
+2. Import issues: `bd --no-daemon import -i .beads/issues.jsonl`
+3. Check ready work: `bd --no-daemon ready --json`
+4. Work on issues using `--no-daemon` flag
+5. Commit both code and `.beads/issues.jsonl` together
 
 ### MCP Server (Recommended)
 
