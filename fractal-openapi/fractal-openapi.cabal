@@ -53,6 +53,7 @@ library
     exposed-modules:  Fractal.JsonSchema
                     , Fractal.JsonSchema.Types
                     , Fractal.JsonSchema.Parser
+                    , Fractal.JsonSchema.Parser.Extended
                     , Fractal.JsonSchema.Renderer
                     , Fractal.JsonSchema.Validator
                     , Fractal.JsonSchema.Metadata
@@ -67,6 +68,19 @@ library
                     , Fractal.JsonSchema.Keywords.Numeric
                     , Fractal.JsonSchema.Keywords.String
                     , Fractal.JsonSchema.Keywords.Format
+                    , Fractal.JsonSchema.Keywords.Standard
+                    -- Pluggable Architecture Modules
+                    , Fractal.JsonSchema.Keyword
+                    , Fractal.JsonSchema.Keyword.Types
+                    , Fractal.JsonSchema.Keyword.Compile
+                    , Fractal.JsonSchema.Keyword.Validate
+                    , Fractal.JsonSchema.Vocabulary.Types
+                    , Fractal.JsonSchema.Vocabulary.Registry
+                    , Fractal.JsonSchema.Vocabulary.Validation
+                    , Fractal.JsonSchema.Validator.Result
+                    , Fractal.JsonSchema.Validator.Extended
+                    , Fractal.JsonSchema.Codegen.Types
+                    -- OpenAPI
                     , Fractal.OpenApi
                     , Fractal.OpenApi.Types
                     , Fractal.OpenApi.Parser
@@ -123,6 +137,12 @@ test-suite fractal-openapi-test
                     , Fractal.JsonSchema.ComplianceSpec
                     , Fractal.JsonSchema.IntegrationSpec
                     , Fractal.JsonSchema.JSONPointerSpec
+                    , Fractal.JsonSchema.EmbeddedMetaschemasSpec
+                    , Fractal.JsonSchema.Keyword.KeywordSpec
+                    , Fractal.JsonSchema.Parser.ExtendedSpec
+                    , Fractal.JsonSchema.Validator.ExtendedSpec
+                    , Fractal.JsonSchema.Vocabulary.RegistrySpec
+                    , Fractal.JsonSchema.Vocabulary.ValidationSpec
                     , Fractal.OpenApi.ParserSpec
                     , Fractal.OpenApi.ValidatorSpec
                     , Fractal.OpenApi.Codegen.THSpec
