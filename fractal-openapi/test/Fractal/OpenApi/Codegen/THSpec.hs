@@ -36,7 +36,7 @@ spec = describe "Template Haskell Code Generation" $ do
   describe "Name Generation" $ do
     it "generates valid Haskell type names" $ do
       let ctx = CodegenContext
-            { codegenSchema = Schema Nothing Nothing Nothing (BooleanSchema True) Nothing Map.empty
+            { codegenSchema = Schema Nothing Nothing Nothing (BooleanSchema True) Nothing Map.empty Map.empty
             , codegenPath = emptyPointer
             , codegenRegistry = emptyTypeRegistry
             , codegenParentName = Nothing

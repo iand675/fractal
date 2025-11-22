@@ -596,6 +596,11 @@ data Schema = Schema
 
   , schemaExtensions :: Map Text Value
     -- ^ Unknown keywords collected during parsing
+
+  , schemaRawKeywords :: Map Text Value
+    -- ^ All keywords in their raw Value form (for monadic compilation)
+    -- This preserves the original keyword values for adjacent keyword access
+    -- during compilation. Populated during parsing.
   }
   deriving (Eq, Show, Generic)
   deriving stock Lift
@@ -1284,5 +1289,6 @@ instance FromJSON Schema where
     , schemaCore = BooleanSchema True
     , schemaVocabulary = Nothing
     , schemaExtensions = Map.empty
+    , schemaRawKeywords = Map.empty
     }
 

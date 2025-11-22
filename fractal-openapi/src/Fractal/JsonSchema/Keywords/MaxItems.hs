@@ -1,0 +1,48 @@
+{-# LANGUAGE OverloadedStrings #-}
+-- | Implementation of the 'maxItems' keyword
+--
+-- The maxItems keyword requires that an array value has at most the
+-- specified number of items.
+module Fractal.JsonSchema.Keywords.MaxItems
+  ( maxItemsKeyword
+  ) where
+
+import Data.Aeson (Value(..))
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Typeable (Typeable)
+import Numeric.Natural (Natural)
+import qualified Data.Scientific as Sci
+
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Types (Schema)
+
+-- | Compiled data for the 'maxItems' keyword
+newtype MaxItemsData = MaxItemsData Natural
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'maxItems' keyword
+compileMaxItems :: CompileFunc MaxItemsData
+compileMaxItems value _schema _ctx = case value of
+  Number n | Sci.isInteger n && n >= 0 ->
+    Right $ MaxItemsData (fromInteger $ truncate n)
+  _ -> Left "maxItems must be a non-negative integer"
+
+-- | Validate function for 'maxItems' keyword
+validateMaxItems :: ValidateFunc MaxItemsData
+validateMaxItems (MaxItemsData maxLen) (Array arr) =
+  let arrLength = fromIntegral (length arr) :: Natural
+  in if arrLength <= maxLen
+     then []
+     else ["Array length " <> T.pack (show arrLength) <> " exceeds maxItems " <> T.pack (show maxLen)]
+validateMaxItems _ _ = []  -- Only applies to arrays
+
+-- | The 'maxItems' keyword definition
+maxItemsKeyword :: KeywordDefinition
+maxItemsKeyword = KeywordDefinition
+  { keywordName = "maxItems"
+  , keywordScope = AnyScope
+  , keywordCompile = compileMaxItems
+  , keywordValidate = validateMaxItems
+  }
+

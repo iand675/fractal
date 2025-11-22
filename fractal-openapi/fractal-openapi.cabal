@@ -62,16 +62,44 @@ library
                     , Fractal.JsonSchema.ReferenceLoader
                     , Fractal.JsonSchema.EmbeddedMetaschemas
                     , Fractal.JsonSchema.Regex
+                    -- Basic Keywords
                     , Fractal.JsonSchema.Keywords.Type
                     , Fractal.JsonSchema.Keywords.Enum
                     , Fractal.JsonSchema.Keywords.Const
+                    -- String Keywords
+                    , Fractal.JsonSchema.Keywords.MinLength
+                    , Fractal.JsonSchema.Keywords.MaxLength
+                    , Fractal.JsonSchema.Keywords.Pattern
+                    -- Numeric Keywords
+                    , Fractal.JsonSchema.Keywords.Minimum
+                    , Fractal.JsonSchema.Keywords.Maximum
+                    , Fractal.JsonSchema.Keywords.MultipleOf
+                    , Fractal.JsonSchema.Keywords.ExclusiveMinimum
+                    , Fractal.JsonSchema.Keywords.ExclusiveMaximum
+                    -- Array Keywords
+                    , Fractal.JsonSchema.Keywords.MinItems
+                    , Fractal.JsonSchema.Keywords.MaxItems
+                    , Fractal.JsonSchema.Keywords.UniqueItems
+                    -- Object Keywords
+                    , Fractal.JsonSchema.Keywords.Required
+                    , Fractal.JsonSchema.Keywords.MinProperties
+                    , Fractal.JsonSchema.Keywords.MaxProperties
+                    -- Legacy/Compatibility Keywords
                     , Fractal.JsonSchema.Keywords.Numeric
                     , Fractal.JsonSchema.Keywords.String
                     , Fractal.JsonSchema.Keywords.Format
+                    -- Standard Registry
                     , Fractal.JsonSchema.Keywords.Standard
                     , Fractal.JsonSchema.Keywords.Registry
+                    -- Draft-04 Specific
                     , Fractal.JsonSchema.Keywords.Draft04.Minimum
                     , Fractal.JsonSchema.Keywords.Draft04.ExclusiveMinimum
+                    -- Applicator Keywords (composition and conditional)
+                    , Fractal.JsonSchema.Keywords.AllOf
+                    , Fractal.JsonSchema.Keywords.AnyOf
+                    , Fractal.JsonSchema.Keywords.OneOf
+                    , Fractal.JsonSchema.Keywords.Not
+                    , Fractal.JsonSchema.Keywords.Conditional
                     -- Pluggable Architecture Modules
                     , Fractal.JsonSchema.Keyword
                     , Fractal.JsonSchema.Keyword.Types

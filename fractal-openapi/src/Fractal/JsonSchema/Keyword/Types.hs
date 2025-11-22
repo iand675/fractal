@@ -1,6 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 -- | Core types for the pluggable keyword system
 --
@@ -119,6 +120,12 @@ data CompiledKeyword = CompiledKeyword
     -- ^ Values from adjacent keywords accessed during compilation
   }
 
+instance Show CompiledKeyword where
+  show (CompiledKeyword name _ _ _) = "CompiledKeyword{" ++ show name ++ "}"
+
+instance Eq CompiledKeyword where
+  (CompiledKeyword name1 _ _ _) == (CompiledKeyword name2 _ _ _) = name1 == name2
+
 -- ============================================================================
 -- Monadic Compilation
 -- ============================================================================
@@ -149,7 +156,7 @@ data CompilationState = CompilationState
 newtype CompileM a = CompileM
   { unCompileM :: StateT CompilationState (Either Text) a
   }
-  deriving (Functor, Applicative, Monad)
+  deriving newtype (Functor, Applicative, Monad)
 
 -- | Run a monadic compilation
 runCompileM :: CompileM a -> CompilationState -> Either Text (a, CompilationState)

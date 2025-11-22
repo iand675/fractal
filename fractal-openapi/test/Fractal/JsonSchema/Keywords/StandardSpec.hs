@@ -12,15 +12,20 @@ import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keywords.Standard
 import Fractal.JsonSchema.Keyword.Types
+import Fractal.JsonSchema.Keyword (emptyKeywordRegistry)
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), emptyRegistry)
 
 -- Helper to create a minimal schema
 mkSchema :: Value -> Schema
 mkSchema v = Schema
-  { schemaId = Nothing
+  { schemaVersion = Nothing
+  , schemaMetaschemaURI = Nothing
+  , schemaId = Nothing
+  , schemaVocabulary = Nothing
   , schemaCore = ObjectSchema $ error "not used in tests"
   , schemaExtensions = Map.singleton "test-keyword" v
+  , schemaRawKeywords = Map.singleton "test-keyword" v
   }
 
 -- Helper to create a compilation context
@@ -30,6 +35,7 @@ mkContext schema = CompilationContext
   , contextResolveRef = \_ -> Left "No refs in tests"
   , contextCurrentSchema = schema
   , contextParentPath = []
+  , contextKeywordRegistry = emptyKeywordRegistry
   }
 
 spec :: Spec

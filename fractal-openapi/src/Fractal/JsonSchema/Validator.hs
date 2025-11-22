@@ -29,6 +29,12 @@ import qualified Fractal.JsonSchema.Keywords.Const as KW
 import qualified Fractal.JsonSchema.Keywords.Numeric as KW
 import qualified Fractal.JsonSchema.Keywords.String as KW
 import qualified Fractal.JsonSchema.Keywords.Format as KW
+-- Applicator keywords (composition and conditional)
+import qualified Fractal.JsonSchema.Keywords.AllOf as AllOf
+import qualified Fractal.JsonSchema.Keywords.AnyOf as AnyOf
+import qualified Fractal.JsonSchema.Keywords.OneOf as OneOf
+import qualified Fractal.JsonSchema.Keywords.Not as Not
+import qualified Fractal.JsonSchema.Keywords.Conditional as Cond
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -579,12 +585,15 @@ validateAgainstObject parentCtx ctx schema obj val =
 validateComposition :: ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateComposition ctx obj val =
   combineResults
-    [ maybe (ValidationSuccess mempty) (validateAllOf ctx val) (schemaAllOf obj)
-    , maybe (ValidationSuccess mempty) (validateAnyOf ctx val) (schemaAnyOf obj)
-    , maybe (ValidationSuccess mempty) (validateOneOf ctx val) (schemaOneOf obj)
-    , maybe (ValidationSuccess mempty) (validateNot ctx val) (schemaNot obj)
+    [ maybe (ValidationSuccess mempty) (\schemas -> AllOf.validateAllOf validator schemas val) (schemaAllOf obj)
+    , maybe (ValidationSuccess mempty) (\schemas -> AnyOf.validateAnyOf validator schemas val) (schemaAnyOf obj)
+    , maybe (ValidationSuccess mempty) (\schemas -> OneOf.validateOneOf validator schemas val) (schemaOneOf obj)
+    , maybe (ValidationSuccess mempty) (\schema -> Not.validateNot validator schema val) (schemaNot obj)
     ]
   where
+    -- Validator function that captures the context
+    validator schema value = validateValueWithContext ctx schema value
+
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
           annotations = [anns | ValidationSuccess anns <- results]
@@ -592,54 +601,15 @@ validateComposition ctx obj val =
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
-    validateAllOf ctx' v schemas =
-      let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-          failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        -- Collect annotations from ALL branches in allOf (all must pass)
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
-    validateAnyOf ctx' v schemas =
-      let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-          successes = [anns | ValidationSuccess anns <- results]
-      in if null successes
-        then validationFailure "anyOf" "Value does not match any schema in anyOf"
-        -- Collect annotations from ALL passing branches in anyOf
-        else ValidationSuccess $ mconcat successes
-
-    validateOneOf ctx' v schemas =
-      let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-          successes = [anns | ValidationSuccess anns <- results]
-      in case length successes of
-        -- Collect annotations from the single passing branch
-        1 -> ValidationSuccess $ head successes
-        0 -> validationFailure "oneOf" "Value does not match any schema in oneOf"
-        _ -> validationFailure "oneOf" "Value matches more than one schema in oneOf"
-
-    validateNot ctx' v schema =
-      case validateValueWithContext ctx' schema v of
-        ValidationSuccess _ -> validationFailure "not" "Value matches schema in 'not'"
-        ValidationFailure _ -> ValidationSuccess mempty
-
 -- | Validate conditional keywords (if/then/else, draft-07+)
 validateConditional :: ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateConditional ctx obj val = case schemaIf obj of
   Nothing -> ValidationSuccess mempty  -- No conditional
   Just ifSchema ->
-    case validateValueWithContext ctx ifSchema val of
-      ValidationSuccess ifAnns ->
-        -- If validates, apply then (if present) and combine annotations
-        case schemaThen obj of
-          Just thenSchema ->
-            case validateValueWithContext ctx thenSchema val of
-              ValidationSuccess thenAnns -> ValidationSuccess (ifAnns <> thenAnns)
-              ValidationFailure errs -> ValidationFailure errs
-          Nothing -> ValidationSuccess ifAnns  -- No then, keep if annotations
-      ValidationFailure _ ->
-        -- If fails, apply else (if present)
-        maybe (ValidationSuccess mempty) (\elseSchema -> validateValueWithContext ctx elseSchema val) (schemaElse obj)
+    Cond.validateConditional validator ifSchema (schemaThen obj) (schemaElse obj) val
+  where
+    -- Validator function that captures the context
+    validator schema value = validateValueWithContext ctx schema value
 
 -- | Validate array constraints WITHOUT unevaluatedItems (for use when collecting annotations)
 validateArrayConstraintsWithoutUnevaluated :: ValidationContext -> SchemaObject -> Value -> ValidationResult

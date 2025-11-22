@@ -1,0 +1,48 @@
+{-# LANGUAGE OverloadedStrings #-}
+-- | Implementation of the 'minItems' keyword
+--
+-- The minItems keyword requires that an array value has at least the
+-- specified number of items.
+module Fractal.JsonSchema.Keywords.MinItems
+  ( minItemsKeyword
+  ) where
+
+import Data.Aeson (Value(..))
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Typeable (Typeable)
+import Numeric.Natural (Natural)
+import qualified Data.Scientific as Sci
+
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Types (Schema)
+
+-- | Compiled data for the 'minItems' keyword
+newtype MinItemsData = MinItemsData Natural
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'minItems' keyword
+compileMinItems :: CompileFunc MinItemsData
+compileMinItems value _schema _ctx = case value of
+  Number n | Sci.isInteger n && n >= 0 ->
+    Right $ MinItemsData (fromInteger $ truncate n)
+  _ -> Left "minItems must be a non-negative integer"
+
+-- | Validate function for 'minItems' keyword
+validateMinItems :: ValidateFunc MinItemsData
+validateMinItems (MinItemsData minLen) (Array arr) =
+  let arrLength = fromIntegral (length arr) :: Natural
+  in if arrLength >= minLen
+     then []
+     else ["Array length " <> T.pack (show arrLength) <> " is less than minItems " <> T.pack (show minLen)]
+validateMinItems _ _ = []  -- Only applies to arrays
+
+-- | The 'minItems' keyword definition
+minItemsKeyword :: KeywordDefinition
+minItemsKeyword = KeywordDefinition
+  { keywordName = "minItems"
+  , keywordScope = AnyScope
+  , keywordCompile = compileMinItems
+  , keywordValidate = validateMinItems
+  }
+

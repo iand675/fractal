@@ -8,6 +8,7 @@ module Fractal.JsonSchema.Keyword.Monadic
     compileAdjacent
   , getAdjacentData
   , getAdjacentValue
+  , getKeywordValue
     -- * Initialization
   , initCompilationState
   ) where
@@ -36,16 +37,14 @@ initCompilationState schema ctx = CompilationState
 -- | Get the value of a keyword from the current schema
 --
 -- Returns Nothing if the keyword is not present in the schema.
--- This function extracts keyword values from the structured Schema representation.
+-- This function extracts keyword values from schemaRawKeywords, which stores
+-- all keywords in their original Value form for use during monadic compilation.
 --
--- NOTE: For now, this only extracts from schemaExtensions since the Schema types
--- don't fully implement ToJSON yet. This is sufficient for custom keywords and
--- will be enhanced in the future to support all standard keywords via proper
--- ToJSON instances.
+-- This works with dynamically registered keywords since schemaRawKeywords contains
+-- ALL keywords from the parsed JSON, not just known/structured ones.
 getKeywordValue :: Text -> Schema -> Maybe Value
 getKeywordValue keywordName schema =
-  -- Check schemaExtensions for custom/unknown keywords
-  Map.lookup keywordName (schemaExtensions schema)
+  Map.lookup keywordName (schemaRawKeywords schema)
 
 -- | Request compilation of an adjacent keyword
 --

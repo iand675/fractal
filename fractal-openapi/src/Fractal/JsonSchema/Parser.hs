@@ -63,6 +63,7 @@ parseSchemaWithVersion version val = case val of
     , schemaCore = BooleanSchema b
     , schemaVocabulary = Nothing
     , schemaExtensions = Map.empty
+    , schemaRawKeywords = Map.empty  -- Boolean schemas have no keywords
     }
   Object obj -> do
     -- Parse $schema URI
@@ -111,8 +112,8 @@ parseSchemaWithVersion version val = case val of
           , "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"
           , "multipleOf"
           ]
-    let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords)
-                   $ Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
+    let allKeywords = Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
+    let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords) allKeywords
 
     pure $ Schema
       { schemaVersion = Just version
@@ -121,6 +122,7 @@ parseSchemaWithVersion version val = case val of
       , schemaCore = ObjectSchema core
       , schemaVocabulary = vocabMap
       , schemaExtensions = extensions
+      , schemaRawKeywords = allKeywords  -- Store ALL keywords for monadic compilation
       }
   _ -> Left $ ParseError emptyPointer "Schema must be boolean or object" (Just val)
 
@@ -332,7 +334,7 @@ parseValidationKeywords version obj = do
   let properties' = KeyMap.lookup "properties" obj >>= parsePropertySchemas version
   let patternProperties' = KeyMap.lookup "patternProperties" obj >>= parsePatternPropertySchemas version
   let additionalProperties' = KeyMap.lookup "additionalProperties" obj >>= \v -> case v of
-        Bool b -> Just $ Schema Nothing Nothing Nothing (BooleanSchema b) Nothing Map.empty
+        Bool b -> Just $ Schema Nothing Nothing Nothing (BooleanSchema b) Nothing Map.empty Map.empty
         _ -> eitherToMaybe $ parseSubschema version v
   let unevaluatedProperties' = if version >= Draft201909
                                then KeyMap.lookup "unevaluatedProperties" obj >>= eitherToMaybe . parseSubschema version
