@@ -150,6 +150,7 @@ access adjacent keywords.
 3. `8f62506` - feat(json-schema): Migrate required, minProperties, maxProperties to pluggable keywords
 4. `80f7c25` - docs: Update keyword migration progress to reflect 17 completed keywords
 5. `a420fce` - refactor(json-schema): Add draft-specific keyword registries
+6. `97ef058` - feat(pluggable-schema): Implement monadic compilation for adjacent keyword access
 
 ## Next Steps
 
@@ -179,8 +180,14 @@ access adjacent keywords.
 - `fractal-14g` ⛔ - Migrate items/prefixItems keywords to pluggable architecture (blocked)
 - `fractal-qzm` ⛔ - Migrate contains/minContains/maxContains keywords to pluggable architecture (blocked)
 
+### In Progress
+- `fractal-4o1` 🟡 - Implement monadic compilation context for adjacent keyword access (in-progress, priority 0)
+  - Core infrastructure complete (CompileM, compileAdjacent, getAdjacentData)
+  - Commit: 97ef058
+  - TODO: Enhance getKeywordValue to extract all standard keywords from Schema
+
 ### Critical Blocker
 - `fractal-tos` 🔴 - Enhance pluggable keyword ValidateFunc to support recursive validation (open, priority 0 - critical blocker)
 
 ### Future Enhancements
-- `fractal-7da` 🟡 - Implement Draft-04 specific minimum/maximum keywords with boolean exclusive modifiers (open, priority 3)
+- `fractal-7da` 🟡 - Implement Draft-04 specific minimum/maximum keywords with boolean exclusive modifiers (blocked on fractal-4o1, priority 3)
