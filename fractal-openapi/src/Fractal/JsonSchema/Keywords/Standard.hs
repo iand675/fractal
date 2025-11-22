@@ -16,6 +16,10 @@ module Fractal.JsonSchema.Keywords.Standard
   , minimumKeyword
   , maximumKeyword
   , multipleOfKeyword
+    -- * Array Keywords
+  , minItemsKeyword
+  , maxItemsKeyword
+  , uniqueItemsKeyword
     -- * Registry
   , standardKeywordRegistry
   ) where
@@ -31,6 +35,8 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Scientific as Sci
 import Data.Typeable (Typeable)
 import Data.Foldable (toList)
+import qualified Data.Set as Set
+import Numeric.Natural (Natural)
 
 -- | Compiled data for the 'const' keyword
 data ConstData = ConstData
@@ -326,6 +332,102 @@ multipleOfKeyword = KeywordDefinition
   , keywordValidate = validateMultipleOf
   }
 
+-- ============================================================================
+-- Array Validation Keywords
+-- ============================================================================
+
+-- | Compiled data for the 'minItems' keyword
+newtype MinItemsData = MinItemsData Natural
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'minItems' keyword
+compileMinItems :: CompileFunc MinItemsData
+compileMinItems value _schema _ctx = case value of
+  Number n | Sci.isInteger n && n >= 0 ->
+    Right $ MinItemsData (fromInteger $ truncate n)
+  _ -> Left "minItems must be a non-negative integer"
+
+-- | Validate function for 'minItems' keyword
+validateMinItems :: ValidateFunc MinItemsData
+validateMinItems (MinItemsData minLen) (Array arr) =
+  let arrLength = fromIntegral (length arr) :: Natural
+  in if arrLength >= minLen
+     then []
+     else ["Array length " <> T.pack (show arrLength) <> " is less than minItems " <> T.pack (show minLen)]
+validateMinItems _ _ = []  -- Only applies to arrays
+
+-- | The 'minItems' keyword definition
+minItemsKeyword :: KeywordDefinition
+minItemsKeyword = KeywordDefinition
+  { keywordName = "minItems"
+  , keywordScope = AnyScope
+  , keywordCompile = compileMinItems
+  , keywordValidate = validateMinItems
+  }
+
+-- | Compiled data for the 'maxItems' keyword
+newtype MaxItemsData = MaxItemsData Natural
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'maxItems' keyword
+compileMaxItems :: CompileFunc MaxItemsData
+compileMaxItems value _schema _ctx = case value of
+  Number n | Sci.isInteger n && n >= 0 ->
+    Right $ MaxItemsData (fromInteger $ truncate n)
+  _ -> Left "maxItems must be a non-negative integer"
+
+-- | Validate function for 'maxItems' keyword
+validateMaxItems :: ValidateFunc MaxItemsData
+validateMaxItems (MaxItemsData maxLen) (Array arr) =
+  let arrLength = fromIntegral (length arr) :: Natural
+  in if arrLength <= maxLen
+     then []
+     else ["Array length " <> T.pack (show arrLength) <> " exceeds maxItems " <> T.pack (show maxLen)]
+validateMaxItems _ _ = []  -- Only applies to arrays
+
+-- | The 'maxItems' keyword definition
+maxItemsKeyword :: KeywordDefinition
+maxItemsKeyword = KeywordDefinition
+  { keywordName = "maxItems"
+  , keywordScope = AnyScope
+  , keywordCompile = compileMaxItems
+  , keywordValidate = validateMaxItems
+  }
+
+-- | Compiled data for the 'uniqueItems' keyword
+newtype UniqueItemsData = UniqueItemsData Bool
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'uniqueItems' keyword
+compileUniqueItems :: CompileFunc UniqueItemsData
+compileUniqueItems value _schema _ctx = case value of
+  Bool b -> Right $ UniqueItemsData b
+  _ -> Left "uniqueItems must be a boolean"
+
+-- | Validate function for 'uniqueItems' keyword
+validateUniqueItems :: ValidateFunc UniqueItemsData
+validateUniqueItems (UniqueItemsData True) (Array arr) =
+  let items = toList arr
+      uniqueItems = length items == length (nubOrd items)
+  in if uniqueItems
+     then []
+     else ["Array contains duplicate items"]
+  where
+    -- Simple deduplication using Ord (works for most JSON values)
+    nubOrd :: Ord a => [a] -> [a]
+    nubOrd = Set.toList . Set.fromList
+validateUniqueItems (UniqueItemsData False) _ = []  -- uniqueItems: false means no constraint
+validateUniqueItems _ _ = []  -- Only applies to arrays when true
+
+-- | The 'uniqueItems' keyword definition
+uniqueItemsKeyword :: KeywordDefinition
+uniqueItemsKeyword = KeywordDefinition
+  { keywordName = "uniqueItems"
+  , keywordScope = AnyScope
+  , keywordCompile = compileUniqueItems
+  , keywordValidate = validateUniqueItems
+  }
+
 -- | Registry containing all standard keywords
 --
 -- This registry can be extended with custom keywords or used as-is
@@ -343,5 +445,9 @@ standardKeywordRegistry =
   -- Numeric validation
   registerKeyword minimumKeyword $
   registerKeyword maximumKeyword $
-  registerKeyword multipleOfKeyword
+  registerKeyword multipleOfKeyword $
+  -- Array validation
+  registerKeyword minItemsKeyword $
+  registerKeyword maxItemsKeyword $
+  registerKeyword uniqueItemsKeyword
   emptyKeywordRegistry
