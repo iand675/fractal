@@ -124,11 +124,32 @@ This would allow keywords like `items`, `properties`, `allOf`, etc. to:
 
 All 7701 existing tests continue to pass with the 17 migrated keywords.
 
+## Draft-Specific Implementations
+
+### Important Note on Draft Versions
+
+Different JSON Schema draft versions have different keyword semantics:
+
+**exclusiveMinimum/exclusiveMaximum:**
+- **Draft-04**: Boolean that modifies `minimum`/`maximum` behavior
+- **Draft-06+**: Standalone numeric value
+
+The current Standard.hs implementations use **Draft-06+ style** (standalone numeric).
+Proper Draft-04 support requires implementing version-specific keywords that can
+access adjacent keywords.
+
+**Solution**: Created `Keywords.Registry` module with draft-specific registries:
+- `draft04Registry` - For Draft-04 schemas (needs special exclusive keyword handling)
+- `draft06Registry` - For Draft-06 schemas (uses standalone exclusive keywords)
+- `draft07Registry`, `draft201909Registry`, `draft202012Registry` - Later versions
+
 ## Commits
 
 1. `f50336c` - feat(json-schema): Migrate minItems, maxItems, uniqueItems to pluggable keywords
 2. `6c74537` - feat(json-schema): Migrate exclusiveMinimum, exclusiveMaximum to pluggable keywords
 3. `8f62506` - feat(json-schema): Migrate required, minProperties, maxProperties to pluggable keywords
+4. `80f7c25` - docs: Update keyword migration progress to reflect 17 completed keywords
+5. `a420fce` - refactor(json-schema): Add draft-specific keyword registries
 
 ## Next Steps
 
@@ -160,3 +181,6 @@ All 7701 existing tests continue to pass with the 17 migrated keywords.
 
 ### Critical Blocker
 - `fractal-tos` 🔴 - Enhance pluggable keyword ValidateFunc to support recursive validation (open, priority 0 - critical blocker)
+
+### Future Enhancements
+- `fractal-7da` 🟡 - Implement Draft-04 specific minimum/maximum keywords with boolean exclusive modifiers (open, priority 3)
