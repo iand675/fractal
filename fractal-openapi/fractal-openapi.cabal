@@ -61,6 +61,12 @@ library
                     , Fractal.JsonSchema.ReferenceLoader
                     , Fractal.JsonSchema.EmbeddedMetaschemas
                     , Fractal.JsonSchema.Regex
+                    , Fractal.JsonSchema.Keywords.Type
+                    , Fractal.JsonSchema.Keywords.Enum
+                    , Fractal.JsonSchema.Keywords.Const
+                    , Fractal.JsonSchema.Keywords.Numeric
+                    , Fractal.JsonSchema.Keywords.String
+                    , Fractal.JsonSchema.Keywords.Format
                     , Fractal.OpenApi
                     , Fractal.OpenApi.Types
                     , Fractal.OpenApi.Parser

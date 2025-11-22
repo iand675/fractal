@@ -64,6 +64,7 @@ module Fractal.JsonSchema.Types
   , isSuccess
   , isFailure
   , validationError
+  , validationFailure
   ) where
 
 import Data.Aeson (Value, ToJSON(..), FromJSON(..), object, (.=))
@@ -700,6 +701,12 @@ validationError msg = ValidationError
   , errorMessage = msg
   , errorDetails = Nothing
   }
+
+-- | Create validation failure with keyword and message
+validationFailure :: Text -> Text -> ValidationResult
+validationFailure keyword message =
+  ValidationFailure $ ValidationErrors $ pure $
+    ValidationError keyword emptyPointer emptyPointer message Nothing
 
 -- | Schema fingerprint for cycle detection
 newtype SchemaFingerprint = SchemaFingerprint ByteString
