@@ -53,6 +53,7 @@ library
     exposed-modules:  Fractal.JsonSchema
                     , Fractal.JsonSchema.Types
                     , Fractal.JsonSchema.Parser
+                    , Fractal.JsonSchema.Parser.Extended
                     , Fractal.JsonSchema.Renderer
                     , Fractal.JsonSchema.Validator
                     , Fractal.JsonSchema.Metadata
@@ -74,6 +75,7 @@ library
                     , Fractal.JsonSchema.Keyword.Validate
                     , Fractal.JsonSchema.Vocabulary.Types
                     , Fractal.JsonSchema.Validator.Result
+                    , Fractal.JsonSchema.Validator.Extended
                     , Fractal.JsonSchema.Codegen.Types
                     -- OpenAPI
                     , Fractal.OpenApi
