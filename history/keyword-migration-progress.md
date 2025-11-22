@@ -3,7 +3,7 @@
 ## Overview
 This document tracks the migration of standard JSON Schema keywords from the old validation system to the new pluggable keyword architecture.
 
-## Completed Migrations (14 keywords)
+## Completed Migrations (17 keywords)
 
 ### Basic Validation (3)
 - ✅ `const` - exact value equality
@@ -27,6 +27,11 @@ This document tracks the migration of standard JSON Schema keywords from the old
 - ✅ `maxItems` - maximum array length
 - ✅ `uniqueItems` - ensure all array elements are unique
 
+### Object Validation (3)
+- ✅ `required` - validates that specified properties are present
+- ✅ `minProperties` - validates minimum number of object properties
+- ✅ `maxProperties` - validates maximum number of object properties
+
 ## Blocked - Requires Recursive Validation Support
 
 The following keywords cannot be migrated with the current pluggable architecture because they require recursive schema validation:
@@ -35,15 +40,13 @@ The following keywords cannot be migrated with the current pluggable architectur
 - ⛔ `items` / `prefixItems` - schema validation for array items
 - ⛔ `contains` / `minContains` / `maxContains` - at least N items match schema
 
-### Object Validation (All Blocked)
+### Object Validation (Partially Blocked)
 - ⛔ `properties` - schema validation for object properties
 - ⛔ `patternProperties` - schema validation for properties matching patterns
 - ⛔ `additionalProperties` - schema for unmatched properties
-- ⛔ `required` - list of required property names (might be doable without recursion)
 - ⛔ `propertyNames` - schema for property names themselves
-- ⛔ `minProperties` / `maxProperties` - object property count constraints (might be doable without recursion)
-- ⛔ `dependentRequired` - properties required when another is present (might be doable without recursion)
 - ⛔ `dependentSchemas` - schemas to apply when property is present
+- 🟡 `dependentRequired` - properties required when another is present (might be doable without recursion)
 
 ### Logical Combinators (All Blocked)
 - ⛔ `allOf` - value must validate against all schemas
@@ -61,10 +64,7 @@ The following keywords cannot be migrated with the current pluggable architectur
 ## Potentially Migrateable (No Recursive Validation Needed)
 
 ### Object Validation (Simple)
-- 🟡 `required` - could be implemented without recursion, just checks for property presence
-- 🟡 `minProperties` - just counts properties
-- 🟡 `maxProperties` - just counts properties
-- 🟡 `dependentRequired` - checks property presence dependencies
+- 🟡 `dependentRequired` - checks property presence dependencies (similar to `required`)
 
 ### Format Validation
 - 🟡 `format` - validates string format (uri, email, date-time, hostname, etc.)
@@ -122,17 +122,18 @@ This would allow keywords like `items`, `properties`, `allOf`, etc. to:
 
 ## Test Status
 
-All 7701 existing tests continue to pass with the 14 migrated keywords.
+All 7701 existing tests continue to pass with the 17 migrated keywords.
 
 ## Commits
 
 1. `f50336c` - feat(json-schema): Migrate minItems, maxItems, uniqueItems to pluggable keywords
 2. `6c74537` - feat(json-schema): Migrate exclusiveMinimum, exclusiveMaximum to pluggable keywords
+3. `8f62506` - feat(json-schema): Migrate required, minProperties, maxProperties to pluggable keywords
 
 ## Next Steps
 
 1. **Short term**: Migrate the remaining simple keywords that don't need recursion:
-   - `required`, `minProperties`, `maxProperties`, `dependentRequired`
+   - `dependentRequired` (similar to `required`)
    - `format` (as a meta-keyword with format-specific validators)
 
 2. **Long term**: Enhance the pluggable architecture to support recursive validation:
@@ -143,11 +144,19 @@ All 7701 existing tests continue to pass with the 14 migrated keywords.
 
 ## bd Issues
 
+### Completed
 - `fractal-5oz` ✅ - Migrate minItems keyword to pluggable architecture (closed)
 - `fractal-8ju` ✅ - Migrate maxItems keyword to pluggable architecture (closed)
 - `fractal-dob` ✅ - Migrate uniqueItems keyword to pluggable architecture (closed)
-- `fractal-14g` ⛔ - Migrate items/prefixItems keywords to pluggable architecture (blocked)
-- `fractal-qzm` ⛔ - Migrate contains/minContains/maxContains keywords to pluggable architecture (blocked)
 - `fractal-ka4` ✅ - Migrate exclusiveMinimum keyword to pluggable architecture (closed)
 - `fractal-fh4` ✅ - Migrate exclusiveMaximum keyword to pluggable architecture (closed)
+- `fractal-cwf` ✅ - Migrate required keyword to pluggable architecture (closed)
+- `fractal-0yt` ✅ - Migrate minProperties keyword to pluggable architecture (closed)
+- `fractal-awp` ✅ - Migrate maxProperties keyword to pluggable architecture (closed)
+
+### Blocked
+- `fractal-14g` ⛔ - Migrate items/prefixItems keywords to pluggable architecture (blocked)
+- `fractal-qzm` ⛔ - Migrate contains/minContains/maxContains keywords to pluggable architecture (blocked)
+
+### Critical Blocker
 - `fractal-tos` 🔴 - Enhance pluggable keyword ValidateFunc to support recursive validation (open, priority 0 - critical blocker)
