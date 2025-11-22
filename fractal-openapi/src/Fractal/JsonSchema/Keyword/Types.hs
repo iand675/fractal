@@ -94,6 +94,8 @@ data CompiledKeyword = CompiledKeyword
     -- ^ Name of the keyword
   , compiledData :: SomeCompiledData
     -- ^ The compiled data (existentially quantified)
+  , compiledValidate :: Value -> [Text]
+    -- ^ Type-erased validate function (closed over compiled data)
   , compiledAdjacentData :: Map Text Value
     -- ^ Values from adjacent keywords accessed during compilation
   }

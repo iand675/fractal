@@ -70,6 +70,8 @@ library
                     -- Pluggable Architecture Modules
                     , Fractal.JsonSchema.Keyword
                     , Fractal.JsonSchema.Keyword.Types
+                    , Fractal.JsonSchema.Keyword.Compile
+                    , Fractal.JsonSchema.Keyword.Validate
                     , Fractal.JsonSchema.Vocabulary.Types
                     , Fractal.JsonSchema.Validator.Result
                     , Fractal.JsonSchema.Codegen.Types
