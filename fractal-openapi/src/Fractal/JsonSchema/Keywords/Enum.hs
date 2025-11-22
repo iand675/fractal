@@ -16,7 +16,7 @@ import Data.Typeable (Typeable)
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
 import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult(..), validationFailure)
 
 -- | Compiled data for the 'enum' keyword
@@ -44,6 +44,7 @@ enumKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileEnum
   , keywordValidate = validateEnum
+  , keywordNavigation = NoNavigation
   }
 
 -- | Backward compatibility: validate enum constraint from SchemaObject

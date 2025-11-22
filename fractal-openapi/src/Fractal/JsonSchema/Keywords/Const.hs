@@ -12,7 +12,7 @@ module Fractal.JsonSchema.Keywords.Const
 import Data.Aeson (Value)
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
 import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult(..), validationFailure)
 
 -- | Compiled data for the 'const' keyword
@@ -38,6 +38,7 @@ constKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileConst
   , keywordValidate = validateConst
+  , keywordNavigation = NoNavigation
   }
 
 -- | Backward compatibility: validate const constraint from SchemaObject

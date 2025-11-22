@@ -13,7 +13,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
 import Fractal.JsonSchema.Types (Schema)
 
 -- | Compiled data for the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
@@ -41,5 +41,6 @@ exclusiveMinimumKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileExclusiveMinimum
   , keywordValidate = validateExclusiveMinimum
+  , keywordNavigation = NoNavigation
   }
 

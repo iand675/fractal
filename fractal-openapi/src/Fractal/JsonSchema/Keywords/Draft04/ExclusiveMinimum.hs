@@ -53,4 +53,5 @@ exclusiveMinimumKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileExclusiveMinimum
   , keywordValidate = validateExclusiveMinimum
+  , keywordNavigation = NoNavigation
   }

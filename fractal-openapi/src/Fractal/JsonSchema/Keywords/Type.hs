@@ -17,7 +17,7 @@ import Data.Foldable (toList)
 import qualified Data.Scientific as Sci
 import qualified Data.List.NonEmpty as NE
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
 import Fractal.JsonSchema.Types (Schema, SchemaType(..), SchemaObject(..), OneOrMany(..), ValidationResult(..), validationFailure)
 
 -- | Compiled data for the 'type' keyword
@@ -75,6 +75,7 @@ typeKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileType
   , keywordValidate = validateType
+  , keywordNavigation = NoNavigation
   }
 
 -- | Backward compatibility: validate type constraint from SchemaObject

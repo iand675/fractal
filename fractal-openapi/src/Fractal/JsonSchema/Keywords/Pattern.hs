@@ -12,7 +12,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
 import Fractal.JsonSchema.Types (Schema)
 import qualified Fractal.JsonSchema.Regex as Regex
 
@@ -51,5 +51,6 @@ patternKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compilePattern
   , keywordValidate = validatePattern
+  , keywordNavigation = NoNavigation
   }
 

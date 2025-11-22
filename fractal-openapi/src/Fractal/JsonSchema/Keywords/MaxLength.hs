@@ -13,7 +13,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
 import Fractal.JsonSchema.Types (Schema)
 
 -- | Compiled data for the 'maxLength' keyword
@@ -41,5 +41,6 @@ maxLengthKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileMaxLength
   , keywordValidate = validateMaxLength
+  , keywordNavigation = NoNavigation
   }
 

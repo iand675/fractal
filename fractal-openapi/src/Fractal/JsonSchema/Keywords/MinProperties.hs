@@ -15,7 +15,7 @@ import Numeric.Natural (Natural)
 import qualified Data.Scientific as Sci
 import qualified Data.Aeson.KeyMap as KeyMap
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
 import Fractal.JsonSchema.Types (Schema)
 
 -- | Compiled data for the 'minProperties' keyword
@@ -45,5 +45,6 @@ minPropertiesKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileMinProperties
   , keywordValidate = validateMinProperties
+  , keywordNavigation = NoNavigation
   }
 
