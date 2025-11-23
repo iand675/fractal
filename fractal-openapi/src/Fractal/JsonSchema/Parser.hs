@@ -10,12 +10,20 @@ module Fractal.JsonSchema.Parser
   , parseSubschema
   , parseSchemaStrict
   , parseSchemaFromFile
+  
+    -- * Dialect-Aware Parsing
+  , parseSchemaWithDialectRegistry
+  , parseSchemaWithDialectRegistryAndVersion
+  , resolveDialectFromSchema
+  , extractSchemaURI
 
     -- * Error Types
   , ParseError(..)
   ) where
 
 import Fractal.JsonSchema.Types
+import Fractal.JsonSchema.Vocabulary (VocabularyRegistry, lookupDialect)
+import Fractal.JsonSchema.Dialect (Dialect, dialectURI, dialectVersion)
 import Data.Aeson (Value(..), Object)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
@@ -448,4 +456,74 @@ parseDependency version v@(Bool _) =
 parseDependency _ (Array arr) = Just $ DependencyProperties $ Set.fromList
   [t | String t <- toList arr]
 parseDependency _ _ = Nothing
+
+-- | Parse a schema with dialect registry support
+--
+-- This function parses a JSON Schema and uses the provided dialect registry
+-- to look up the dialect based on the $schema keyword. If the $schema dialect
+-- is not found in the registry, it falls back to version detection.
+-- If version detection fails (for custom $schema URIs), defaults to latest version.
+--
+-- The dialect information is stored in the schemaMetaschemaURI field,
+-- and can be used during validation to determine format behavior and
+-- unknown keyword handling.
+parseSchemaWithDialectRegistry
+  :: VocabularyRegistry  -- ^ Registry containing available dialects
+  -> Value               -- ^ JSON value to parse
+  -> Either ParseError Schema
+parseSchemaWithDialectRegistry registry val = do
+  -- Extract $schema URI if present
+  let mSchemaURI = extractSchemaURI val
+  
+  -- Try to resolve dialect from registry
+  case mSchemaURI of
+    Just uri -> case lookupDialect uri registry of
+      Just dialect -> do
+        -- Found dialect - parse with its version
+        schema <- parseSchemaWithVersion (dialectVersion dialect) val
+        return schema
+      Nothing -> do
+        -- Dialect not in registry - try version detection, fall back to latest
+        case detectVersion val of
+          Right version -> parseSchemaWithVersion version val
+          Left _ -> 
+            -- Custom $schema URI that's not a known version - default to latest
+            parseSchemaWithVersion Draft202012 val
+    Nothing -> do
+      -- No $schema - use default parsing
+      parseSchema val
+
+-- | Parse a schema with explicit version and dialect registry
+--
+-- This variant allows overriding the version while still looking up
+-- dialect information for validation configuration.
+parseSchemaWithDialectRegistryAndVersion
+  :: VocabularyRegistry  -- ^ Registry containing available dialects
+  -> JsonSchemaVersion   -- ^ Explicit version to use
+  -> Value               -- ^ JSON value to parse
+  -> Either ParseError Schema
+parseSchemaWithDialectRegistryAndVersion registry version val = do
+  parseSchemaWithVersion version val
+
+-- | Resolve the dialect for a parsed schema
+--
+-- Given a schema and a dialect registry, this function looks up the dialect
+-- based on the schemaMetaschemaURI. Returns Nothing if:
+-- - The schema has no $schema declaration
+-- - The dialect is not found in the registry
+--
+-- This is useful during validation to access dialect-specific configuration.
+resolveDialectFromSchema
+  :: VocabularyRegistry  -- ^ Registry containing available dialects
+  -> Schema              -- ^ Parsed schema
+  -> Maybe Dialect
+resolveDialectFromSchema registry schema =
+  schemaMetaschemaURI schema >>= \uri -> lookupDialect uri registry
+
+-- | Extract $schema URI from a JSON value
+extractSchemaURI :: Value -> Maybe Text
+extractSchemaURI (Object obj) = case KeyMap.lookup "$schema" obj of
+  Just (String uri) -> Just uri
+  _ -> Nothing
+extractSchemaURI _ = Nothing
 
