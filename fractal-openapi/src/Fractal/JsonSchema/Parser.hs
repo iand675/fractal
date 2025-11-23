@@ -460,13 +460,16 @@ parseDependency _ _ = Nothing
 -- | Parse a schema with dialect registry support
 --
 -- This function parses a JSON Schema and uses the provided dialect registry
--- to look up the dialect based on the $schema keyword. If the $schema dialect
--- is not found in the registry, it falls back to version detection.
--- If version detection fails (for custom $schema URIs), defaults to latest version.
+-- to look up the dialect based on the $schema keyword.
 --
--- The dialect information is stored in the schemaMetaschemaURI field,
--- and can be used during validation to determine format behavior and
--- unknown keyword handling.
+-- Behavior:
+-- - If $schema is present and found in registry: Use that dialect
+-- - If $schema is present but NOT in registry: Error (even for standard URIs)
+-- - If no $schema: Use default parsing (Draft 2020-12)
+--
+-- When using a dialect registry, ALL dialects must be explicitly registered.
+-- Use 'standardDialectRegistry' or 'standardRegistry' to get standard dialects.
+-- This ensures explicit control over which dialects are accepted.
 parseSchemaWithDialectRegistry
   :: VocabularyRegistry  -- ^ Registry containing available dialects
   -> Value               -- ^ JSON value to parse
@@ -480,15 +483,16 @@ parseSchemaWithDialectRegistry registry val = do
     Just uri -> case lookupDialect uri registry of
       Just dialect -> do
         -- Found dialect - parse with its version
-        schema <- parseSchemaWithVersion (dialectVersion dialect) val
-        return schema
-      Nothing -> do
-        -- Dialect not in registry - try version detection, fall back to latest
-        case detectVersion val of
-          Right version -> parseSchemaWithVersion version val
-          Left _ -> 
-            -- Custom $schema URI that's not a known version - default to latest
-            parseSchemaWithVersion Draft202012 val
+        parseSchemaWithVersion (dialectVersion dialect) val
+      Nothing -> 
+        -- Dialect not in registry - error
+        Left $ ParseError
+          { parseErrorPath = emptyPointer
+          , parseErrorMessage = "Unregistered dialect: " <> uri <> ". " <> 
+                               "Dialect must be registered in the dialect registry. " <>
+                               "Use standardDialectRegistry to include standard JSON Schema dialects."
+          , parseErrorContext = Nothing
+          }
     Nothing -> do
       -- No $schema - use default parsing
       parseSchema val

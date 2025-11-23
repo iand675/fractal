@@ -78,17 +78,29 @@ spec = do
             schemaMetaschemaURI parsed `shouldBe` Just "https://json-schema.org/draft/2020-12/schema"
           Left err -> expectationFailure $ "Failed to parse: " ++ show err
     
-    describe "fallback behavior" $ do
-      it "falls back to version detection for unknown dialect" $ do
+    describe "error handling" $ do
+      it "errors on unregistered custom dialect" $ do
         let schema = object
               [ "$schema" .= ("https://custom.example.com/schema" :: T.Text)
               , "type" .= ("string" :: T.Text)
               ]
         case parseSchemaWithDialectRegistry standardDialectRegistry schema of
-          Right parsed -> do
-            -- Should still parse successfully, defaulting to latest version
-            schemaMetaschemaURI parsed `shouldBe` Just "https://custom.example.com/schema"
-          Left err -> expectationFailure $ "Failed to parse: " ++ show err
+          Left err -> do
+            parseErrorMessage err `shouldSatisfy` T.isInfixOf "Unregistered dialect"
+            parseErrorMessage err `shouldSatisfy` T.isInfixOf "https://custom.example.com/schema"
+          Right _ -> expectationFailure "Should have failed with unregistered dialect error"
+      
+      it "errors on standard URI when not in registry" $ do
+        -- If using an empty registry, even standard URIs should fail
+        let schema = object
+              [ "$schema" .= ("http://json-schema.org/draft-04/schema#" :: T.Text)
+              , "type" .= ("string" :: T.Text)
+              ]
+        case parseSchemaWithDialectRegistry emptyVocabularyRegistry schema of
+          Left err -> do
+            parseErrorMessage err `shouldSatisfy` T.isInfixOf "Unregistered dialect"
+            parseErrorMessage err `shouldSatisfy` T.isInfixOf "http://json-schema.org/draft-04/schema#"
+          Right _ -> expectationFailure "Should have failed with unregistered dialect error"
       
       it "parses schema without $schema keyword" $ do
         let schema = object
@@ -109,19 +121,6 @@ spec = do
             schemaVersion parsed `shouldBe` Just Draft202012
             schemaMetaschemaURI parsed `shouldBe` Nothing
           Left err -> expectationFailure $ "Failed to parse: " ++ show err
-    
-    describe "with empty registry" $ do
-      it "falls back to version detection" $ do
-        let schema = object
-              [ "$schema" .= ("http://json-schema.org/draft-04/schema#" :: T.Text)
-              , "type" .= ("string" :: T.Text)
-              ]
-        case parseSchemaWithDialectRegistry emptyVocabularyRegistry schema of
-          Right parsed -> do
-            -- Should still parse, detecting version from URI
-            schemaVersion parsed `shouldBe` Just Draft04
-            schemaMetaschemaURI parsed `shouldBe` Just "http://json-schema.org/draft-04/schema#"
-          Left err -> expectationFailure $ "Failed to parse: " ++ show err
 
   describe "resolveDialectFromSchema" $ do
     it "resolves Draft-04 dialect from parsed schema" $ do
@@ -140,16 +139,6 @@ spec = do
     
     it "returns Nothing for schema without $schema" $ do
       let schema = object [ "type" .= ("string" :: T.Text) ]
-      case parseSchemaWithDialectRegistry standardDialectRegistry schema of
-        Right parsed -> do
-          resolveDialectFromSchema standardDialectRegistry parsed `shouldBe` Nothing
-        Left err -> expectationFailure $ "Failed to parse: " ++ show err
-    
-    it "returns Nothing for unknown dialect" $ do
-      let schema = object
-            [ "$schema" .= ("https://unknown.example.com/schema" :: T.Text)
-            , "type" .= ("string" :: T.Text)
-            ]
       case parseSchemaWithDialectRegistry standardDialectRegistry schema of
         Right parsed -> do
           resolveDialectFromSchema standardDialectRegistry parsed `shouldBe` Nothing
