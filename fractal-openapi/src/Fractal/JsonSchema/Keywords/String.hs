@@ -17,6 +17,7 @@ import qualified Data.Text.Encoding as TE
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Base64 as Base64
+import Data.Char (isAscii, isAlphaNum)
 
 -- | Validate string constraints
 --
@@ -82,24 +83,37 @@ validateStringConstraints ctx obj (String txt) =
 
     validateEncoding :: Text -> Text -> ValidationResult
     validateEncoding "base64" text =
-      case Base64.decode (TE.encodeUtf8 text) of
-        Left _ -> validationFailure "contentEncoding" "Invalid base64 encoding"
-        Right _ -> ValidationSuccess mempty
+      -- First check that the string only contains valid base64 characters
+      -- Base64 alphabet: A-Z, a-z, 0-9, +, /, and = for padding
+      -- Also allow whitespace (which should be ignored)
+      let isWhitespace c = c == ' ' || c == '\n' || c == '\r' || c == '\t'
+          isValidBase64Char c = isAscii c && (isAlphaNum c || c == '+' || c == '/' || c == '=' || isWhitespace c)
+          isValidBase64Chars t = T.all isValidBase64Char t
+      in if isValidBase64Chars text
+        then
+          -- Remove whitespace and validate decoding
+          let cleaned = T.filter (not . isWhitespace) text
+          in case Base64.decode (TE.encodeUtf8 cleaned) of
+            Left _ -> validationFailure "contentEncoding" "Invalid base64 encoding"
+            Right _ -> ValidationSuccess mempty
+        else validationFailure "contentEncoding" "Invalid base64 encoding: contains invalid characters"
     validateEncoding _ _ =
       -- Unknown encoding - just pass (encodings are optional to support)
       ValidationSuccess mempty
 
     decodeContent :: Text -> Text -> Either Text Text
     decodeContent "base64" text =
-      case Base64.decode (TE.encodeUtf8 text) of
+      -- Remove whitespace before decoding
+      let cleaned = T.filter (\c -> c /= ' ' && c /= '\n' && c /= '\r' && c /= '\t') text
+      in case Base64.decode (TE.encodeUtf8 cleaned) of
         Left _ -> Left "Invalid base64 encoding"
         Right bytes -> Right (TE.decodeUtf8 bytes)
     decodeContent _ text = Right text  -- Unknown encoding, pass through
 
     validateMediaType :: Text -> Text -> ValidationResult
     validateMediaType "application/json" content =
-      case Aeson.eitherDecode (BL.fromStrict (TE.encodeUtf8 content)) of
-        Left _ -> validationFailure "contentMediaType" "Invalid JSON document"
+      case Aeson.eitherDecodeStrict (TE.encodeUtf8 content) of
+        Left err -> validationFailure "contentMediaType" $ "Invalid JSON document: " <> T.pack err
         Right (_ :: Value) -> ValidationSuccess mempty
     validateMediaType _ _ =
       -- Unknown media type - just pass (media types are optional to support)

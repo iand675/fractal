@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Keywords.StandardSpec (spec) where
 
 import Test.Hspec
@@ -12,15 +13,20 @@ import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keywords.Standard
 import Fractal.JsonSchema.Keyword.Types
-import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), emptyRegistry)
+import Fractal.JsonSchema.Keyword (emptyKeywordRegistry)
+import Fractal.JsonSchema.Keyword.Compile (compileKeyword, buildCompilationContext)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), emptyRegistry, ValidationResult, pattern ValidationSuccess, ValidationAnnotations)
 
 -- Helper to create a minimal schema
 mkSchema :: Value -> Schema
 mkSchema v = Schema
-  { schemaId = Nothing
+  { schemaVersion = Nothing
+  , schemaMetaschemaURI = Nothing
+  , schemaId = Nothing
+  , schemaVocabulary = Nothing
   , schemaCore = ObjectSchema $ error "not used in tests"
   , schemaExtensions = Map.singleton "test-keyword" v
+  , schemaRawKeywords = Map.singleton "test-keyword" v
   }
 
 -- Helper to create a compilation context
@@ -30,6 +36,7 @@ mkContext schema = CompilationContext
   , contextResolveRef = \_ -> Left "No refs in tests"
   , contextCurrentSchema = schema
   , contextParentPath = []
+  , contextKeywordRegistry = emptyKeywordRegistry
   }
 
 spec :: Spec
@@ -44,6 +51,8 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword constKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
           compiledKeywordName compiled `shouldBe` "const"
 
     it "validates matching const value" $ do
@@ -54,7 +63,9 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword constKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          let errors = compiledValidate compiled (toJSON ("hello" :: Text))
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          let errors = compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text))
           errors `shouldBe` []
 
     it "rejects non-matching const value" $ do
@@ -65,7 +76,9 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword constKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          let errors = compiledValidate compiled (toJSON ("world" :: Text))
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          let errors = compiledValidate compiled recursiveValidator vCtx (toJSON ("world" :: Text))
           length errors `shouldBe` 1
           head errors `shouldSatisfy` T.isInfixOf "does not match const"
 
@@ -77,8 +90,10 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword constKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (toJSON (42 :: Int)) `shouldBe` []
-          let errors = compiledValidate compiled (toJSON (43 :: Int))
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int)) `shouldBe` []
+          let errors = compiledValidate compiled recursiveValidator vCtx (toJSON (43 :: Int))
           length errors `shouldBe` 1
 
   describe "enum keyword" $ do
@@ -90,6 +105,8 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword enumKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
           compiledKeywordName compiled `shouldBe` "enum"
 
     it "validates value in enum" $ do
@@ -100,9 +117,11 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword enumKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (toJSON ("red" :: Text)) `shouldBe` []
-          compiledValidate compiled (toJSON ("green" :: Text)) `shouldBe` []
-          compiledValidate compiled (toJSON ("blue" :: Text)) `shouldBe` []
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (toJSON ("red" :: Text)) `shouldBe` []
+          compiledValidate compiled recursiveValidator vCtx (toJSON ("green" :: Text)) `shouldBe` []
+          compiledValidate compiled recursiveValidator vCtx (toJSON ("blue" :: Text)) `shouldBe` []
 
     it "rejects value not in enum" $ do
       let value = Array $ fromList [toJSON ("red" :: Text), toJSON ("green" :: Text), toJSON ("blue" :: Text)]
@@ -112,7 +131,9 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword enumKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          let errors = compiledValidate compiled (toJSON ("yellow" :: Text))
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          let errors = compiledValidate compiled recursiveValidator vCtx (toJSON ("yellow" :: Text))
           length errors `shouldBe` 1
           head errors `shouldSatisfy` T.isInfixOf "not in enum"
 
@@ -134,6 +155,8 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
           compiledKeywordName compiled `shouldBe` "type"
 
     it "validates string type" $ do
@@ -144,8 +167,10 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (toJSON ("hello" :: Text)) `shouldBe` []
-          let errors = compiledValidate compiled (toJSON (42 :: Int))
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text)) `shouldBe` []
+          let errors = compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))
           length errors `shouldBe` 1
 
     it "validates number type" $ do
@@ -156,8 +181,10 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (toJSON (42 :: Int)) `shouldBe` []
-          compiledValidate compiled (toJSON (3.14 :: Double)) `shouldBe` []
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int)) `shouldBe` []
+          compiledValidate compiled recursiveValidator vCtx (toJSON (3.14 :: Double)) `shouldBe` []
 
     it "validates integer type" $ do
       let value = toJSON ("integer" :: Text)
@@ -167,8 +194,10 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (toJSON (42 :: Int)) `shouldBe` []
-          let errors = compiledValidate compiled (toJSON (3.14 :: Double))
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int)) `shouldBe` []
+          let errors = compiledValidate compiled recursiveValidator vCtx (toJSON (3.14 :: Double))
           length errors `shouldBe` 1
 
     it "validates boolean type" $ do
@@ -179,8 +208,10 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (toJSON True) `shouldBe` []
-          compiledValidate compiled (toJSON False) `shouldBe` []
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (toJSON True) `shouldBe` []
+          compiledValidate compiled recursiveValidator vCtx (toJSON False) `shouldBe` []
 
     it "validates null type" $ do
       let value = toJSON ("null" :: Text)
@@ -190,7 +221,9 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled Null `shouldBe` []
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx Null `shouldBe` []
 
     it "validates object type" $ do
       let value = toJSON ("object" :: Text)
@@ -200,7 +233,9 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (object []) `shouldBe` []
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (object []) `shouldBe` []
 
     it "validates array type" $ do
       let value = toJSON ("array" :: Text)
@@ -210,7 +245,9 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (Array $ fromList []) `shouldBe` []
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (Array $ fromList []) `shouldBe` []
 
     it "compiles type union" $ do
       let value = Array $ fromList [toJSON ("string" :: Text), toJSON ("number" :: Text)]
@@ -220,9 +257,11 @@ spec = describe "Standard Keywords" $ do
       case compileKeyword typeKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
         Right compiled -> do
-          compiledValidate compiled (toJSON ("hello" :: Text)) `shouldBe` []
-          compiledValidate compiled (toJSON (42 :: Int)) `shouldBe` []
-          let errors = compiledValidate compiled (toJSON True)
+          let recursiveValidator = \_ _ -> ValidationSuccess mempty
+              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+          compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text)) `shouldBe` []
+          compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int)) `shouldBe` []
+          let errors = compiledValidate compiled recursiveValidator vCtx (toJSON True)
           length errors `shouldBe` 1
 
     it "fails compilation for unknown type" $ do

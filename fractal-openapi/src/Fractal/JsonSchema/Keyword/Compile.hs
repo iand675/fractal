@@ -58,15 +58,17 @@ lookupCompiledKeyword name (CompiledKeywords m) = Map.lookup name m
 -- resolution function.
 buildCompilationContext
   :: Map Text Schema         -- ^ Schema registry
+  -> KeywordRegistry         -- ^ Keyword registry
   -> Schema                  -- ^ Current schema being compiled
   -> [Text]                  -- ^ Parent path for error reporting
   -> CompilationContext
-buildCompilationContext registry schema parentPath =
+buildCompilationContext registry keywordRegistry schema parentPath =
   CompilationContext
     { contextRegistry = registry
     , contextResolveRef = resolveRef registry
     , contextCurrentSchema = schema
     , contextParentPath = parentPath
+    , contextKeywordRegistry = keywordRegistry
     }
   where
     -- Simple reference resolution - looks up URI in registry
@@ -86,7 +88,7 @@ compileKeyword
   -> Schema                  -- ^ Schema containing the keyword
   -> CompilationContext      -- ^ Compilation context
   -> Either Text CompiledKeyword
-compileKeyword (KeywordDefinition name _scope compile validate) value schema ctx = do
+compileKeyword (KeywordDefinition name _scope compile validate _nav) value schema ctx = do
   -- Execute the compile function
   compiledData <- compile value schema ctx
 
@@ -94,7 +96,8 @@ compileKeyword (KeywordDefinition name _scope compile validate) value schema ctx
   let someData = SomeCompiledData compiledData
 
   -- Create type-erased validate function (closure over compiled data)
-  let validateErased = validate compiledData
+  -- The recursive validator will be provided at validation time
+  let validateErased recursiveValidator valCtx val = validate recursiveValidator compiledData valCtx val
 
   -- Create compiled keyword (no adjacent data collection yet)
   return $ CompiledKeyword

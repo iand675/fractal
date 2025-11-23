@@ -132,7 +132,7 @@ compileCustomKeywords registry schemaRegistry schema = do
   let customKeywordValues = extractCustomKeywords registry schema
 
   -- Build compilation context
-  let ctx = buildCompilationContext schemaRegistry schema []
+  let ctx = buildCompilationContext schemaRegistry registry schema []
 
   -- Get keyword definitions from registry
   let definitions = Map.fromList

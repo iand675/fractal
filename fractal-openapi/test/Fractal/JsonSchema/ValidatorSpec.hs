@@ -68,6 +68,7 @@ spec = do
                 }
             , schemaVocabulary = Nothing
             , schemaExtensions = Map.empty
+            , schemaRawKeywords = Map.empty
             }
       
       -- Schema 2: type + minimum constraint (more restrictive)
@@ -127,6 +128,7 @@ spec = do
                 }
             , schemaVocabulary = Nothing
             , schemaExtensions = Map.empty
+            , schemaRawKeywords = Map.empty
             }
       
       -- Property: if value validates against more restrictive schema,

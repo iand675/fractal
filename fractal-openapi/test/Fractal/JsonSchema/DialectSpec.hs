@@ -1,150 +1,301 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Fractal.JsonSchema.DialectSpec (spec) where
 
 import Test.Hspec
-import Fractal.JsonSchema
-import Fractal.JsonSchema.Dialect
-import Fractal.JsonSchema.Vocabulary
-import Data.Aeson (Value(..), object, (.=))
+import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.List (sort)
+
+import Fractal.JsonSchema.Dialect
+import Fractal.JsonSchema.Types (JsonSchemaVersion(..))
+import Fractal.JsonSchema.Vocabulary.Types
+import Fractal.JsonSchema.Vocabulary.Registry
+import qualified Fractal.JsonSchema.Vocabulary as Vocab
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordScope(..), KeywordNavigation(..))
 
 spec :: Spec
-spec = describe "Multi-Version Dialect Support" $ do
-  describe "Draft-04 specific behavior" $ do
-    it "parses exclusiveMaximum as boolean modifier" $ do
-      let schemaJson = object
-            [ "type" .= ("number" :: T.Text)
-            , "maximum" .= (100 :: Int)
-            , "exclusiveMaximum" .= True
-            ]
-      
-      case parseSchemaWithVersion Draft04 schemaJson of
-        Right schema -> case schemaCore schema of
-          ObjectSchema obj -> do
-            let validation = schemaValidation obj
-            case validationExclusiveMaximum validation of
-              Just (Left True) -> pure ()  -- Correct: boolean in draft-04
-              _ -> expectationFailure "exclusiveMaximum should be Left Bool in draft-04"
-          _ -> expectationFailure "Expected ObjectSchema"
-        Left err -> expectationFailure $ "Parse failed: " <> show err
+spec = describe "Dialect" $ do
   
-  describe "Draft-06 specific behavior" $ do
-    it "parses exclusiveMaximum as numeric value" $ do
-      let schemaJson = object
-            [ "type" .= ("number" :: T.Text)
-            , "exclusiveMaximum" .= (100 :: Int)
-            ]
-      
-      case parseSchemaWithVersion Draft06 schemaJson of
-        Right schema -> case schemaCore schema of
-          ObjectSchema obj -> do
-            let validation = schemaValidation obj
-            case validationExclusiveMaximum validation of
-              Just (Right _) -> pure ()  -- Correct: numeric in draft-06+
-              _ -> expectationFailure "exclusiveMaximum should be Right Scientific in draft-06"
-          _ -> expectationFailure "Expected ObjectSchema"
-        Left err -> expectationFailure $ "Parse failed: " <> show err
+  describe "Predefined Dialects" $ do
+    it "draft04Dialect has correct URI" $ do
+      dialectURI draft04Dialect `shouldBe` "http://json-schema.org/draft-04/schema#"
     
-    it "supports const keyword" $ do
-      let schemaJson = object ["const" .= ("fixed-value" :: T.Text)]
-      
-      case parseSchemaWithVersion Draft06 schemaJson of
-        Right schema -> case schemaCore schema of
-          ObjectSchema obj -> schemaConst obj `shouldSatisfy` (/= Nothing)
-          _ -> expectationFailure "Expected ObjectSchema"
-        Left err -> expectationFailure $ "Parse failed: " <> show err
-  
-  describe "Draft-07 specific behavior" $ do
-    it "supports if/then/else conditionals" $ do
-      let schemaJson = object
-            [ "if" .= object ["type" .= ("string" :: T.Text)]
-            , "then" .= object ["minLength" .= (1 :: Int)]
-            , "else" .= object ["minimum" .= (0 :: Int)]
-            ]
-      
-      case parseSchemaWithVersion Draft07 schemaJson of
-        Right schema -> case schemaCore schema of
-          ObjectSchema obj -> do
-            schemaIf obj `shouldSatisfy` (/= Nothing)
-            schemaThen obj `shouldSatisfy` (/= Nothing)
-            schemaElse obj `shouldSatisfy` (/= Nothing)
-          _ -> expectationFailure "Expected ObjectSchema"
-        Left err -> expectationFailure $ "Parse failed: " <> show err
+    it "draft06Dialect has correct URI" $ do
+      dialectURI draft06Dialect `shouldBe` "http://json-schema.org/draft-06/schema#"
     
-    it "validates if/then/else logic" $ do
-      -- Schema: if type is string, then minLength 1, else minimum 0
-      let schema = Schema
-            { schemaVersion = Just Draft07
-            , schemaId = Nothing
-            , schemaCore = BooleanSchema True  -- Simplified for test
-            , schemaVocabulary = Nothing
-            , schemaExtensions = Map.empty
+    it "draft07Dialect has correct URI" $ do
+      dialectURI draft07Dialect `shouldBe` "http://json-schema.org/draft-07/schema#"
+    
+    it "draft201909Dialect has correct URI" $ do
+      dialectURI draft201909Dialect `shouldBe` "https://json-schema.org/draft/2019-09/schema"
+    
+    it "draft202012Dialect has correct URI" $ do
+      dialectURI draft202012Dialect `shouldBe` "https://json-schema.org/draft/2020-12/schema"
+    
+    it "draft201909Dialect declares vocabularies" $ do
+      dialectVocabularies draft201909Dialect `shouldSatisfy` (not . Map.null)
+    
+    it "draft202012Dialect declares vocabularies" $ do
+      dialectVocabularies draft202012Dialect `shouldSatisfy` (not . Map.null)
+
+  describe "validateDialectURI" $ do
+    it "accepts http:// URIs" $ do
+      validateDialectURI "http://example.com/schema" `shouldBe` Right ()
+    
+    it "accepts https:// URIs" $ do
+      validateDialectURI "https://example.com/schema" `shouldBe` Right ()
+    
+    it "accepts file:// URIs" $ do
+      validateDialectURI "file:///path/to/dialect.json" `shouldBe` Right ()
+    
+    it "accepts urn: URIs" $ do
+      validateDialectURI "urn:example:dialect:v1" `shouldBe` Right ()
+    
+    it "accepts custom schemes" $ do
+      validateDialectURI "x-custom://example.com/schema" `shouldBe` Right ()
+    
+    it "rejects empty URIs" $ do
+      validateDialectURI "" `shouldSatisfy` isLeft
+    
+    it "rejects relative URIs" $ do
+      validateDialectURI "/relative/path" `shouldSatisfy` isLeft
+    
+    it "rejects URIs without scheme" $ do
+      validateDialectURI "example.com/schema" `shouldSatisfy` isLeft
+    
+    it "rejects URIs with invalid scheme" $ do
+      validateDialectURI "123://invalid" `shouldSatisfy` isLeft
+
+  describe "validateDialect" $ do
+    let emptyRegistry = emptyVocabularyRegistry
+    
+    it "accepts dialect with valid absolute URI" $ do
+      let dialect = draft04Dialect
+      validateDialect emptyRegistry dialect `shouldBe` Right ()
+    
+    it "rejects dialect with invalid URI" $ do
+      let dialect = draft04Dialect { dialectURI = "not-absolute" }
+      validateDialect emptyRegistry dialect `shouldSatisfy` isLeft
+    
+    it "rejects dialect with unresolvable vocabulary" $ do
+      let dialect = Dialect
+            { dialectURI = "https://example.com/dialect"
+            , dialectVersion = Draft202012
+            , dialectName = "Test Dialect"
+            , dialectVocabularies = Map.singleton "https://example.com/unknown-vocab" True
+            , dialectDefaultFormat = FormatAnnotation
+            , dialectUnknownKeywords = CollectUnknown
+            }
+      case validateDialect emptyRegistry dialect of
+        Left (UnresolvableVocabulary _) -> pure ()
+        _ -> expectationFailure "Expected UnresolvableVocabulary error"
+    
+    it "detects keyword conflicts between vocabularies" $ do
+      -- Create two vocabularies with conflicting keywords
+      let keyword1 = KeywordDefinition
+            { keywordName = "conflicting"
+            , keywordScope = AnyScope
+            , keywordCompile = \_ _ _ -> Left "Not implemented" :: Either Text ()
+            , keywordValidate = \_ (_ :: ()) _ _ -> []
+            , keywordNavigation = NoNavigation
+            }
+          vocab1 = Vocabulary
+            { vocabularyURI = "https://example.com/vocab1"
+            , vocabularyRequired = True
+            , vocabularyKeywords = Map.singleton "conflicting" keyword1
+            }
+          vocab2 = Vocabulary
+            { vocabularyURI = "https://example.com/vocab2"
+            , vocabularyRequired = True
+            , vocabularyKeywords = Map.singleton "conflicting" keyword1
+            }
+          registry = registerVocabulary vocab2 $ registerVocabulary vocab1 emptyRegistry
+          dialect = Dialect
+            { dialectURI = "https://example.com/dialect"
+            , dialectVersion = Draft202012
+            , dialectName = "Conflicting Dialect"
+            , dialectVocabularies = Map.fromList
+                [ ("https://example.com/vocab1", True)
+                , ("https://example.com/vocab2", True)
+                ]
+            , dialectDefaultFormat = FormatAnnotation
+            , dialectUnknownKeywords = CollectUnknown
             }
       
-      -- String value should apply 'then'
-      let stringValue = String "test"
-      isSuccess (validateValue defaultValidationConfig schema stringValue) `shouldBe` True
-  
-  describe "Draft 2019-09 specific behavior" $ do
-    it "supports unevaluatedProperties" $ do
-      let schemaJson = object
-            [ "type" .= ("object" :: T.Text)
-            , "properties" .= object ["name" .= object ["type" .= ("string" :: T.Text)]]
-            , "unevaluatedProperties" .= False
-            ]
-      
-      case parseSchemaWithVersion Draft201909 schemaJson of
-        Right schema -> case schemaCore schema of
-          ObjectSchema obj ->
-            validationUnevaluatedProperties (schemaValidation obj) `shouldSatisfy` (/= Nothing)
-          _ -> expectationFailure "Expected ObjectSchema"
-        Left err -> expectationFailure $ "Parse failed: " <> show err
+      case validateDialect registry dialect of
+        Left (KeywordConflicts conflicts) -> do
+          length conflicts `shouldBe` 1
+          fst (head conflicts) `shouldBe` "conflicting"
+        _ -> expectationFailure "Expected KeywordConflicts error"
+
+  describe "FormatBehavior" $ do
+    it "has FormatAssertion variant" $ do
+      show FormatAssertion `shouldContain` "Assertion"
     
-    it "supports dependentSchemas" $ do
-      let schemaJson = object
-            [ "type" .= ("object" :: T.Text)
-            , "dependentSchemas" .= object
-                [ "name" .= object ["required" .= (["email"] :: [T.Text])]
-                ]
-            ]
-      
-      case parseSchemaWithVersion Draft201909 schemaJson of
-        Right schema -> case schemaCore schema of
-          ObjectSchema obj ->
-            validationDependentSchemas (schemaValidation obj) `shouldSatisfy` (/= Nothing)
-          _ -> expectationFailure "Expected ObjectSchema"
-        Left err -> expectationFailure $ "Parse failed: " <> show err
-  
-  describe "Draft 2020-12 specific behavior" $ do
-    it "supports prefixItems" $ do
-      let schemaJson = object
-            [ "type" .= ("array" :: T.Text)
-            , "prefixItems" .= 
-                [ object ["type" .= ("string" :: T.Text)]
-                , object ["type" .= ("number" :: T.Text)]
-                ]
-            ]
-      
-      case parseSchemaWithVersion Draft202012 schemaJson of
-        Right schema -> case schemaCore schema of
-          ObjectSchema obj ->
-            validationPrefixItems (schemaValidation obj) `shouldSatisfy` (/= Nothing)
-          _ -> expectationFailure "Expected ObjectSchema"
-        Left err -> expectationFailure $ "Parse failed: " <> show err
-  
-  describe "Vocabulary registry" $ do
-    it "registers all standard vocabularies" $ do
-      lookupVocabulary "https://json-schema.org/draft/2020-12/vocab/core" standardRegistry
-        `shouldSatisfy` (/= Nothing)
-      lookupVocabulary "https://json-schema.org/draft/2020-12/vocab/validation" standardRegistry
-        `shouldSatisfy` (/= Nothing)
-      lookupVocabulary "https://json-schema.org/draft/2020-12/vocab/applicator" standardRegistry
-        `shouldSatisfy` (/= Nothing)
+    it "has FormatAnnotation variant" $ do
+      show FormatAnnotation `shouldContain` "Annotation"
+
+  describe "UnknownKeywordMode" $ do
+    it "has all variants" $ do
+      let modes = [IgnoreUnknown, WarnUnknown, ErrorOnUnknown, CollectUnknown]
+      length modes `shouldBe` 4
+
+  describe "defaultDialectURI" $ do
+    it "returns correct URI for Draft04" $ do
+      defaultDialectURI Draft04 `shouldBe` "http://json-schema.org/draft-04/schema#"
     
-    it "registers all standard dialects" $ do
-      lookupDialect "http://json-schema.org/draft-04/schema#" standardRegistry
-        `shouldSatisfy` (/= Nothing)
-      lookupDialect "http://json-schema.org/draft-07/schema#" standardRegistry
-        `shouldSatisfy` (/= Nothing)
-      lookupDialect "https://json-schema.org/draft/2020-12/schema" standardRegistry
-        `shouldSatisfy` (/= Nothing)
+    it "returns correct URI for Draft06" $ do
+      defaultDialectURI Draft06 `shouldBe` "http://json-schema.org/draft-06/schema#"
+    
+    it "returns correct URI for Draft07" $ do
+      defaultDialectURI Draft07 `shouldBe` "http://json-schema.org/draft-07/schema#"
+    
+    it "returns correct URI for Draft201909" $ do
+      defaultDialectURI Draft201909 `shouldBe` "https://json-schema.org/draft/2019-09/schema"
+    
+    it "returns correct URI for Draft202012" $ do
+      defaultDialectURI Draft202012 `shouldBe` "https://json-schema.org/draft/2020-12/schema"
+
+  describe "Dialect composition" $ do
+    it "composes dialect with valid vocabularies" $ do
+      let vocab = Vocabulary
+            { vocabularyURI = "https://example.com/vocab"
+            , vocabularyRequired = False
+            , vocabularyKeywords = Map.empty
+            }
+          registry = registerVocabulary vocab emptyVocabularyRegistry
+          dialect = Dialect
+            { dialectURI = "https://example.com/dialect"
+            , dialectVersion = Draft202012
+            , dialectName = "Example Dialect"
+            , dialectVocabularies = Map.singleton "https://example.com/vocab" False
+            , dialectDefaultFormat = FormatAnnotation
+            , dialectUnknownKeywords = CollectUnknown
+            }
+      
+      validateDialect registry dialect `shouldBe` Right ()
+    
+    it "preserves vocabulary requirements" $ do
+      let dialect = draft201909Dialect
+          vocabs = dialectVocabularies dialect
+      
+      -- Core vocabulary should be required
+      Map.lookup "https://json-schema.org/draft/2019-09/vocab/core" vocabs `shouldBe` Just True
+      
+      -- Format vocabulary should be optional
+      Map.lookup "https://json-schema.org/draft/2019-09/vocab/format" vocabs `shouldBe` Just False
+
+  describe "Dialect Registration API" $ do
+    describe "registerDialect and lookupDialect" $ do
+      it "registers and looks up a dialect" $ do
+        let dialect = draft04Dialect
+            registry = Vocab.registerDialect dialect Vocab.emptyVocabularyRegistry
+        Vocab.lookupDialect (dialectURI dialect) registry `shouldBe` Just dialect
+      
+      it "returns Nothing for unregistered dialect" $ do
+        let registry = Vocab.emptyVocabularyRegistry
+        Vocab.lookupDialect "https://unknown.com/dialect" registry `shouldBe` Nothing
+      
+      it "overwrites existing dialect with same URI" $ do
+        let dialect1 = draft04Dialect
+            dialect2 = draft04Dialect { dialectName = "Modified Draft-04" }
+            registry = Vocab.registerDialect dialect2 $ Vocab.registerDialect dialect1 Vocab.emptyVocabularyRegistry
+        case Vocab.lookupDialect (dialectURI dialect1) registry of
+          Just d -> dialectName d `shouldBe` "Modified Draft-04"
+          Nothing -> expectationFailure "Dialect not found"
+    
+    describe "unregisterDialect" $ do
+      it "removes a dialect from registry" $ do
+        let dialect = draft04Dialect
+            registry = Vocab.registerDialect dialect Vocab.emptyVocabularyRegistry
+            registry' = Vocab.unregisterDialect (dialectURI dialect) registry
+        Vocab.lookupDialect (dialectURI dialect) registry' `shouldBe` Nothing
+      
+      it "is a no-op for unregistered dialect" $ do
+        let registry = Vocab.emptyVocabularyRegistry
+            registry' = Vocab.unregisterDialect "https://unknown.com/dialect" registry
+        Vocab.listDialects registry' `shouldBe` []
+    
+    describe "hasDialect" $ do
+      it "returns True for registered dialect" $ do
+        let dialect = draft04Dialect
+            registry = Vocab.registerDialect dialect Vocab.emptyVocabularyRegistry
+        Vocab.hasDialect (dialectURI dialect) registry `shouldBe` True
+      
+      it "returns False for unregistered dialect" $ do
+        let registry = Vocab.emptyVocabularyRegistry
+        Vocab.hasDialect "https://unknown.com/dialect" registry `shouldBe` False
+    
+    describe "listDialects" $ do
+      it "returns empty list for empty registry" $ do
+        Vocab.listDialects Vocab.emptyVocabularyRegistry `shouldBe` []
+      
+      it "returns all registered dialects" $ do
+        let registry = Vocab.registerDialect draft06Dialect $
+                      Vocab.registerDialect draft04Dialect Vocab.emptyVocabularyRegistry
+            dialects = Vocab.listDialects registry
+        length dialects `shouldBe` 2
+        map dialectVersion dialects `shouldMatchList` [Draft04, Draft06]
+    
+    describe "getDialectByVersion" $ do
+      it "finds dialect by version" $ do
+        let registry = Vocab.registerDialect draft04Dialect Vocab.emptyVocabularyRegistry
+        case Vocab.getDialectByVersion Draft04 registry of
+          Just d -> dialectVersion d `shouldBe` Draft04
+          Nothing -> expectationFailure "Dialect not found"
+      
+      it "returns Nothing for unregistered version" $ do
+        let registry = Vocab.emptyVocabularyRegistry
+        Vocab.getDialectByVersion Draft04 registry `shouldBe` Nothing
+      
+      it "returns first dialect when multiple exist for version" $ do
+        let dialect1 = draft04Dialect
+            dialect2 = draft04Dialect { dialectURI = "https://custom.com/draft-04", dialectName = "Custom Draft-04" }
+            registry = Vocab.registerDialect dialect2 $ Vocab.registerDialect dialect1 Vocab.emptyVocabularyRegistry
+        case Vocab.getDialectByVersion Draft04 registry of
+          Just d -> dialectVersion d `shouldBe` Draft04
+          Nothing -> expectationFailure "Dialect not found"
+    
+    describe "registerDialects" $ do
+      it "registers multiple dialects" $ do
+        let dialects = [draft04Dialect, draft06Dialect, draft07Dialect]
+        case Vocab.registerDialects dialects Vocab.emptyVocabularyRegistry of
+          Right registry -> do
+            length (Vocab.listDialects registry) `shouldBe` 3
+            Vocab.hasDialect (dialectURI draft04Dialect) registry `shouldBe` True
+            Vocab.hasDialect (dialectURI draft06Dialect) registry `shouldBe` True
+            Vocab.hasDialect (dialectURI draft07Dialect) registry `shouldBe` True
+          Left err -> expectationFailure $ "Registration failed: " ++ show err
+      
+      it "detects duplicate URIs in input" $ do
+        let dialects = [draft04Dialect, draft04Dialect]
+        case Vocab.registerDialects dialects Vocab.emptyVocabularyRegistry of
+          Left err -> err `shouldSatisfy` T.isInfixOf "Duplicate"
+          Right _ -> expectationFailure "Should have detected duplicate"
+    
+    describe "standardDialectRegistry" $ do
+      it "contains all standard dialects" $ do
+        let registry = Vocab.standardDialectRegistry
+            dialects = Vocab.listDialects registry
+        length dialects `shouldBe` 5
+      
+      it "contains Draft-04 through 2020-12" $ do
+        let registry = Vocab.standardDialectRegistry
+        Vocab.hasDialect (dialectURI draft04Dialect) registry `shouldBe` True
+        Vocab.hasDialect (dialectURI draft06Dialect) registry `shouldBe` True
+        Vocab.hasDialect (dialectURI draft07Dialect) registry `shouldBe` True
+        Vocab.hasDialect (dialectURI draft201909Dialect) registry `shouldBe` True
+        Vocab.hasDialect (dialectURI draft202012Dialect) registry `shouldBe` True
+      
+      it "allows lookup by version" $ do
+        let registry = Vocab.standardDialectRegistry
+        Vocab.getDialectByVersion Draft04 registry `shouldSatisfy` (/= Nothing)
+        Vocab.getDialectByVersion Draft202012 registry `shouldSatisfy` (/= Nothing)
+
+-- Helper to check if Either is Left
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft _        = False

@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | Core types for JSON Schema representation
 --
@@ -43,13 +45,16 @@ module Fractal.JsonSchema.Types
   , parsePointer
   
     -- * Validation Types
-  , ValidationResult(..)
-  , ValidationSuccess
+  , ValidationResult
+  , pattern ValidationSuccess
+  , pattern ValidationFailure
   , ValidationAnnotations(..)
   , ValidationErrors(..)
   , ValidationError(..)
   , ValidationContext(..)
   , ValidationConfig(..)
+  , FormatBehavior(..)
+  , UnknownKeywordMode(..)
   , SchemaRegistry(..)
   , emptyRegistry
   , registerSchemaInRegistry
@@ -84,55 +89,17 @@ import Data.Vector (fromList)
 import Data.Foldable (toList)
 import Data.Scientific (Scientific)
 import Data.Hashable (Hashable)
+import Data.Typeable (typeOf, cast)
 import GHC.Generics (Generic)
 import Numeric.Natural (Natural)
 import Language.Haskell.TH.Syntax (Lift)
-import Network.URI (parseURIReference, uriScheme, uriToString, relativeTo, unEscapeString)
+import Network.URI (parseURIReference, uriScheme, uriToString, relativeTo)
 
--- | JSON Pointer (RFC 6901) for identifying locations in JSON documents
-newtype JSONPointer = JSONPointer [Text]
-  deriving (Eq, Show, Ord, Generic)
-  deriving newtype (Semigroup, Monoid, ToJSON, FromJSON, Hashable)
-  deriving stock Lift
+-- Import JSON Pointer from separate module (avoids circular dependency)
+import Fractal.JSONPointer (JSONPointer(..), emptyPointer, (/.), renderPointer, parsePointer)
 
--- | Empty JSON Pointer (root)
-emptyPointer :: JSONPointer
-emptyPointer = JSONPointer []
-
--- | Append a segment to a JSON Pointer
-(/.) :: JSONPointer -> Text -> JSONPointer
-(JSONPointer segments) /. seg = JSONPointer (segments <> [seg])
-
--- | Render JSON Pointer to standard string format (RFC 6901)
-renderPointer :: JSONPointer -> Text
-renderPointer (JSONPointer []) = ""
-renderPointer (JSONPointer segments) = "/" <> T.intercalate "/" (map escapeSegment segments)
-  where
-    -- IMPORTANT: Must escape ~ before / to avoid double-escaping
-    -- First: ~ → ~0
-    -- Then: / → ~1
-    escapeSegment seg = T.replace "/" "~1" $ T.replace "~" "~0" seg
-
--- | Parse JSON Pointer from string (RFC 6901)
--- Also handles URL-encoded pointers (e.g., %25 → %)
-parsePointer :: Text -> Either Text JSONPointer
-parsePointer "" = Right emptyPointer
-parsePointer txt
-  | T.head txt /= '/' = Left "JSON Pointer must start with /"
-  | otherwise = Right $ JSONPointer $ map unescapeSegment $ T.splitOn "/" (T.tail txt)
-  where
-    -- IMPORTANT: Must unescape ~1 before ~0 to avoid double-unescaping
-    -- First: URL decode (if pointer was in a URI fragment)
-    -- Then: ~1 → /
-    -- Finally: ~0 → ~
-    unescapeSegment seg = 
-      let urlDecoded = urlDecode seg
-          step1 = T.replace "~1" "/" urlDecoded
-          step2 = T.replace "~0" "~" step1
-      in step2
-    
-    -- URL decode percent-encoded sequences
-    urlDecode s = T.pack $ unEscapeString (T.unpack s)
+-- Import new validation result types
+import qualified Fractal.JsonSchema.Validator.Result as VR
 
 -- | Reference to another schema ($ref, $dynamicRef)
 newtype Reference = Reference Text
@@ -596,11 +563,24 @@ data Schema = Schema
 
   , schemaExtensions :: Map Text Value
     -- ^ Unknown keywords collected during parsing
+
+  , schemaRawKeywords :: Map Text Value
+    -- ^ All keywords in their raw Value form (for monadic compilation)
+    -- This preserves the original keyword values for adjacent keyword access
+    -- during compilation. Populated during parsing.
   }
   deriving (Eq, Show, Generic)
   deriving stock Lift
 
--- | Collected annotations from validation
+-- | Re-export new validation result types from Validator.Result
+type ValidationResult = VR.ValidationResult
+type ValidationError = VR.ValidationError
+type ValidationErrorTree = VR.ValidationErrorTree
+type AnnotationCollection = VR.AnnotationCollection
+type SomeAnnotation = VR.SomeAnnotation
+
+-- | Legacy type for backward compatibility
+-- Maps JSON Pointer -> keyword -> value (untyped annotations)
 newtype ValidationAnnotations = ValidationAnnotations 
   { unAnnotations :: Map JSONPointer (Map Text Value) }
   deriving (Eq, Show, Generic)
@@ -609,19 +589,15 @@ instance Semigroup ValidationAnnotations where
   ValidationAnnotations a <> ValidationAnnotations b =
     ValidationAnnotations (Map.unionWith mergeAnnotationMaps a b)
     where
-      -- Merge two annotation maps, combining arrays when keys collide
       mergeAnnotationMaps :: Map Text Value -> Map Text Value -> Map Text Value
       mergeAnnotationMaps = Map.unionWith mergeAnnotationValues
-
-      -- Merge two annotation values - for arrays, concatenate; otherwise left-biased
       mergeAnnotationValues :: Value -> Value -> Value
       mergeAnnotationValues (Aeson.Array a1) (Aeson.Array a2) = Aeson.Array (a1 <> a2)
-      mergeAnnotationValues v1 _ = v1  -- For non-arrays, keep left value
+      mergeAnnotationValues v1 _ = v1
 
 instance Monoid ValidationAnnotations where
   mempty = ValidationAnnotations Map.empty
 
--- Custom ToJSON/FromJSON using JSONPointer as text keys
 instance ToJSON ValidationAnnotations where
   toJSON (ValidationAnnotations m) =
     Aeson.Object $ KeyMap.fromList [(Key.fromText $ renderPointer k, toJSON v) | (k, v) <- Map.toList m]
@@ -638,75 +614,106 @@ instance FromJSON ValidationAnnotations where
       ]
     pure $ ValidationAnnotations $ Map.fromList pairs
 
--- | Non-empty list of validation errors
+-- | Legacy type for backward compatibility
 newtype ValidationErrors = ValidationErrors 
   { unErrors :: NonEmpty ValidationError }
   deriving (Eq, Show, Generic)
   deriving newtype (Semigroup)
 
--- | Single validation error with context
-data ValidationError = ValidationError
-  { errorKeyword :: Text
-    -- ^ Keyword that failed (e.g., "minimum", "pattern")
-  
-  , errorSchemaPath :: JSONPointer
-    -- ^ Path to the failing keyword in the schema
-  
-  , errorInstancePath :: JSONPointer
-    -- ^ Path to the failing value in the instance
-  
-  , errorMessage :: Text
-    -- ^ Human-readable error message
-  
-  , errorDetails :: Maybe Value
-    -- ^ Additional context (actual value, expected constraint, etc.)
-  }
-  deriving (Eq, Show, Generic)
+-- | Pattern synonym for backward compatibility with ValidationSuccess constructor
+pattern ValidationSuccess :: ValidationAnnotations -> ValidationResult
+pattern ValidationSuccess anns <- (extractLegacyAnnotations -> Just anns)
+  where
+    ValidationSuccess anns = legacyToValidationResult anns
 
-instance ToJSON ValidationError where
-  toJSON err = object
-    [ "keyword" .= errorKeyword err
-    , "schemaPath" .= renderPointer (errorSchemaPath err)
-    , "instancePath" .= renderPointer (errorInstancePath err)
-    , "message" .= errorMessage err
-    , "details" .= errorDetails err
-    ]
+-- | Pattern synonym for backward compatibility with ValidationFailure constructor  
+pattern ValidationFailure :: ValidationErrors -> ValidationResult
+pattern ValidationFailure errs <- (extractLegacyErrors -> Just errs)
+  where
+    ValidationFailure errs = legacyErrorsToValidationResult errs
 
--- | Result of validation: success with annotations or failure with errors
-data ValidationResult
-  = ValidationSuccess ValidationAnnotations
-    -- ^ Validation succeeded, collected annotations
-  | ValidationFailure ValidationErrors
-    -- ^ Validation failed with one or more errors
-  deriving (Eq, Show, Generic)
+{-# COMPLETE ValidationSuccess, ValidationFailure #-}
 
--- | Type alias for successful validation
+-- | Extract legacy annotations from new ValidationResult (for pattern matching)
+extractLegacyAnnotations :: ValidationResult -> Maybe ValidationAnnotations
+extractLegacyAnnotations result
+  | VR.isSuccess result =
+      -- Convert AnnotationCollection back to ValidationAnnotations
+      -- Since AnnotationCollection doesn't store keyword names, we reconstruct
+      -- a compatible format where all annotations are stored under an empty keyword map
+      Just $ annotationCollectionToLegacy (VR.resultAnnotations result)
+  | otherwise = Nothing
+  where
+    annotationCollectionToLegacy :: VR.AnnotationCollection -> ValidationAnnotations
+    annotationCollectionToLegacy (VR.AnnotationCollection m) =
+      -- Convert back to legacy format by extracting stored keyword maps
+      ValidationAnnotations $ Map.fromList
+        [ (path, extractKeywordMap annotations)
+        | (path, annotations) <- Map.toList m
+        ]
+    
+    extractKeywordMap :: [VR.SomeAnnotation] -> Map Text Value
+    extractKeywordMap [] = Map.empty
+    extractKeywordMap (VR.SomeAnnotation val ty : rest) =
+      case cast val of
+        Just (kwMap :: Map Text Value) -> kwMap <> extractKeywordMap rest
+        Nothing -> extractKeywordMap rest
+
+-- | Extract legacy errors from new ValidationResult (for pattern matching)
+extractLegacyErrors :: ValidationResult -> Maybe ValidationErrors
+extractLegacyErrors result
+  | VR.isFailure result = 
+      -- Convert error tree to flat list
+      let flatErrors = flattenErrorTree (VR.resultErrors result)
+      in case NE.nonEmpty flatErrors of
+        Just ne -> Just (ValidationErrors ne)
+        Nothing -> Nothing
+  | otherwise = Nothing
+
+-- | Flatten error tree to list
+flattenErrorTree :: ValidationErrorTree -> [ValidationError]
+flattenErrorTree (VR.ErrorLeaf err) = [err]
+flattenErrorTree (VR.ErrorBranch _ children) = concatMap flattenErrorTree children
+
+-- | Convert legacy annotations to new ValidationResult
+legacyToValidationResult :: ValidationAnnotations -> ValidationResult
+legacyToValidationResult (ValidationAnnotations annMap) =
+  -- Convert legacy annotations to new AnnotationCollection
+  -- Store the entire keyword map as a single annotation to preserve all data
+  let annotations = VR.AnnotationCollection $ Map.fromList
+        [ (path, [VR.SomeAnnotation kwMap (typeOf kwMap)])
+        | (path, kwMap) <- Map.toList annMap
+        ]
+  in VR.validationSuccessWithAnnotations annotations
+
+-- | Convert legacy errors to new ValidationResult
+legacyErrorsToValidationResult :: ValidationErrors -> ValidationResult
+legacyErrorsToValidationResult (ValidationErrors errs) =
+  VR.validationFailureTree $ VR.ErrorBranch "root" (map VR.ErrorLeaf $ NE.toList errs)
+
+-- | Type alias for successful validation (legacy)
 type ValidationSuccess = ValidationAnnotations
 
 -- | Check if validation succeeded
 isSuccess :: ValidationResult -> Bool
-isSuccess (ValidationSuccess _) = True
-isSuccess _ = False
+isSuccess = VR.isSuccess
 
 -- | Check if validation failed
 isFailure :: ValidationResult -> Bool
-isFailure = not . isSuccess
+isFailure = VR.isFailure
 
--- | Create a simple validation error
+-- | Create a simple validation error (legacy helper)
 validationError :: Text -> ValidationError
-validationError msg = ValidationError
-  { errorKeyword = "validation"
-  , errorSchemaPath = emptyPointer
-  , errorInstancePath = emptyPointer
-  , errorMessage = msg
-  , errorDetails = Nothing
+validationError msg = VR.ValidationError
+  { VR.errorMessage = msg
+  , VR.errorSchemaPath = emptyPointer
+  , VR.errorInstancePath = emptyPointer
+  , VR.errorKeyword = "validation"
   }
 
 -- | Create validation failure with keyword and message
 validationFailure :: Text -> Text -> ValidationResult
-validationFailure keyword message =
-  ValidationFailure $ ValidationErrors $ pure $
-    ValidationError keyword emptyPointer emptyPointer message Nothing
+validationFailure = VR.validationFailure
 
 -- | Schema fingerprint for cycle detection
 newtype SchemaFingerprint = SchemaFingerprint ByteString
@@ -1065,13 +1072,139 @@ type CustomValidator = Value -> Either ValidationError ()
 -- This allows pluggable loading strategies (HTTP, file system, cache, etc.)
 type ReferenceLoader = Text -> IO (Either Text Schema)
 
+-- | Format keyword behavior
+--
+-- Controls how the @format@ keyword is interpreted during validation.
+--
+-- __JSON Schema Specification Compliance__:
+--
+-- * __'FormatAssertion'__: Format validation failures cause schema validation to fail.
+--   This is enabled via the @format-assertion@ vocabulary in JSON Schema 2019-09+.
+--   Spec-compliant for implementations that support the format-assertion vocabulary.
+--
+-- * __'FormatAnnotation'__: Format validation failures are collected as annotations only.
+--   This is the __default behavior__ in JSON Schema 2019-09 and 2020-12.
+--   Spec-compliant as the default format behavior.
+--
+-- __Historical Context__:
+--
+-- * JSON Schema Draft-07 and earlier: The spec was ambiguous, and most implementations
+--   treated format as assertions.
+-- * JSON Schema 2019-09+: Format is explicitly annotation-only by default, with an
+--   optional @format-assertion@ vocabulary to enable assertion behavior.
+--
+-- __Usage__:
+--
+-- This setting can be configured via:
+--
+-- 1. Dialect configuration ('dialectDefaultFormat' in 'Dialect')
+-- 2. Global validation config ('validationFormatAssertion' in 'ValidationConfig')
+-- 3. Per-schema via @$vocabulary@ declarations (when using dialect-aware parsing)
+--
+-- @since 0.1.0.0
+data FormatBehavior
+  = FormatAssertion
+    -- ^ Format validation failures __cause schema validation to fail__.
+    --
+    -- Use this for strict validation where format violations are errors.
+    -- This corresponds to enabling the @format-assertion@ vocabulary.
+  | FormatAnnotation
+    -- ^ Format validation failures are __collected as annotations only__.
+    --
+    -- Use this for permissive validation where format is informational.
+    -- This is the default behavior in JSON Schema 2019-09 and 2020-12.
+  deriving (Eq, Show, Ord, Enum, Bounded, Generic)
+
+-- | Unknown keyword handling strategy
+--
+-- Controls how unrecognized keywords (not in registered vocabularies) are handled
+-- during schema parsing.
+--
+-- __JSON Schema Specification Compliance__:
+--
+-- * __'IgnoreUnknown'__: Spec-compliant. Unknown keywords are silently ignored.
+--
+-- * __'CollectUnknown'__: Spec-compliant. Unknown keywords are collected in
+--   'schemaExtensions' for introspection but don't affect validation.
+--   This is the default behavior.
+--
+-- * __'WarnUnknown'__: Extension (non-standard). Emits warnings for unknown keywords
+--   but continues parsing. Useful for development and debugging.
+--   Does not violate spec compliance.
+--
+-- * __'ErrorOnUnknown'__: Extension (non-standard). Parsing fails when encountering
+--   unknown keywords. Common in strict implementations for catching typos and
+--   configuration errors. __Users should be aware this is stricter than the spec requires__.
+--
+-- __Important__: This setting is separate from @$vocabulary@ validation:
+--
+-- * Required vocabularies (via @$vocabulary@) __always__ cause failure if not understood
+-- * Optional vocabularies are ignored per spec
+-- * Unknown keywords are keywords not in __any__ registered vocabulary
+--
+-- __Usage__:
+--
+-- Configure via:
+--
+-- 1. Dialect configuration ('dialectUnknownKeywords' in 'Dialect')
+-- 2. Parser-specific settings (when available)
+--
+-- __Recommendations__:
+--
+-- * __Production__: Use 'CollectUnknown' (default, spec-compliant)
+-- * __Development__: Use 'WarnUnknown' to catch potential issues
+-- * __Strict validation__: Use 'ErrorOnUnknown' to enforce clean schemas
+-- * __Permissive parsing__: Use 'IgnoreUnknown' to skip unknown keywords entirely
+--
+-- @since 0.1.0.0
+data UnknownKeywordMode
+  = IgnoreUnknown
+    -- ^ Silently ignore unknown keywords (not collected in extensions).
+    --
+    -- __Spec-compliant__: Unknown keywords have no effect on validation.
+  | WarnUnknown
+    -- ^ Emit warnings for unknown keywords but continue parsing.
+    --
+    -- __Extension (non-standard)__: Helpful for development.
+    -- Warnings may be logged or collected separately.
+  | ErrorOnUnknown
+    -- ^ Fail parsing when unknown keywords are encountered.
+    --
+    -- __Extension (non-standard)__: Stricter than spec requires.
+    -- Use to catch typos and enforce vocabulary usage.
+  | CollectUnknown
+    -- ^ Collect unknown keywords in 'schemaExtensions' map.
+    --
+    -- __Spec-compliant__ (default): Unknown keywords available for introspection.
+  deriving (Eq, Show, Ord, Enum, Bounded, Generic)
+
 -- | Configuration for validation behavior
+--
+-- This configuration controls various aspects of JSON Schema validation,
+-- including format behavior, content validation, and custom extensions.
 data ValidationConfig = ValidationConfig
   { validationVersion :: JsonSchemaVersion
     -- ^ Schema version to validate against
   
   , validationFormatAssertion :: Bool
-    -- ^ Treat format as assertion (True) or annotation (False)
+    -- ^ Treat format as assertion (True) or annotation (False).
+    --
+    -- __Deprecated__: Use 'validationDialectFormatBehavior' for more precise control.
+    -- This field is kept for backward compatibility.
+    --
+    -- When 'validationDialectFormatBehavior' is 'Nothing', this boolean is used.
+
+  , validationDialectFormatBehavior :: Maybe FormatBehavior
+    -- ^ Dialect-specific format behavior (overrides 'validationFormatAssertion').
+    --
+    -- * 'Just' 'FormatAssertion': Format validation failures cause schema failures
+    -- * 'Just' 'FormatAnnotation': Format validation failures are annotations only
+    -- * 'Nothing': Use 'validationFormatAssertion' for backward compatibility
+    --
+    -- This field is typically set when parsing with 'parseSchemaWithDialectRegistry'
+    -- to respect the dialect's format behavior configuration.
+    --
+    -- @since 0.1.0.0
 
   , validationContentAssertion :: Bool
     -- ^ Treat contentEncoding/contentMediaType as assertion (True) or annotation (False)
@@ -1284,5 +1417,6 @@ instance FromJSON Schema where
     , schemaCore = BooleanSchema True
     , schemaVocabulary = Nothing
     , schemaExtensions = Map.empty
+    , schemaRawKeywords = Map.empty
     }
 

@@ -20,17 +20,19 @@
 -- @
 module Fractal.JsonSchema.Keyword
   ( -- * Keyword Registry
-    KeywordRegistry
+    KeywordRegistry(..)
   , emptyKeywordRegistry
   , registerKeyword
   , lookupKeyword
   , getRegisteredKeywords
     -- * Keyword Definition Helpers
   , mkKeywordDefinition
+  , mkNavigableKeyword
   , mkSimpleKeyword
     -- * Re-exports from Types
   , KeywordDefinition(..)
   , KeywordScope(..)
+  , KeywordNavigation(..)
   , CompileFunc
   , ValidateFunc
   , CompilationContext(..)
@@ -47,18 +49,6 @@ import Data.Aeson (Value)
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Types (Schema)
 
--- | Registry of custom keywords
---
--- Maps keyword names to their definitions. Used during schema parsing
--- and validation to look up custom keyword handlers.
-newtype KeywordRegistry = KeywordRegistry
-  { keywordMap :: Map Text KeywordDefinition
-  }
-
-instance Show KeywordRegistry where
-  show (KeywordRegistry m) =
-    "KeywordRegistry{keywords=" ++ show (Map.keys m) ++ "}"
-
 -- | Empty keyword registry with no custom keywords
 emptyKeywordRegistry :: KeywordRegistry
 emptyKeywordRegistry = KeywordRegistry Map.empty
@@ -68,7 +58,7 @@ emptyKeywordRegistry = KeywordRegistry Map.empty
 -- If a keyword with the same name already exists, it will be replaced
 -- with the new definition (allowing for keyword shadowing).
 registerKeyword :: KeywordDefinition -> KeywordRegistry -> KeywordRegistry
-registerKeyword kw@(KeywordDefinition name _ _ _) (KeywordRegistry m) =
+registerKeyword kw@(KeywordDefinition name _ _ _ _) (KeywordRegistry m) =
   KeywordRegistry (Map.insert name kw m)
 
 -- | Look up a keyword by name in the registry
@@ -83,10 +73,10 @@ lookupKeyword name (KeywordRegistry m) = Map.lookup name m
 getRegisteredKeywords :: KeywordRegistry -> [Text]
 getRegisteredKeywords (KeywordRegistry m) = Map.keys m
 
--- | Helper to create a keyword definition
+-- | Helper to create a keyword definition (no navigation)
 --
 -- This is a convenience function that wraps the KeywordDefinition constructor
--- with a more ergonomic API.
+-- with a more ergonomic API. For keywords without subschemas.
 mkKeywordDefinition
   :: Typeable a
   => Text                    -- ^ Keyword name
@@ -94,7 +84,32 @@ mkKeywordDefinition
   -> CompileFunc a           -- ^ Compile function
   -> ValidateFunc a          -- ^ Validate function
   -> KeywordDefinition
-mkKeywordDefinition = KeywordDefinition
+mkKeywordDefinition name scope compile validate = KeywordDefinition
+  { keywordName = name
+  , keywordScope = scope
+  , keywordCompile = compile
+  , keywordValidate = validate
+  , keywordNavigation = NoNavigation
+  }
+
+-- | Helper to create a navigable keyword definition
+--
+-- For keywords that contain subschemas (e.g., properties, allOf, not).
+mkNavigableKeyword
+  :: Typeable a
+  => Text                    -- ^ Keyword name
+  -> KeywordScope            -- ^ Scope restriction
+  -> CompileFunc a           -- ^ Compile function
+  -> ValidateFunc a          -- ^ Validate function
+  -> KeywordNavigation       -- ^ Navigation support
+  -> KeywordDefinition
+mkNavigableKeyword name scope compile validate nav = KeywordDefinition
+  { keywordName = name
+  , keywordScope = scope
+  , keywordCompile = compile
+  , keywordValidate = validate
+  , keywordNavigation = nav
+  }
 
 -- | Create a simple keyword that doesn't need compilation
 --
@@ -106,12 +121,13 @@ mkSimpleKeyword
   => Text                    -- ^ Keyword name
   -> KeywordScope            -- ^ Scope restriction
   -> (Value -> Either Text a)  -- ^ Parse keyword value
-  -> (a -> Value -> [Text])    -- ^ Validate function
+  -> (a -> Value -> [Text])    -- ^ Validate function (old signature for backward compat)
   -> KeywordDefinition
 mkSimpleKeyword name scope parseValue validateValue =
   KeywordDefinition
     { keywordName = name
     , keywordScope = scope
     , keywordCompile = \val _schema _ctx -> parseValue val
-    , keywordValidate = validateValue
+    , keywordValidate = \_ compiledData _ val -> validateValue compiledData val  -- Adapt to new signature
+    , keywordNavigation = NoNavigation
     }

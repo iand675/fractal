@@ -13,10 +13,16 @@ module Fractal.JsonSchema.Vocabulary
   , VocabularyRegistry(..)
   , emptyVocabularyRegistry
   , standardRegistry
+  , standardDialectRegistry
   , registerVocabulary
   , registerDialect
+  , unregisterDialect
+  , registerDialects
   , lookupVocabulary
   , lookupDialect
+  , hasDialect
+  , listDialects
+  , getDialectByVersion
   , composeDialect
   , extractKeywordValue
   , detectKeywordConflicts
@@ -130,6 +136,70 @@ lookupVocabulary uri reg = Map.lookup uri (registeredVocabularies reg)
 lookupDialect :: Text -> VocabularyRegistry -> Maybe Dialect
 lookupDialect uri reg = Map.lookup uri (registeredDialects reg)
 
+-- | Unregister a dialect from the registry
+--
+-- Removes a dialect by its URI. If the dialect is not registered, this is a no-op.
+unregisterDialect :: Text -> VocabularyRegistry -> VocabularyRegistry
+unregisterDialect uri reg = reg
+  { registeredDialects = Map.delete uri (registeredDialects reg)
+  }
+
+-- | Check if a dialect is registered
+hasDialect :: Text -> VocabularyRegistry -> Bool
+hasDialect uri reg = Map.member uri (registeredDialects reg)
+
+-- | List all registered dialects
+--
+-- Returns a list of all dialects in the registry.
+listDialects :: VocabularyRegistry -> [Dialect]
+listDialects reg = Map.elems (registeredDialects reg)
+
+-- | Lookup a dialect by JSON Schema version
+--
+-- Returns the first dialect matching the given version.
+-- Note: Multiple dialects can exist for the same version (e.g., custom dialects).
+-- This returns the standard dialect for the version if multiple exist.
+getDialectByVersion :: JsonSchemaVersion -> VocabularyRegistry -> Maybe Dialect
+getDialectByVersion version reg =
+  case filter (\d -> dialectVersion d == version) (listDialects reg) of
+    [] -> Nothing
+    (d:_) -> Just d
+
+-- | Register multiple dialects at once
+--
+-- Returns either an error message (if conflicts detected) or the updated registry.
+-- Conflicts occur when:
+--
+-- * A dialect URI is already registered (unless it's being replaced)
+-- * Multiple dialects in the input list have the same URI
+registerDialects
+  :: [Dialect]
+  -> VocabularyRegistry
+  -> Either Text VocabularyRegistry
+registerDialects dialects reg = do
+  -- Check for duplicate URIs in input
+  let uris = map dialectURI dialects
+      duplicates = findDuplicates uris
+  case duplicates of
+    (dup:_) -> Left $ "Duplicate dialect URI in input: " <> dup
+    [] -> Right $ foldr registerDialect reg dialects
+  where
+    findDuplicates xs = 
+      Map.keys $ Map.filter (> 1) $ Map.fromListWith (+) [(x, 1 :: Int) | x <- xs]
+
+-- | Standard dialect registry
+--
+-- A registry containing only the standard JSON Schema dialects (Draft-04 through 2020-12).
+-- Useful as a starting point for custom registries.
+standardDialectRegistry :: VocabularyRegistry
+standardDialectRegistry = foldr registerDialect emptyVocabularyRegistry
+  [ draft04Dialect
+  , draft06Dialect
+  , draft07Dialect
+  , draft201909Dialect
+  , draft202012Dialect
+  ]
+
 -- | Compose a dialect from a list of vocabulary URIs
 -- Returns Left with error message if:
 -- - A required vocabulary is not found in the registry
@@ -152,7 +222,8 @@ composeDialect name version vocabSpecs formatBehavior unknownMode reg = do
       -- No conflicts, create dialect
       let vocabMap = Map.fromList vocabSpecs
       Right $ Dialect
-        { dialectVersion = version
+        { dialectURI = defaultDialectURI version
+        , dialectVersion = version
         , dialectName = name
         , dialectVocabularies = vocabMap
         , dialectDefaultFormat = formatBehavior

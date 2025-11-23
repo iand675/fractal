@@ -1,0 +1,46 @@
+{-# LANGUAGE OverloadedStrings #-}
+-- | Implementation of the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
+--
+-- The exclusiveMinimum keyword requires that a numeric value is strictly
+-- greater than the specified minimum value.
+module Fractal.JsonSchema.Keywords.ExclusiveMinimum
+  ( exclusiveMinimumKeyword
+  ) where
+
+import Data.Aeson (Value(..))
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Typeable (Typeable)
+import qualified Data.Scientific as Sci
+
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Types (Schema)
+
+-- | Compiled data for the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
+newtype ExclusiveMinimumData = ExclusiveMinimumData Sci.Scientific
+  deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'exclusiveMinimum' keyword
+compileExclusiveMinimum :: CompileFunc ExclusiveMinimumData
+compileExclusiveMinimum value _schema _ctx = case value of
+  Number n -> Right $ ExclusiveMinimumData n
+  _ -> Left "exclusiveMinimum must be a number"
+
+-- | Validate function for 'exclusiveMinimum' keyword
+validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
+validateExclusiveMinimum _recursiveValidator (ExclusiveMinimumData minVal) _ctx (Number n) =
+  if n > minVal
+    then []
+    else ["Value " <> T.pack (show n) <> " must be greater than exclusiveMinimum " <> T.pack (show minVal)]
+validateExclusiveMinimum _ _ _ _ = []  -- Only applies to numbers
+
+-- | The 'exclusiveMinimum' keyword definition (Draft-06+ style)
+exclusiveMinimumKeyword :: KeywordDefinition
+exclusiveMinimumKeyword = KeywordDefinition
+  { keywordName = "exclusiveMinimum"
+  , keywordScope = AnyScope
+  , keywordCompile = compileExclusiveMinimum
+  , keywordValidate = validateExclusiveMinimum
+  , keywordNavigation = NoNavigation
+  }
+

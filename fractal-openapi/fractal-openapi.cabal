@@ -50,7 +50,8 @@ common extensions
 
 library
     import:           warnings, extensions
-    exposed-modules:  Fractal.JsonSchema
+    exposed-modules:  Fractal.JSONPointer
+                    , Fractal.JsonSchema
                     , Fractal.JsonSchema.Types
                     , Fractal.JsonSchema.Parser
                     , Fractal.JsonSchema.Parser.Extended
@@ -62,18 +63,52 @@ library
                     , Fractal.JsonSchema.ReferenceLoader
                     , Fractal.JsonSchema.EmbeddedMetaschemas
                     , Fractal.JsonSchema.Regex
+                    -- Basic Keywords
                     , Fractal.JsonSchema.Keywords.Type
                     , Fractal.JsonSchema.Keywords.Enum
                     , Fractal.JsonSchema.Keywords.Const
+                    -- String Keywords
+                    , Fractal.JsonSchema.Keywords.MinLength
+                    , Fractal.JsonSchema.Keywords.MaxLength
+                    , Fractal.JsonSchema.Keywords.Pattern
+                    -- Numeric Keywords
+                    , Fractal.JsonSchema.Keywords.Minimum
+                    , Fractal.JsonSchema.Keywords.Maximum
+                    , Fractal.JsonSchema.Keywords.MultipleOf
+                    , Fractal.JsonSchema.Keywords.ExclusiveMinimum
+                    , Fractal.JsonSchema.Keywords.ExclusiveMaximum
+                    -- Array Keywords
+                    , Fractal.JsonSchema.Keywords.MinItems
+                    , Fractal.JsonSchema.Keywords.MaxItems
+                    , Fractal.JsonSchema.Keywords.UniqueItems
+                    -- Object Keywords
+                    , Fractal.JsonSchema.Keywords.Required
+                    , Fractal.JsonSchema.Keywords.MinProperties
+                    , Fractal.JsonSchema.Keywords.MaxProperties
+                    -- Legacy/Compatibility Keywords
                     , Fractal.JsonSchema.Keywords.Numeric
                     , Fractal.JsonSchema.Keywords.String
                     , Fractal.JsonSchema.Keywords.Format
+                    -- Standard Registry
                     , Fractal.JsonSchema.Keywords.Standard
+                    , Fractal.JsonSchema.Keywords.Registry
+                    , Fractal.JsonSchema.Keywords.Navigation
+                    -- Draft-04 Specific
+                    , Fractal.JsonSchema.Keywords.Draft04.Minimum
+                    , Fractal.JsonSchema.Keywords.Draft04.Maximum
+                    , Fractal.JsonSchema.Keywords.Draft04.ExclusiveMinimum
+                    -- Applicator Keywords (composition and conditional)
+                    , Fractal.JsonSchema.Keywords.AllOf
+                    , Fractal.JsonSchema.Keywords.AnyOf
+                    , Fractal.JsonSchema.Keywords.OneOf
+                    , Fractal.JsonSchema.Keywords.Not
+                    , Fractal.JsonSchema.Keywords.Conditional
                     -- Pluggable Architecture Modules
                     , Fractal.JsonSchema.Keyword
                     , Fractal.JsonSchema.Keyword.Types
                     , Fractal.JsonSchema.Keyword.Compile
                     , Fractal.JsonSchema.Keyword.Validate
+                    , Fractal.JsonSchema.Keyword.Monadic
                     , Fractal.JsonSchema.Vocabulary.Types
                     , Fractal.JsonSchema.Vocabulary.Registry
                     , Fractal.JsonSchema.Vocabulary.Validation
@@ -107,6 +142,9 @@ library
                     , ecma262-regex
                     , idn
 
+                    -- Monad transformers
+                    , transformers >= 0.5 && < 1
+
                     -- Template Haskell & Embedded Resources
                     , template-haskell >= 2.19 && < 3
                     , th-lift >= 0.8 && < 1
@@ -138,6 +176,7 @@ test-suite fractal-openapi-test
                     , Fractal.JsonSchema.IntegrationSpec
                     , Fractal.JsonSchema.JSONPointerSpec
                     , Fractal.JsonSchema.EmbeddedMetaschemasSpec
+                    , Fractal.JsonSchema.UnknownKeywordSpec
                     , Fractal.JsonSchema.Keyword.KeywordSpec
                     , Fractal.JsonSchema.Parser.ExtendedSpec
                     , Fractal.JsonSchema.Validator.ExtendedSpec

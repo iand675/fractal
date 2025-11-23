@@ -1,23 +1,85 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
--- | Type keyword validation
---
--- Validates the 'type' keyword which constrains a value to a specific JSON type
--- or a union of types.
-module Fractal.JsonSchema.Keywords.Type
-  ( validateTypeConstraint
-  ) where
-
-import Fractal.JsonSchema.Types
-import Data.Aeson (Value(..))
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.List.NonEmpty as NE
-import qualified Data.Scientific as Sci
-
--- | Validate type constraint
+-- | Implementation of the 'type' keyword
 --
 -- The type keyword restricts a value to a specific JSON type or union of types.
 -- For arrays of types, validation succeeds if the value matches any type in the array.
+module Fractal.JsonSchema.Keywords.Type
+  ( typeKeyword
+    -- * Backward compatibility
+  , validateTypeConstraint
+  ) where
+
+import Data.Aeson (Value(..))
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Typeable (Typeable)
+import Data.Foldable (toList)
+import qualified Data.Scientific as Sci
+import qualified Data.List.NonEmpty as NE
+
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Types (Schema, SchemaType(..), SchemaObject(..), OneOrMany(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure)
+
+-- | Compiled data for the 'type' keyword
+data TypeData = TypeData
+  { typeExpectedTypes :: [SchemaType]
+  } deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'type' keyword
+compileType :: CompileFunc TypeData
+compileType value _schema _ctx = case value of
+  String typeStr -> case parseSchemaType typeStr of
+    Just t -> Right $ TypeData { typeExpectedTypes = [t] }
+    Nothing -> Left $ "Unknown type: " <> typeStr
+  Array arr -> do
+    types <- mapM parseTypeFromValue (toList arr)
+    Right $ TypeData { typeExpectedTypes = types }
+  _ -> Left "type must be a string or array of strings"
+  where
+    parseTypeFromValue (String s) = case parseSchemaType s of
+      Just t -> Right t
+      Nothing -> Left $ "Unknown type: " <> s
+    parseTypeFromValue _ = Left "type array must contain only strings"
+
+    parseSchemaType :: Text -> Maybe SchemaType
+    parseSchemaType "null" = Just NullType
+    parseSchemaType "boolean" = Just BooleanType
+    parseSchemaType "string" = Just StringType
+    parseSchemaType "number" = Just NumberType
+    parseSchemaType "integer" = Just IntegerType
+    parseSchemaType "object" = Just ObjectType
+    parseSchemaType "array" = Just ArrayType
+    parseSchemaType _ = Nothing
+
+-- | Validate function for 'type' keyword
+validateType :: ValidateFunc TypeData
+validateType _recursiveValidator (TypeData expectedTypes) _ctx actual =
+  if any (matchesType actual) expectedTypes
+    then []
+    else ["Expected one of: " <> T.intercalate ", " (map (T.pack . show) expectedTypes)]
+  where
+    matchesType :: Value -> SchemaType -> Bool
+    matchesType Null NullType = True
+    matchesType (Bool _) BooleanType = True
+    matchesType (String _) StringType = True
+    matchesType (Number _) NumberType = True
+    matchesType (Number n) IntegerType = Sci.isInteger n
+    matchesType (Object _) ObjectType = True
+    matchesType (Array _) ArrayType = True
+    matchesType _ _ = False
+
+-- | The 'type' keyword definition
+typeKeyword :: KeywordDefinition
+typeKeyword = KeywordDefinition
+  { keywordName = "type"
+  , keywordScope = AnyScope
+  , keywordCompile = compileType
+  , keywordValidate = validateType
+  , keywordNavigation = NoNavigation
+  }
+
+-- | Backward compatibility: validate type constraint from SchemaObject
 validateTypeConstraint :: SchemaObject -> Value -> ValidationResult
 validateTypeConstraint obj val = case schemaType obj of
   Nothing -> ValidationSuccess mempty
@@ -48,3 +110,7 @@ validateTypeConstraint obj val = case schemaType obj of
       if any (\t -> isSuccess $ validateType t v) types
         then ValidationSuccess mempty
         else validationFailure "type" $ "Expected one of: " <> T.intercalate ", " (map (T.pack . show) types)
+
+    isSuccess :: ValidationResult -> Bool
+    isSuccess (ValidationSuccess _) = True
+    isSuccess (ValidationFailure _) = False

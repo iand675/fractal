@@ -22,6 +22,7 @@ module Fractal.JsonSchema.Validator
   ) where
 
 import Fractal.JsonSchema.Types
+import qualified Fractal.JsonSchema.Validator.Result as VR
 import qualified Fractal.JsonSchema.Parser as Parser
 import qualified Fractal.JsonSchema.Keywords.Type as KW
 import qualified Fractal.JsonSchema.Keywords.Enum as KW
@@ -29,6 +30,21 @@ import qualified Fractal.JsonSchema.Keywords.Const as KW
 import qualified Fractal.JsonSchema.Keywords.Numeric as KW
 import qualified Fractal.JsonSchema.Keywords.String as KW
 import qualified Fractal.JsonSchema.Keywords.Format as KW
+-- Pluggable keyword system
+import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry, draft04Registry)
+import Fractal.JsonSchema.Keywords.Registry (draft06Registry, draft07Registry, draft201909Registry, draft202012Registry)
+import Fractal.JsonSchema.Keyword (keywordMap, lookupKeyword)
+import qualified Fractal.JsonSchema.Keyword as Keyword
+import qualified Fractal.JsonSchema.Keyword.Types as Keyword.Types
+import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..))
+import Fractal.JsonSchema.Keyword.Compile (compileKeywords, buildCompilationContext, CompiledKeywords(..))
+import qualified Fractal.JsonSchema.Keyword.Validate as KeywordValidate
+-- Applicator keywords (composition and conditional)
+import qualified Fractal.JsonSchema.Keywords.AllOf as AllOf
+import qualified Fractal.JsonSchema.Keywords.AnyOf as AnyOf
+import qualified Fractal.JsonSchema.Keywords.OneOf as OneOf
+import qualified Fractal.JsonSchema.Keywords.Not as Not
+import qualified Fractal.JsonSchema.Keywords.Conditional as Cond
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -47,7 +63,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Scientific as Sci
 import Data.Foldable (toList)
-import Data.Maybe (fromJust, fromMaybe, isJust, listToMaybe, maybeToList)
+import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, listToMaybe, maybeToList)
 import Control.Monad (mplus)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
@@ -75,6 +91,7 @@ defaultValidationConfig :: ValidationConfig
 defaultValidationConfig = ValidationConfig
   { validationVersion = Draft202012
   , validationFormatAssertion = False  -- Format as annotation
+  , validationDialectFormatBehavior = Nothing  -- No dialect override
   , validationContentAssertion = False  -- Content as annotation
   , validationShortCircuit = False     -- Collect all errors
   , validationCollectAnnotations = False
@@ -86,6 +103,7 @@ defaultValidationConfig = ValidationConfig
 strictValidationConfig :: ValidationConfig
 strictValidationConfig = defaultValidationConfig
   { validationFormatAssertion = True
+  , validationDialectFormatBehavior = Just FormatAssertion
   , validationContentAssertion = True
   , validationShortCircuit = False
   }
@@ -138,7 +156,7 @@ validateValueWithContext ctx schema val =
   in case schemaCore schema of
        BooleanSchema True -> ValidationSuccess mempty
        BooleanSchema False -> ValidationFailure $ ValidationErrors $ pure $
-         ValidationError "schema" emptyPointer emptyPointer "Schema is 'false'" Nothing
+         validationError "Schema is 'false'"
        ObjectSchema obj ->
          -- First validate against standard keywords, then custom keywords
          combineResults
@@ -282,6 +300,25 @@ arrayIndexPointer idx = JSONPointer [T.pack (show idx)]
 propertyPointer :: Text -> JSONPointer
 propertyPointer prop = JSONPointer [prop]
 
+-- | Collect metadata annotations from schema (title, description, default, etc.)
+collectMetadataAnnotations :: SchemaObject -> ValidationAnnotations
+collectMetadataAnnotations obj =
+  let anns = schemaAnnotations obj
+      annMap = Map.fromList $ catMaybes
+        [ ("title",) . Aeson.String <$> annotationTitle anns
+        , ("description",) . Aeson.String <$> annotationDescription anns
+        , ("default",) <$> annotationDefault anns
+        , if null (annotationExamples anns)
+            then Nothing
+            else Just ("examples", Aeson.Array $ fromList $ annotationExamples anns)
+        , ("deprecated",) . Aeson.Bool <$> annotationDeprecated anns
+        , ("readOnly",) . Aeson.Bool <$> annotationReadOnly anns
+        , ("writeOnly",) . Aeson.Bool <$> annotationWriteOnly anns
+        ]
+  in if Map.null annMap
+       then mempty
+       else ValidationAnnotations $ Map.singleton emptyPointer annMap
+
 -- | Validate against object schema
 validateAgainstObject :: ValidationContext -> ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
 validateAgainstObject parentCtx ctx schema obj val =
@@ -306,6 +343,7 @@ validateAgainstObject parentCtx ctx schema obj val =
                   , schemaCore = ObjectSchema obj
                   , schemaVocabulary = Nothing
                   , schemaExtensions = Map.empty
+                  , schemaRawKeywords = Map.empty  -- No raw keywords for dynamically constructed schema
                   }
             in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
           else ctx
@@ -356,10 +394,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                       ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                   in validateValueWithContext ctxForRefWithVersion resolvedSchema val
                 Nothing ->
-                  ValidationFailure $ ValidationErrors $ pure $
-                    ValidationError "$ref" emptyPointer emptyPointer
-                      ("Unable to resolve reference: " <> showReference ref)
-                      Nothing
+                  ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                    { VR.errorKeyword = "$ref"
+                    , VR.errorSchemaPath = emptyPointer
+                    , VR.errorInstancePath = emptyPointer
+                    , VR.errorMessage = "Unable to resolve reference: " <> showReference ref
+                    }
         Nothing -> validateObjectSchemaContent ctx obj val
   where
     refCtx =
@@ -414,10 +454,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                       ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                   in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                 Nothing ->
-                  ValidationFailure $ ValidationErrors $ pure $
-                    ValidationError "$ref" emptyPointer emptyPointer
-                      ("Unable to resolve reference: " <> showReference ref)
-                      Nothing
+                  ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                    { VR.errorKeyword = "$ref"
+                    , VR.errorSchemaPath = emptyPointer
+                    , VR.errorInstancePath = emptyPointer
+                    , VR.errorMessage = "Unable to resolve reference: " <> showReference ref
+                    }
         Nothing ->
           -- No $ref, check for $dynamicRef (2020-12+)
           case schemaDynamicRef obj' of
@@ -463,10 +505,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                               ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                           in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                         Nothing ->
-                          ValidationFailure $ ValidationErrors $ pure $
-                            ValidationError "$dynamicRef" emptyPointer emptyPointer
-                              ("Unable to resolve dynamic reference: " <> showReference dynRef)
-                              Nothing
+                          ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                            { VR.errorKeyword = "$dynamicRef"
+                            , VR.errorSchemaPath = emptyPointer
+                            , VR.errorInstancePath = emptyPointer
+                            , VR.errorMessage = "Unable to resolve dynamic reference: " <> showReference dynRef
+                            }
             Nothing ->
               -- No $dynamicRef, check for $recursiveRef (2019-09)
               case schemaRecursiveRef obj' of
@@ -507,10 +551,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                                   ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                               in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                             Nothing ->
-                              ValidationFailure $ ValidationErrors $ pure $
-                                ValidationError "$recursiveRef" emptyPointer emptyPointer
-                                  ("Unable to resolve recursive reference: " <> showReference recRef)
-                                  Nothing
+                              ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                                { VR.errorKeyword = "$recursiveRef"
+                                , VR.errorSchemaPath = emptyPointer
+                                , VR.errorInstancePath = emptyPointer
+                                , VR.errorMessage = "Unable to resolve recursive reference: " <> showReference recRef
+                                }
                 Nothing -> ValidationSuccess mempty  -- No ref at all
 
     combineResults :: [ValidationResult] -> ValidationResult
@@ -520,6 +566,81 @@ validateAgainstObject parentCtx ctx schema obj val =
       in case failures of
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
+
+    -- Validate basic validation keywords using pluggable keyword system
+    -- Handles: type, enum, const, numeric (multipleOf, maximum, exclusiveMaximum, minimum, exclusiveMinimum),
+    --          string (maxLength, minLength, pattern)
+    -- Note: Array and object keywords are handled separately due to their complexity
+    -- 
+    -- Falls back to old validation functions for:
+    -- - Draft-04 schemas (different exclusiveMinimum/exclusiveMaximum semantics)
+    -- - Manually constructed schemas (empty schemaRawKeywords)
+    validateBasicKeywords :: ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
+    validateBasicKeywords ctx schema obj val =
+      let rawKeywords = schemaRawKeywords schema
+          schemaVersion' = schemaVersion schema
+          schemaRegistry = contextSchemaRegistry ctx
+          registryMap = registrySchemas schemaRegistry  -- Extract Map Text Schema from SchemaRegistry
+          
+          -- Select appropriate keyword registry based on schema version
+          keywordRegistry = case schemaVersion' of
+            Just Draft04 -> draft04Registry
+            Just Draft06 -> draft06Registry
+            Just Draft07 -> draft07Registry
+            Just Draft201909 -> draft201909Registry
+            Just Draft202012 -> draft202012Registry
+            _ -> standardKeywordRegistry  -- Default to standard (Draft-06+)
+          
+          -- Filter to only basic validation keywords (exclude array/object/composition keywords)
+          basicKeywordNames = 
+            [ "type", "enum", "const"
+            , "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum"
+            , "maxLength", "minLength", "pattern"
+            ]
+          basicKeywords = Map.filterWithKey (\k _ -> k `elem` basicKeywordNames) rawKeywords
+      in
+        -- Fall back to old validation functions for manually constructed schemas (empty schemaRawKeywords)
+        if Map.null rawKeywords
+        then
+          -- Fall back to old validation functions for backward compatibility
+          combineResults
+            [ KW.validateTypeConstraint obj val
+            , KW.validateEnumConstraint obj val
+            , KW.validateConstConstraint obj val
+            , KW.validateNumericConstraints obj val
+            , KW.validateStringConstraints ctx obj val
+            ]
+        else if Map.null basicKeywords
+        then ValidationSuccess mempty
+        else
+          -- Use pluggable keyword system with version-appropriate registry
+          -- Build compilation context
+          let compilationCtx = buildCompilationContext registryMap keywordRegistry schema []
+              -- Get keyword definitions from registry
+              keywordDefs = keywordMap keywordRegistry
+              -- Compile keywords
+              compiledResult = compileKeywords keywordDefs basicKeywords schema compilationCtx
+          in case compiledResult of
+            Left err -> validationFailure "compilation" $ "Failed to compile keywords: " <> err
+            Right compiled ->
+              -- Create recursive validator for subschemas
+              let recursiveValidator sch v = validateValueWithContext ctx sch v
+                  -- Build keyword validation context (just paths for now)
+                  keywordCtx = Keyword.Types.ValidationContext'
+                    { Keyword.Types.kwContextInstancePath = []
+                    , Keyword.Types.kwContextSchemaPath = []
+                    }
+                  -- Validate using compiled keywords with recursive validator
+                  errors = KeywordValidate.validateKeywords recursiveValidator compiled val keywordCtx
+              in if null errors
+                then ValidationSuccess mempty
+                else ValidationFailure $ ValidationErrors $ NE.fromList $
+                  map (\msg -> VR.ValidationError
+                    { VR.errorKeyword = "keyword"
+                    , VR.errorSchemaPath = emptyPointer
+                    , VR.errorInstancePath = emptyPointer
+                    , VR.errorMessage = msg
+                    }) errors
 
     -- Validate object schema content without ref annotations (for pre-2019-09 or when no ref)
     validateObjectSchemaContent ctx' obj' val' =
@@ -535,11 +656,8 @@ validateAgainstObject parentCtx ctx schema obj val =
           -- Only apply validation keywords if validation vocabulary is active
           results =
             (if validationActive
-             then [ KW.validateTypeConstraint obj' val'
-                  , KW.validateEnumConstraint obj' val'
-                  , KW.validateConstConstraint obj' val'
-                  , KW.validateNumericConstraints obj' val'
-                  , KW.validateStringConstraints ctx'' obj' val'
+             then [ validateBasicKeywords ctx'' schema obj' val'
+                  , KW.validateStringConstraints ctx'' obj' val'  -- Content encoding/media type validation
                   ]
              else [])
             ++
@@ -551,8 +669,10 @@ validateAgainstObject parentCtx ctx schema obj val =
             ]
           -- Combine results to get accumulated annotations (including ref annotations)
           combinedResult = combineResults results
+          -- Collect metadata annotations from schema
+          metadataAnns = collectMetadataAnnotations obj'
           combinedWithRefs = case combinedResult of
-            ValidationSuccess anns -> ValidationSuccess (refAnns <> anns)
+            ValidationSuccess anns -> ValidationSuccess (refAnns <> anns <> metadataAnns)
             ValidationFailure errs -> ValidationFailure errs
       in case combinedWithRefs of
            ValidationSuccess anns ->
@@ -579,12 +699,15 @@ validateAgainstObject parentCtx ctx schema obj val =
 validateComposition :: ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateComposition ctx obj val =
   combineResults
-    [ maybe (ValidationSuccess mempty) (validateAllOf ctx val) (schemaAllOf obj)
-    , maybe (ValidationSuccess mempty) (validateAnyOf ctx val) (schemaAnyOf obj)
-    , maybe (ValidationSuccess mempty) (validateOneOf ctx val) (schemaOneOf obj)
-    , maybe (ValidationSuccess mempty) (validateNot ctx val) (schemaNot obj)
+    [ maybe (ValidationSuccess mempty) (\schemas -> AllOf.validateAllOf validator schemas val) (schemaAllOf obj)
+    , maybe (ValidationSuccess mempty) (\schemas -> AnyOf.validateAnyOf validator schemas val) (schemaAnyOf obj)
+    , maybe (ValidationSuccess mempty) (\schemas -> OneOf.validateOneOf validator schemas val) (schemaOneOf obj)
+    , maybe (ValidationSuccess mempty) (\schema -> Not.validateNot validator schema val) (schemaNot obj)
     ]
   where
+    -- Validator function that captures the context
+    validator schema value = validateValueWithContext ctx schema value
+
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
           annotations = [anns | ValidationSuccess anns <- results]
@@ -592,54 +715,15 @@ validateComposition ctx obj val =
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
 
-    validateAllOf ctx' v schemas =
-      let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-          failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        -- Collect annotations from ALL branches in allOf (all must pass)
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
-    validateAnyOf ctx' v schemas =
-      let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-          successes = [anns | ValidationSuccess anns <- results]
-      in if null successes
-        then validationFailure "anyOf" "Value does not match any schema in anyOf"
-        -- Collect annotations from ALL passing branches in anyOf
-        else ValidationSuccess $ mconcat successes
-
-    validateOneOf ctx' v schemas =
-      let results = [validateValueWithContext ctx' schema v | schema <- NE.toList schemas]
-          successes = [anns | ValidationSuccess anns <- results]
-      in case length successes of
-        -- Collect annotations from the single passing branch
-        1 -> ValidationSuccess $ head successes
-        0 -> validationFailure "oneOf" "Value does not match any schema in oneOf"
-        _ -> validationFailure "oneOf" "Value matches more than one schema in oneOf"
-
-    validateNot ctx' v schema =
-      case validateValueWithContext ctx' schema v of
-        ValidationSuccess _ -> validationFailure "not" "Value matches schema in 'not'"
-        ValidationFailure _ -> ValidationSuccess mempty
-
 -- | Validate conditional keywords (if/then/else, draft-07+)
 validateConditional :: ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateConditional ctx obj val = case schemaIf obj of
   Nothing -> ValidationSuccess mempty  -- No conditional
   Just ifSchema ->
-    case validateValueWithContext ctx ifSchema val of
-      ValidationSuccess ifAnns ->
-        -- If validates, apply then (if present) and combine annotations
-        case schemaThen obj of
-          Just thenSchema ->
-            case validateValueWithContext ctx thenSchema val of
-              ValidationSuccess thenAnns -> ValidationSuccess (ifAnns <> thenAnns)
-              ValidationFailure errs -> ValidationFailure errs
-          Nothing -> ValidationSuccess ifAnns  -- No then, keep if annotations
-      ValidationFailure _ ->
-        -- If fails, apply else (if present)
-        maybe (ValidationSuccess mempty) (\elseSchema -> validateValueWithContext ctx elseSchema val) (schemaElse obj)
+    Cond.validateConditional validator ifSchema (schemaThen obj) (schemaElse obj) val
+  where
+    -- Validator function that captures the context
+    validator schema value = validateValueWithContext ctx schema value
 
 -- | Validate array constraints WITHOUT unevaluatedItems (for use when collecting annotations)
 validateArrayConstraintsWithoutUnevaluated :: ValidationContext -> SchemaObject -> Value -> ValidationResult
@@ -1009,10 +1093,12 @@ validateObjectPropertyConstraints ctx obj objMap =
             missingProps = Set.difference requiredProps presentProps
         in if Set.null missingProps
           then ValidationSuccess mempty
-          else ValidationFailure $ ValidationErrors $ pure $
-            ValidationError "required" emptyPointer emptyPointer
-              ("Missing required properties: " <> T.intercalate ", " (Set.toList missingProps))
-              Nothing
+          else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+            { VR.errorKeyword = "required"
+            , VR.errorSchemaPath = emptyPointer
+            , VR.errorInstancePath = emptyPointer
+            , VR.errorMessage = "Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)
+            }
     
     validatePropertyNames ctx' schemaObj om = case validationPropertyNames (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
@@ -1242,11 +1328,13 @@ validateDependentRequired ctx validation objMap =
                   let missingDeps = Set.difference requiredDeps presentProps
                   in if Set.null missingDeps
                     then ValidationSuccess mempty
-                    else ValidationFailure $ ValidationErrors $ pure $
-                      ValidationError "dependentRequired" emptyPointer emptyPointer
-                        ("Property '" <> propName <> "' requires these properties: " <>
-                         T.intercalate ", " (Set.toList missingDeps))
-                        Nothing
+                    else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                      { VR.errorKeyword = "dependentRequired"
+                      , VR.errorSchemaPath = emptyPointer
+                      , VR.errorInstancePath = emptyPointer
+                      , VR.errorMessage = "Property '" <> propName <> "' requires these properties: " <>
+                                          T.intercalate ", " (Set.toList missingDeps)
+                      }
             | (propName, requiredDeps) <- Map.toList depReqMap
             ]
           failures = [errs | ValidationFailure errs <- results]
@@ -1291,11 +1379,13 @@ validateDependencies ctx validation objMap = case validationDependencies validat
                     let missingDeps = Set.difference requiredDeps presentProps
                     in if Set.null missingDeps
                       then ValidationSuccess mempty
-                      else ValidationFailure $ ValidationErrors $ pure $
-                        ValidationError "dependencies" emptyPointer emptyPointer
-                          ("Property '" <> propName <> "' requires these properties: " <>
-                           T.intercalate ", " (Set.toList missingDeps))
-                          Nothing
+                      else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                        { VR.errorKeyword = "dependencies"
+                        , VR.errorSchemaPath = emptyPointer
+                        , VR.errorInstancePath = emptyPointer
+                        , VR.errorMessage = "Property '" <> propName <> "' requires these properties: " <>
+                                            T.intercalate ", " (Set.toList missingDeps)
+                        }
                   -- Schema dependency: validate entire object against the schema
                   DependencySchema depSchema ->
                     validateValueWithContext ctx depSchema (Object objMap)
@@ -1479,186 +1569,118 @@ resolvePointerInSchema pointer schema =
 
 -- | Resolve a JSON Pointer within a specific schema, tracking base URI changes
 -- Returns (resolved schema, effective base URI after navigating through schemas with $id)
+--
+-- This now uses the pluggable keyword navigation system, allowing custom keywords
+-- to define their own schema containment and navigation behavior.
 resolvePointerInSchemaWithBase :: Text -> Schema -> Maybe Text -> Maybe (Schema, Maybe Text)
 resolvePointerInSchemaWithBase pointer schema currentBase =
   case parsePointer pointer of
     Left _ -> Nothing
     Right (JSONPointer segments) -> followPointer segments schema currentBase
   where
+    -- Get the appropriate keyword registry based on schema version
+    getRegistry :: Schema -> Keyword.KeywordRegistry
+    getRegistry s = case schemaVersion s of
+      Just Draft04 -> draft04Registry
+      _ -> standardKeywordRegistry
+
     followPointer :: [Text] -> Schema -> Maybe Text -> Maybe (Schema, Maybe Text)
     followPointer [] s base = Just (s, base)
     followPointer (seg:rest) s base = case schemaCore s of
       BooleanSchema _ -> Nothing
-      ObjectSchema obj -> navigateObject seg rest s obj base
+      ObjectSchema obj -> navigateKeyword seg rest s obj base
 
-    navigateObject :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Text -> Maybe (Schema, Maybe Text)
-    navigateObject seg rest parentSchema obj currentBase
-      -- Navigate into $defs or definitions
+    navigateKeyword :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Text -> Maybe (Schema, Maybe Text)
+    navigateKeyword seg rest parentSchema obj currentBase =
+      let registry = getRegistry parentSchema
+          keywordDef = Keyword.lookupKeyword seg registry
+      in case keywordDef of
+        -- If keyword has navigation, use it
+        Just kwDef -> case Keyword.keywordNavigation kwDef of
+          NoNavigation -> Nothing
+          
+          SingleSchema navFunc ->
+            case navFunc parentSchema of
+              Just subSchema -> updateBaseAndFollow subSchema
+              Nothing -> Nothing
+          
+          SchemaMap navFunc ->
+            case rest of
+              (key:remaining) ->
+                case navFunc parentSchema of
+                  Just schemaMap ->
+                    case Map.lookup key schemaMap of
+                      Just subSchema -> followPointerFrom remaining subSchema
+                      Nothing -> Nothing
+                  Nothing -> Nothing
+              [] -> Nothing  -- Need a key for SchemaMap navigation
+          
+          SchemaArray navFunc ->
+            case rest of
+              (idx:remaining) ->
+                case reads (T.unpack idx) :: [(Int, String)] of
+                  [(n, "")] | n >= 0 ->
+                    case navFunc parentSchema of
+                      Just schemas | n < length schemas ->
+                        followPointerFrom remaining (schemas !! n)
+                      _ -> Nothing
+                  _ -> Nothing
+              [] -> Nothing  -- Need an index for SchemaArray navigation
+          
+          CustomNavigation navFunc ->
+            -- CustomNavigation gets the current segment and remaining path
+            -- and returns (nextSchema, remainingPath)
+            case navFunc parentSchema seg rest of
+              Just (nextSchema, remaining) -> followPointerFrom remaining nextSchema
+              Nothing -> Nothing
+        
+        -- No registered keyword - check special cases and extensions
+        Nothing -> navigateFallback seg rest parentSchema obj currentBase
+      where
+        -- Update base URI if subschema has $id, then continue following
+        updateBaseAndFollow :: Schema -> Maybe (Schema, Maybe Text)
+        updateBaseAndFollow subSchema =
+          let newBase = case schemaId subSchema of
+                Just sid -> Just $ resolveAgainstBaseURI currentBase sid
+                Nothing -> currentBase
+          in followPointer rest subSchema newBase
+        
+        followPointerFrom :: [Text] -> Schema -> Maybe (Schema, Maybe Text)
+        followPointerFrom remaining subSchema =
+          let newBase = case schemaId subSchema of
+                Just sid -> Just $ resolveAgainstBaseURI currentBase sid
+                Nothing -> currentBase
+          in followPointer remaining subSchema newBase
+    
+    -- Fallback for special cases not handled by registered keywords
+    navigateFallback :: Text -> [Text] -> Schema -> SchemaObject -> Maybe Text -> Maybe (Schema, Maybe Text)
+    navigateFallback seg rest parentSchema obj currentBase
+      -- Special case: $defs and definitions are aliases (handled as SchemaMap)
       | seg == "$defs" || seg == "definitions" =
           case rest of
             (defName:remaining) ->
               case Map.lookup defName (schemaDefs obj) of
                 Just subSchema ->
-                  -- If subSchema has $id, it changes the base URI
                   let newBase = case schemaId subSchema of
                         Just sid -> Just $ resolveAgainstBaseURI currentBase sid
                         Nothing -> currentBase
                   in followPointer remaining subSchema newBase
                 Nothing -> Nothing
-            [] -> Nothing  -- Need a definition name
-      
-      -- Navigate into properties
-      | seg == "properties" =
-          case rest of
-            (propName:remaining) ->
-              case validationProperties (schemaValidation obj) >>= Map.lookup propName of
-                Just propSchema -> followPointer remaining propSchema currentBase
-                Nothing -> Nothing
-            [] -> Nothing  -- Need a property name
-
-      -- Navigate into patternProperties
-      | seg == "patternProperties" =
-          case rest of
-            (patternKey:remaining) ->
-              case validationPatternProperties (schemaValidation obj) of
-                Just patterns ->
-                  case [(patSchema, pat) | (Regex pat, patSchema) <- Map.toList patterns, pat == patternKey] of
-                    ((patSchema, _):_) -> followPointer remaining patSchema currentBase
-                    [] -> Nothing
-                Nothing -> Nothing
             [] -> Nothing
-
-      -- Navigate into additionalProperties
-      | seg == "additionalProperties" =
-          case validationAdditionalProperties (schemaValidation obj) of
-            Just apSchema -> followPointer rest apSchema currentBase
-            Nothing -> Nothing
       
-      -- Navigate into items
-      | seg == "items" =
-          case validationItems (schemaValidation obj) of
-            Just (ItemsSchema itemSchema) -> followPointer rest itemSchema currentBase
-            Just (ItemsTuple schemas _) ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into prefixItems (2020-12+)
-      | seg == "prefixItems" =
-          case validationPrefixItems (schemaValidation obj) of
-            Just prefixSchemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length prefixSchemas ->
-                      followPointer remaining (NE.toList prefixSchemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into allOf
-      | seg == "allOf" =
-          case schemaAllOf obj of
-            Just schemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into anyOf
-      | seg == "anyOf" =
-          case schemaAnyOf obj of
-            Just schemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into oneOf
-      | seg == "oneOf" =
-          case schemaOneOf obj of
-            Just schemas ->
-              case rest of
-                (idx:remaining) ->
-                  case reads (T.unpack idx) :: [(Int, String)] of
-                    [(n, "")] | n >= 0 && n < length schemas ->
-                      followPointer remaining (NE.toList schemas !! n) currentBase
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-
-      -- Navigate into not
-      | seg == "not" =
-          case schemaNot obj of
-            Just notSchema -> followPointer rest notSchema currentBase
-            Nothing -> Nothing
-
-      -- Navigate into if/then/else
-      | seg == "if" = case schemaIf obj of
-          Just ifSchema -> followPointer rest ifSchema currentBase
-          Nothing -> Nothing
-      | seg == "then" = case schemaThen obj of
-          Just thenSchema -> followPointer rest thenSchema currentBase
-          Nothing -> Nothing
-      | seg == "else" = case schemaElse obj of
-          Just elseSchema -> followPointer rest elseSchema currentBase
-          Nothing -> Nothing
-
-      -- Navigate into dependentSchemas
-      | seg == "dependentSchemas" =
-          case rest of
-            (propName:remaining) ->
-              case validationDependentSchemas (schemaValidation obj) >>= Map.lookup propName of
-                Just depSchema -> followPointer remaining depSchema currentBase
-                Nothing -> Nothing
-            [] -> Nothing
-
-      -- Navigate into contains
-      | seg == "contains" =
-          case validationContains (schemaValidation obj) of
-            Just containsSchema -> followPointer rest containsSchema currentBase
-            Nothing -> Nothing
-
-      -- Navigate into propertyNames
-      | seg == "propertyNames" =
-          case validationPropertyNames (schemaValidation obj) of
-            Just propNamesSchema -> followPointer rest propNamesSchema currentBase
-            Nothing -> Nothing
-
-      -- Navigate into unevaluatedProperties
-      | seg == "unevaluatedProperties" =
-          case validationUnevaluatedProperties (schemaValidation obj) of
-            Just unevalPropsSchema -> followPointer rest unevalPropsSchema currentBase
-            Nothing -> Nothing
-      
-      -- Fallback: check schemaExtensions for arbitrary keywords
+      -- Check schemaExtensions for arbitrary/unknown keywords
       | otherwise =
           case Map.lookup seg (schemaExtensions parentSchema) of
             Just val ->
-              -- Try to parse the value as a schema
               let version = fromMaybe Draft07 (schemaVersion parentSchema)
               in case Parser.parseSchemaWithVersion version val of
                 Right schema -> followPointer rest schema currentBase
                 Left _ ->
-                  -- Not a schema - check if we need array indexing
+                  -- Not a direct schema - might be an array of schemas
                   case (val, rest) of
                     (Aeson.Array arr, (idx:remaining)) ->
                       case reads (T.unpack idx) :: [(Int, String)] of
                         [(n, "")] | n >= 0 && n < length arr ->
-                          -- Try to parse the array element as a schema
                           case Parser.parseSchemaWithVersion version (arr ! n) of
                             Right schema -> followPointer remaining schema currentBase
                             Left _ -> Nothing

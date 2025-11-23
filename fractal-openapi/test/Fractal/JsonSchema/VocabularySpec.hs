@@ -18,7 +18,7 @@ import qualified Data.Aeson as Aeson
 
 -- Helper function to create validation errors
 mkValidationError :: Text -> ValidationError
-mkValidationError msg = ValidationError "custom" emptyPointer emptyPointer msg Nothing
+mkValidationError msg = validationError msg
 
 spec :: Spec
 spec = describe "Vocabulary System" $ do

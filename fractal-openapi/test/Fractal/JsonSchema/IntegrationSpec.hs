@@ -14,6 +14,7 @@ spec = describe "JSON Schema Integration Tests" $ do
       -- Create a person schema programmatically
       let personSchema = Schema
             { schemaVersion = Just Draft07
+            , schemaMetaschemaURI = Nothing
             , schemaId = Nothing
             , schemaCore = ObjectSchema $ SchemaObject
                 { schemaType = Just (One ObjectType)
@@ -77,6 +78,7 @@ spec = describe "JSON Schema Integration Tests" $ do
                 }
             , schemaVocabulary = Nothing
             , schemaExtensions = Map.empty
+            , schemaRawKeywords = Map.empty
             }
       
       let validPerson = object ["name" .= ("Alice" :: T.Text)]
@@ -92,6 +94,7 @@ spec = describe "JSON Schema Integration Tests" $ do
     it "validates minimum constraint" $ do
       let ageSchema = Schema
             { schemaVersion = Just Draft07
+            , schemaMetaschemaURI = Nothing
             , schemaId = Nothing
             , schemaCore = ObjectSchema $ SchemaObject
                 { schemaType = Just (One NumberType)
@@ -155,6 +158,7 @@ spec = describe "JSON Schema Integration Tests" $ do
                 }
             , schemaVocabulary = Nothing
             , schemaExtensions = Map.empty
+            , schemaRawKeywords = Map.empty
             }
       
       -- Valid age

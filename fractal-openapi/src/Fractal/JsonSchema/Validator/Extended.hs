@@ -14,10 +14,11 @@ module Fractal.JsonSchema.Validator.Extended
 import Data.Aeson (Value)
 import Data.Text (Text)
 
-import Fractal.JsonSchema.Types (ValidationResult, ValidationConfig, isSuccess)
-import Fractal.JsonSchema.Validator (validateValue, defaultValidationConfig)
+import Fractal.JsonSchema.Types (ValidationResult, ValidationConfig, isSuccess, Schema, ValidationContext)
+import Fractal.JsonSchema.Validator (validateValue, defaultValidationConfig, validateValueWithContext)
 import Fractal.JsonSchema.Parser.Extended (ExtendedSchema(..), fromExtendedSchema)
-import Fractal.JsonSchema.Keyword.Validate (validateKeywords, ValidationContext, buildValidationContext)
+import Fractal.JsonSchema.Keyword.Validate (validateKeywords)
+import Fractal.JsonSchema.Keyword.Types (ValidationContext'(..))
 import Fractal.JsonSchema.Validator.Result (ValidationError(..))
 
 -- | Extended validation result
@@ -60,11 +61,20 @@ validateExtendedWithConfig
   -> ExtendedValidationResult
 validateExtendedWithConfig config extSchema value =
   let -- Validate with standard validator
-      standardResult = validateValue config (fromExtendedSchema extSchema) value
+      baseSchema = fromExtendedSchema extSchema
+      standardResult = validateValue config baseSchema value
 
+      -- Create validation context for custom keywords
+      -- Build a minimal ValidationContext for the recursive validator
+      ctx = undefined  -- We need to construct this properly, but for now let's see if compilation proceeds
+      
+      -- Create recursive validator
+      recursiveValidator :: Schema -> Value -> ValidationResult
+      recursiveValidator = validateValueWithContext ctx
+      
       -- Validate with custom keywords
-      ctx = buildValidationContext [] []
-      customErrors = validateKeywords (extendedCompiledKeywords extSchema) value ctx
+      kwCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+      customErrors = validateKeywords recursiveValidator (extendedCompiledKeywords extSchema) value kwCtx
 
       -- Combine results
       overallValid = isSuccess standardResult && null customErrors

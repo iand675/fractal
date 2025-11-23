@@ -5,41 +5,48 @@
 -- This module provides extensible validation results that go beyond
 -- simple Either/Boolean to support typed annotations that can be
 -- inspected programmatically.
+--
+-- Note: This module depends on Types for JSONPointer, creating a circular
+-- dependency that's resolved via hs-boot files.
 module Fractal.JsonSchema.Validator.Result
   ( -- * Validation Result
     ValidationResult(..)
   , ValidationError(..)
   , ValidationErrorTree(..)
+    -- * Result Construction
+  , validationSuccess
+  , validationSuccessWithAnnotations
+  , validationFailure
+  , validationFailureDetailed
+  , validationFailureTree
+    -- * Result Queries
+  , isSuccess
+  , isFailure
     -- * Annotations
   , AnnotationCollection(..)
   , SomeAnnotation(..)
   , emptyAnnotationCollection
   , addAnnotation
+  , addAnnotations
+  , mergeAnnotations
   , getAnnotations
   , getAnnotationsOfType
     -- * Output Formats
   , OutputFormat(..)
   ) where
 
-import Data.Aeson (Value)
-import Data.Dynamic (Dynamic, Typeable, toDyn, fromDynamic)
+import Data.Dynamic (Typeable, toDyn, fromDynamic)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Typeable (TypeRep, typeOf)
-import Data.Proxy (Proxy(..))
-
--- | JSON Pointer path type (e.g., "/properties/name")
-type JSONPointer = Text
-
--- | Schema path type (e.g., "/properties/name/type")
-type SchemaPath = Text
+import Fractal.JSONPointer (JSONPointer, emptyPointer)
 
 -- | A single validation error
 data ValidationError = ValidationError
   { errorMessage :: Text
     -- ^ Human-readable error message
-  , errorSchemaPath :: SchemaPath
+  , errorSchemaPath :: JSONPointer
     -- ^ Path in the schema where validation failed
   , errorInstancePath :: JSONPointer
     -- ^ Path in the instance where validation failed
@@ -115,6 +122,22 @@ getAnnotationsOfType (AnnotationCollection m) =
      , Just value <- [fromDynamic (toDyn val)]
      ]
 
+-- | Merge two annotation collections
+mergeAnnotations :: AnnotationCollection -> AnnotationCollection -> AnnotationCollection
+mergeAnnotations (AnnotationCollection m1) (AnnotationCollection m2) =
+  AnnotationCollection (Map.unionWith (++) m1 m2)
+
+instance Semigroup AnnotationCollection where
+  (<>) = mergeAnnotations
+
+instance Monoid AnnotationCollection where
+  mempty = emptyAnnotationCollection
+
+-- | Add multiple annotations at once (batch operation)
+addAnnotations :: Typeable a => JSONPointer -> [a] -> AnnotationCollection -> AnnotationCollection
+addAnnotations path values col =
+  foldr (addAnnotation path) col values
+
 -- | Output format for validation results
 --
 -- Corresponds to JSON Schema specification output formats:
@@ -146,3 +169,56 @@ data ValidationResult = ValidationResult
     -- ^ Collected annotations (if enabled)
   }
   deriving (Show)
+
+-- | Check if validation succeeded
+isSuccess :: ValidationResult -> Bool
+isSuccess = resultValid
+
+-- | Check if validation failed
+isFailure :: ValidationResult -> Bool
+isFailure = not . resultValid
+
+-- | Smart constructor for successful validation
+validationSuccess :: ValidationResult
+validationSuccess = ValidationResult
+  { resultValid = True
+  , resultErrors = ErrorBranch "root" []
+  , resultAnnotations = emptyAnnotationCollection
+  }
+
+-- | Smart constructor for successful validation with annotations
+validationSuccessWithAnnotations :: AnnotationCollection -> ValidationResult
+validationSuccessWithAnnotations anns = ValidationResult
+  { resultValid = True
+  , resultErrors = ErrorBranch "root" []
+  , resultAnnotations = anns
+  }
+
+-- | Smart constructor for validation failure with a single error
+validationFailure :: Text -> Text -> ValidationResult
+validationFailure keyword message = ValidationResult
+  { resultValid = False
+  , resultErrors = ErrorLeaf $ ValidationError
+      { errorMessage = message
+      , errorSchemaPath = emptyPointer
+      , errorInstancePath = emptyPointer
+      , errorKeyword = keyword
+      }
+  , resultAnnotations = emptyAnnotationCollection
+  }
+
+-- | Smart constructor for validation failure with a detailed error
+validationFailureDetailed :: ValidationError -> ValidationResult
+validationFailureDetailed err = ValidationResult
+  { resultValid = False
+  , resultErrors = ErrorLeaf err
+  , resultAnnotations = emptyAnnotationCollection
+  }
+
+-- | Smart constructor for validation failure with multiple errors
+validationFailureTree :: ValidationErrorTree -> ValidationResult
+validationFailureTree tree = ValidationResult
+  { resultValid = False
+  , resultErrors = tree
+  , resultAnnotations = emptyAnnotationCollection
+  }

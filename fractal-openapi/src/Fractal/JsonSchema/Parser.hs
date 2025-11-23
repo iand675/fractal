@@ -10,12 +10,26 @@ module Fractal.JsonSchema.Parser
   , parseSubschema
   , parseSchemaStrict
   , parseSchemaFromFile
+  
+    -- * Dialect-Aware Parsing
+  , parseSchemaWithDialectRegistry
+  , parseSchemaWithDialectRegistryAndVersion
+  , resolveDialectFromSchema
+  , extractSchemaURI
+  
+    -- * Configuration-Based Parsing
+  , ParseConfig(..)
+  , defaultParseConfig
+  , parseSchemaWithConfig
 
     -- * Error Types
   , ParseError(..)
+  , ParseWarning(..)
   ) where
 
 import Fractal.JsonSchema.Types
+import Fractal.JsonSchema.Vocabulary (VocabularyRegistry, lookupDialect)
+import Fractal.JsonSchema.Dialect (Dialect, dialectURI, dialectVersion, dialectUnknownKeywords)
 import Data.Aeson (Value(..), Object)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
@@ -37,6 +51,42 @@ data ParseError = ParseError
   , parseErrorMessage :: Text           -- ^ What went wrong
   , parseErrorContext :: Maybe Value    -- ^ Problematic value
   } deriving (Eq, Show)
+
+-- | Warning during schema parsing (for unknown keywords in WarnUnknown mode)
+data ParseWarning = ParseWarning
+  { parseWarningPath :: JSONPointer
+  , parseWarningMessage :: Text
+  , parseWarningKeyword :: Text
+  } deriving (Eq, Show)
+
+-- | Configuration for schema parsing
+--
+-- Controls how the parser handles various aspects of schema processing,
+-- including unknown keyword handling.
+--
+-- @since 0.1.0.0
+data ParseConfig = ParseConfig
+  { parseUnknownKeywordMode :: UnknownKeywordMode
+    -- ^ How to handle keywords not in any registered vocabulary
+    --
+    -- * 'IgnoreUnknown': Don't collect unknown keywords at all
+    -- * 'WarnUnknown': Collect warnings but continue parsing (extensions)
+    -- * 'ErrorOnUnknown': Fail parsing when unknown keywords encountered (__non-standard__)
+    -- * 'CollectUnknown': Collect unknown keywords in 'schemaExtensions' (default, spec-compliant)
+    --
+    -- __Note__: This is separate from @$vocabulary@ validation. Required vocabularies
+    -- always cause parsing to fail if not understood, regardless of this setting.
+  } deriving (Eq, Show)
+
+-- | Default parsing configuration
+--
+-- Uses 'CollectUnknown' mode (spec-compliant default behavior).
+--
+-- @since 0.1.0.0
+defaultParseConfig :: ParseConfig
+defaultParseConfig = ParseConfig
+  { parseUnknownKeywordMode = CollectUnknown
+  }
 
 -- | Parse a JSON Schema from a Value with automatic version detection
 parseSchema :: Value -> Either ParseError Schema
@@ -63,6 +113,7 @@ parseSchemaWithVersion version val = case val of
     , schemaCore = BooleanSchema b
     , schemaVocabulary = Nothing
     , schemaExtensions = Map.empty
+    , schemaRawKeywords = Map.empty  -- Boolean schemas have no keywords
     }
   Object obj -> do
     -- Parse $schema URI
@@ -84,8 +135,8 @@ parseSchemaWithVersion version val = case val of
     -- Parse core structure
     core <- parseSchemaObject version obj
 
-    -- Collect unknown keywords (extensions)
-    -- TODO (US3): This is where vocabulary integration happens
+    -- Collect keywords based on parseUnknownKeywordMode
+    -- Known keywords are those defined in the JSON Schema spec for this version
     -- For each unknown keyword:
     --   1. Check if vocabulary is registered
     --   2. Use keywordParser from KeywordDefinition to get typed KeywordValue
@@ -111,8 +162,8 @@ parseSchemaWithVersion version val = case val of
           , "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"
           , "multipleOf"
           ]
-    let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords)
-                   $ Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
+    let allKeywords = Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
+    let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords) allKeywords
 
     pure $ Schema
       { schemaVersion = Just version
@@ -120,9 +171,40 @@ parseSchemaWithVersion version val = case val of
       , schemaId = schemaId'
       , schemaCore = ObjectSchema core
       , schemaVocabulary = vocabMap
-      , schemaExtensions = extensions
+      , schemaExtensions = extensions  -- Always collect for backward compatibility
+      , schemaRawKeywords = allKeywords  -- Store ALL keywords for monadic compilation
       }
   _ -> Left $ ParseError emptyPointer "Schema must be boolean or object" (Just val)
+
+-- | Parse a schema with configuration-based unknown keyword handling
+--
+-- This function allows control over how unknown keywords (those not in the
+-- JSON Schema specification) are handled during parsing.
+--
+-- __Unknown Keyword Modes__:
+--
+-- * 'ErrorOnUnknown': Parsing fails if unknown keywords are present (strict)
+-- * 'WarnUnknown': Parser succeeds but returns schema with warnings (development)
+-- * 'CollectUnknown': Unknown keywords stored in 'schemaExtensions' (default)
+-- * 'IgnoreUnknown': Unknown keywords not collected at all
+--
+-- __Example__:
+--
+-- @
+-- -- Strict mode: fail on typos
+-- let config = ParseConfig { parseUnknownKeywordMode = ErrorOnUnknown }
+-- case parseSchemaWithConfig config schemaJson of
+--   Left err -> putStrLn $ "Invalid schema: " ++ show err
+--   Right schema -> validate schema
+-- @
+--
+-- @since 0.1.0.0
+parseSchemaWithConfig :: ParseConfig -> Value -> Either ParseError Schema
+parseSchemaWithConfig config val = do
+  -- Parse normally first
+  schema <- parseSchema val
+  -- Apply unknown keyword mode
+  applyUnknownKeywordMode config schema
 
 -- | Strict parsing (fail on unknown keywords)
 parseSchemaStrict :: Value -> Either ParseError Schema
@@ -332,7 +414,7 @@ parseValidationKeywords version obj = do
   let properties' = KeyMap.lookup "properties" obj >>= parsePropertySchemas version
   let patternProperties' = KeyMap.lookup "patternProperties" obj >>= parsePatternPropertySchemas version
   let additionalProperties' = KeyMap.lookup "additionalProperties" obj >>= \v -> case v of
-        Bool b -> Just $ Schema Nothing Nothing Nothing (BooleanSchema b) Nothing Map.empty
+        Bool b -> Just $ Schema Nothing Nothing Nothing (BooleanSchema b) Nothing Map.empty Map.empty
         _ -> eitherToMaybe $ parseSubschema version v
   let unevaluatedProperties' = if version >= Draft201909
                                then KeyMap.lookup "unevaluatedProperties" obj >>= eitherToMaybe . parseSubschema version
@@ -446,4 +528,111 @@ parseDependency version v@(Bool _) =
 parseDependency _ (Array arr) = Just $ DependencyProperties $ Set.fromList
   [t | String t <- toList arr]
 parseDependency _ _ = Nothing
+
+-- | Parse a schema with dialect registry support
+--
+-- This function parses a JSON Schema and uses the provided dialect registry
+-- to look up the dialect based on the $schema keyword.
+--
+-- Behavior:
+-- - If $schema is present and found in registry: Use that dialect
+-- - If $schema is present but NOT in registry: Error (even for standard URIs)
+-- - If no $schema: Use default parsing (Draft 2020-12)
+--
+-- When using a dialect registry, ALL dialects must be explicitly registered.
+-- Use 'standardDialectRegistry' or 'standardRegistry' to get standard dialects.
+-- This ensures explicit control over which dialects are accepted.
+--
+-- __Dialect Configuration__:
+--
+-- The dialect's 'dialectUnknownKeywords' setting is applied to parsing,
+-- controlling how unknown keywords are handled. See 'parseSchemaWithConfig'
+-- for details on unknown keyword modes.
+--
+-- @since 0.1.0.0
+parseSchemaWithDialectRegistry
+  :: VocabularyRegistry  -- ^ Registry containing available dialects
+  -> Value               -- ^ JSON value to parse
+  -> Either ParseError Schema
+parseSchemaWithDialectRegistry registry val = do
+  -- Extract $schema URI if present
+  let mSchemaURI = extractSchemaURI val
+  
+  -- Try to resolve dialect from registry
+  case mSchemaURI of
+    Just uri -> case lookupDialect uri registry of
+      Just dialect -> do
+        -- Found dialect - parse with its configuration
+        let parseConfig = ParseConfig
+              { parseUnknownKeywordMode = dialectUnknownKeywords dialect
+              }
+        schema <- parseSchemaWithVersion (dialectVersion dialect) val
+        -- Apply unknown keyword mode after parsing
+        applyUnknownKeywordMode parseConfig schema
+      Nothing -> 
+        -- Dialect not in registry - error
+        Left $ ParseError
+          { parseErrorPath = emptyPointer
+          , parseErrorMessage = "Unregistered dialect: " <> uri <> ". " <> 
+                               "Dialect must be registered in the dialect registry. " <>
+                               "Use standardDialectRegistry to include standard JSON Schema dialects."
+          , parseErrorContext = Nothing
+          }
+    Nothing -> do
+      -- No $schema - use default parsing
+      parseSchema val
+
+-- | Apply unknown keyword mode to a parsed schema
+applyUnknownKeywordMode :: ParseConfig -> Schema -> Either ParseError Schema
+applyUnknownKeywordMode config schema =
+  case (parseUnknownKeywordMode config, schemaExtensions schema) of
+    -- ErrorOnUnknown: fail if extensions present
+    (ErrorOnUnknown, exts) | not (Map.null exts) ->
+      let keywords = Map.keys exts
+          keywordList = T.intercalate ", " keywords
+      in Left $ ParseError emptyPointer
+           ("Unknown keywords (strict mode): " <> keywordList <>
+            ". These keywords are not part of the JSON Schema specification. " <>
+            "Use CollectUnknown mode if these are intentional extensions.")
+           Nothing
+    
+    -- IgnoreUnknown: clear extensions
+    (IgnoreUnknown, _) -> Right schema { schemaExtensions = Map.empty }
+    
+    -- WarnUnknown or CollectUnknown: keep extensions
+    _ -> Right schema
+
+-- | Parse a schema with explicit version and dialect registry
+--
+-- This variant allows overriding the version while still looking up
+-- dialect information for validation configuration.
+parseSchemaWithDialectRegistryAndVersion
+  :: VocabularyRegistry  -- ^ Registry containing available dialects
+  -> JsonSchemaVersion   -- ^ Explicit version to use
+  -> Value               -- ^ JSON value to parse
+  -> Either ParseError Schema
+parseSchemaWithDialectRegistryAndVersion registry version val = do
+  parseSchemaWithVersion version val
+
+-- | Resolve the dialect for a parsed schema
+--
+-- Given a schema and a dialect registry, this function looks up the dialect
+-- based on the schemaMetaschemaURI. Returns Nothing if:
+-- - The schema has no $schema declaration
+-- - The dialect is not found in the registry
+--
+-- This is useful during validation to access dialect-specific configuration.
+resolveDialectFromSchema
+  :: VocabularyRegistry  -- ^ Registry containing available dialects
+  -> Schema              -- ^ Parsed schema
+  -> Maybe Dialect
+resolveDialectFromSchema registry schema =
+  schemaMetaschemaURI schema >>= \uri -> lookupDialect uri registry
+
+-- | Extract $schema URI from a JSON value
+extractSchemaURI :: Value -> Maybe Text
+extractSchemaURI (Object obj) = case KeyMap.lookup "$schema" obj of
+  Just (String uri) -> Just uri
+  _ -> Nothing
+extractSchemaURI _ = Nothing
 

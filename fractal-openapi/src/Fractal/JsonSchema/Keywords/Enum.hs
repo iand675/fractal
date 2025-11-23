@@ -1,22 +1,54 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
--- | Enum keyword validation
+-- | Implementation of the 'enum' keyword
 --
--- Validates the 'enum' keyword which constrains a value to one of a fixed set
--- of allowed values.
+-- The enum keyword requires that the instance value is equal to one of
+-- the elements in the specified array. Values are compared using JSON equality.
 module Fractal.JsonSchema.Keywords.Enum
-  ( validateEnumConstraint
+  ( enumKeyword
+    -- * Backward compatibility
+  , validateEnumConstraint
   ) where
 
-import Fractal.JsonSchema.Types
-import Data.Aeson (Value)
+import Data.Aeson (Value(..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Typeable (Typeable)
+import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 
--- | Validate enum constraint
---
--- The enum keyword validates that a value is equal to one of the elements
--- in the specified array. Values are compared using JSON equality.
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure)
+
+-- | Compiled data for the 'enum' keyword
+data EnumData = EnumData
+  { enumAllowedValues :: [Value]
+  } deriving (Show, Eq, Typeable)
+
+-- | Compile function for 'enum' keyword
+compileEnum :: CompileFunc EnumData
+compileEnum value _schema _ctx = case value of
+  Array arr -> Right $ EnumData { enumAllowedValues = toList arr }
+  _ -> Left "enum must be an array"
+
+-- | Validate function for 'enum' keyword
+validateEnum :: ValidateFunc EnumData
+validateEnum _recursiveValidator (EnumData allowedValues) _ctx actual =
+  if actual `elem` allowedValues
+    then []
+    else ["Value not in enum: " <> T.pack (show actual)]
+
+-- | The 'enum' keyword definition
+enumKeyword :: KeywordDefinition
+enumKeyword = KeywordDefinition
+  { keywordName = "enum"
+  , keywordScope = AnyScope
+  , keywordCompile = compileEnum
+  , keywordValidate = validateEnum
+  , keywordNavigation = NoNavigation
+  }
+
+-- | Backward compatibility: validate enum constraint from SchemaObject
 validateEnumConstraint :: SchemaObject -> Value -> ValidationResult
 validateEnumConstraint obj val = case schemaEnum obj of
   Nothing -> ValidationSuccess mempty

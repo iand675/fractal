@@ -1,4 +1,5 @@
 {-# LANGUAGE Trustworthy #-}
+{-# LANGUAGE NoPatternSynonyms #-}
 -- | Pure interface to ECMA262 regular expressions
 --
 -- This module provides an observably pure interface to the underlying
@@ -79,18 +80,18 @@ makeRegex pat = case compile (BS8.pack pat) [] of
 -- @
 --   "hello" =~ "^h.*o$" :: Bool
 -- @
-class MatchLike source pattern where
-  (=~) :: source -> pattern -> Bool
+class MatchLike source pat where
+  (=~) :: source -> pat -> Bool
 
 -- Match String against String pattern
 instance MatchLike String String where
-  source =~ pattern = case compile (BS8.pack pattern) [] of
+  source =~ pat = case compile (BS8.pack pat) [] of
     Right regex -> test regex (BS8.pack source)
     Left _ -> False
 
 -- Match Text against Text pattern
 instance MatchLike T.Text T.Text where
-  source =~ pattern = case compileText pattern [] of
+  source =~ pat = case compileText pat [] of
     Right regex -> test regex (TE.encodeUtf8 source)
     Left _ -> False
 
