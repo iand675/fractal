@@ -152,7 +152,8 @@ composeDialect name version vocabSpecs formatBehavior unknownMode reg = do
       -- No conflicts, create dialect
       let vocabMap = Map.fromList vocabSpecs
       Right $ Dialect
-        { dialectVersion = version
+        { dialectURI = defaultDialectURI version
+        , dialectVersion = version
         , dialectName = name
         , dialectVocabularies = vocabMap
         , dialectDefaultFormat = formatBehavior

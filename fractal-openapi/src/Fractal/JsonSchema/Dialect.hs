@@ -2,22 +2,49 @@
 --
 -- Dialect definitions for each supported JSON Schema version.
 -- A dialect specifies which vocabularies are enabled and how keywords behave.
+--
+-- = Dialect Composition
+--
+-- Dialects compose vocabularies (collections of keywords) with specific validation behaviors:
+--
+-- * **Format behavior**: Whether 'format' keyword is an assertion or annotation
+-- * **Unknown keyword mode**: How to handle unrecognized keywords
+-- * **Vocabulary requirements**: Which vocabularies are required vs optional
+--
+-- = Invariants
+--
+-- A valid dialect must satisfy:
+--
+-- 1. Dialect URI must be an absolute URI
+-- 2. All vocabulary URIs must be resolvable (when used with a VocabularyRegistry)
+-- 3. No keyword conflicts between composed vocabularies
 module Fractal.JsonSchema.Dialect
-  ( Dialect(..)
+  ( -- * Core Types
+    Dialect(..)
   , FormatBehavior(..)
   , UnknownKeywordMode(..)
+    -- * Predefined Dialects
   , draft04Dialect
   , draft06Dialect
   , draft07Dialect
   , draft201909Dialect
   , draft202012Dialect
-  , dialectURI
+    -- * Validation
+  , validateDialect
+  , validateDialectURI
+  , DialectError(..)
+    -- * Helpers
+  , defaultDialectURI
   ) where
 
 import Fractal.JsonSchema.Types
+import Fractal.JsonSchema.Vocabulary.Types (VocabularyURI, VocabularyRegistry)
+import qualified Fractal.JsonSchema.Vocabulary.Registry as VocabReg
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.List (intercalate)
 
 -- | Format keyword behavior
 data FormatBehavior
@@ -34,28 +61,157 @@ data UnknownKeywordMode
   deriving (Eq, Show, Ord, Enum, Bounded)
 
 -- | A dialect is a complete configuration of vocabularies
+--
+-- A dialect defines a specific JSON Schema variant by composing vocabularies
+-- and specifying validation behavior (format handling, unknown keywords, etc.)
+--
+-- Invariants (checked by 'validateDialect'):
+--
+-- * 'dialectURI' must be an absolute URI
+-- * All vocabulary URIs in 'dialectVocabularies' must be resolvable
+-- * No keyword conflicts between composed vocabularies
 data Dialect = Dialect
-  { dialectVersion :: JsonSchemaVersion
+  { dialectURI :: Text
+    -- ^ Unique identifier for this dialect (must be absolute URI)
+  , dialectVersion :: JsonSchemaVersion
+    -- ^ JSON Schema version this dialect is based on
   , dialectName :: Text
-  , dialectVocabularies :: Map Text Bool  -- URI -> required?
+    -- ^ Human-readable name
+  , dialectVocabularies :: Map VocabularyURI Bool
+    -- ^ Vocabularies in this dialect (URI -> required?)
+    -- Required vocabularies cause schema processing to fail if not recognized
   , dialectDefaultFormat :: FormatBehavior
+    -- ^ How to handle 'format' keyword by default
   , dialectUnknownKeywords :: UnknownKeywordMode
+    -- ^ How to handle unrecognized keywords
   }
   deriving (Eq, Show)
 
--- | Get URI for a dialect
-dialectURI :: Dialect -> Text
-dialectURI d = case dialectVersion d of
-  Draft04 -> "http://json-schema.org/draft-04/schema#"
-  Draft06 -> "http://json-schema.org/draft-06/schema#"
-  Draft07 -> "http://json-schema.org/draft-07/schema#"
-  Draft201909 -> "https://json-schema.org/draft/2019-09/schema"
-  Draft202012 -> "https://json-schema.org/draft/2020-12/schema"
+-- | Errors that can occur when validating or composing dialects
+data DialectError
+  = InvalidDialectURI Text Text
+    -- ^ URI is not absolute (dialect URI, reason)
+  | UnresolvableVocabulary VocabularyURI
+    -- ^ Vocabulary URI cannot be resolved
+  | KeywordConflicts [(Text, [VocabularyURI])]
+    -- ^ Keyword conflicts between vocabularies (keyword, conflicting vocab URIs)
+  deriving (Eq, Show)
+
+-- | Validate that a dialect satisfies all invariants
+--
+-- Checks:
+--
+-- 1. Dialect URI is absolute
+-- 2. All vocabulary URIs can be resolved in the given registry
+-- 3. No keyword conflicts between vocabularies
+validateDialect :: VocabularyRegistry -> Dialect -> Either DialectError ()
+validateDialect registry dialect = do
+  -- Check dialect URI is absolute
+  validateDialectURI (dialectURI dialect)
+  
+  -- Check all vocabulary URIs are resolvable
+  let vocabURIs = Map.keys (dialectVocabularies dialect)
+  mapM_ (checkVocabularyResolvable registry) vocabURIs
+  
+  -- Check for keyword conflicts
+  checkNoKeywordConflicts registry vocabURIs
+
+-- | Validate that a dialect URI is absolute
+validateDialectURI :: Text -> Either DialectError ()
+validateDialectURI uri
+  | T.null uri = Left $ InvalidDialectURI uri "URI is empty"
+  | "http://" `T.isPrefixOf` uri || "https://" `T.isPrefixOf` uri = Right ()
+  | otherwise = Left $ InvalidDialectURI uri "URI must be absolute (http:// or https://)"
+
+-- | Check if a vocabulary can be resolved in the registry
+checkVocabularyResolvable :: VocabularyRegistry -> VocabularyURI -> Either DialectError ()
+checkVocabularyResolvable registry uri =
+  case VocabReg.lookupVocabulary uri registry of
+    Just _ -> Right ()
+    Nothing -> Left $ UnresolvableVocabulary uri
+
+-- | Check that vocabularies don't have keyword conflicts
+checkNoKeywordConflicts :: VocabularyRegistry -> [VocabularyURI] -> Either DialectError ()
+checkNoKeywordConflicts registry uris = do
+  let vocabs = [v | uri <- uris, Just v <- [VocabReg.lookupVocabulary uri registry]]
+      conflicts = VocabReg.detectKeywordConflicts vocabs
+  case conflicts of
+    [] -> Right ()
+    cs -> Left $ KeywordConflicts
+            [ (VocabReg.conflictKeyword c, VocabReg.conflictVocabularies c)
+            | c <- cs
+            ]
+
+-- | Get the default dialect URI for a JSON Schema version
+--
+-- Returns the standard URI for each JSON Schema version:
+--
+-- * Draft-04: http://json-schema.org/draft-04/schema#
+-- * Draft-06: http://json-schema.org/draft-06/schema#
+-- * Draft-07: http://json-schema.org/draft-07/schema#
+-- * Draft 2019-09: https://json-schema.org/draft/2019-09/schema
+-- * Draft 2020-12: https://json-schema.org/draft/2020-12/schema
+--
+-- This is useful when composing dialects from vocabularies without a custom URI.
+defaultDialectURI :: JsonSchemaVersion -> Text
+defaultDialectURI Draft04 = "http://json-schema.org/draft-04/schema#"
+defaultDialectURI Draft06 = "http://json-schema.org/draft-06/schema#"
+defaultDialectURI Draft07 = "http://json-schema.org/draft-07/schema#"
+defaultDialectURI Draft201909 = "https://json-schema.org/draft/2019-09/schema"
+defaultDialectURI Draft202012 = "https://json-schema.org/draft/2020-12/schema"
+
+-- | Compose a dialect from vocabularies with validation
+--
+-- This is the recommended way to construct a dialect. It validates that:
+--
+-- * The dialect URI is absolute
+-- * All vocabularies can be resolved
+-- * There are no keyword conflicts
+--
+-- Example:
+--
+-- @
+-- composeDialect
+--   registry
+--   "https://example.com/schema/2024"
+--   Draft202012
+--   "Example Dialect"
+--   [ ("https://json-schema.org/draft/2020-12/vocab/core", True)
+--   , ("https://json-schema.org/draft/2020-12/vocab/validation", True)
+--   , ("https://example.com/vocab/business/v1", False)
+--   ]
+--   FormatAssertion
+--   ErrorOnUnknown
+-- @
+composeDialect
+  :: VocabularyRegistry
+  -> Text  -- ^ Dialect URI
+  -> JsonSchemaVersion
+  -> Text  -- ^ Dialect name
+  -> [(VocabularyURI, Bool)]  -- ^ Vocabularies (URI, required?)
+  -> FormatBehavior
+  -> UnknownKeywordMode
+  -> Either DialectError Dialect
+composeDialect registry uri version name vocabs formatBehavior unknownMode = do
+  let dialect = Dialect
+        { dialectURI = uri
+        , dialectVersion = version
+        , dialectName = name
+        , dialectVocabularies = Map.fromList vocabs
+        , dialectDefaultFormat = formatBehavior
+        , dialectUnknownKeywords = unknownMode
+        }
+  validateDialect registry dialect
+  return dialect
 
 -- | Draft-04 dialect
+--
+-- JSON Schema Draft-04 predates the vocabulary system.
+-- Format is annotation-only by default.
 draft04Dialect :: Dialect
 draft04Dialect = Dialect
-  { dialectVersion = Draft04
+  { dialectURI = "http://json-schema.org/draft-04/schema#"
+  , dialectVersion = Draft04
   , dialectName = "JSON Schema Draft-04"
   , dialectVocabularies = Map.empty  -- No $vocabulary keyword in draft-04
   , dialectDefaultFormat = FormatAnnotation
@@ -63,9 +219,13 @@ draft04Dialect = Dialect
   }
 
 -- | Draft-06 dialect (adds const, propertyNames)
+--
+-- JSON Schema Draft-06 predates the vocabulary system.
+-- Format is annotation-only by default.
 draft06Dialect :: Dialect
 draft06Dialect = Dialect
-  { dialectVersion = Draft06
+  { dialectURI = "http://json-schema.org/draft-06/schema#"
+  , dialectVersion = Draft06
   , dialectName = "JSON Schema Draft-06"
   , dialectVocabularies = Map.empty  -- No $vocabulary keyword in draft-06
   , dialectDefaultFormat = FormatAnnotation
@@ -73,9 +233,13 @@ draft06Dialect = Dialect
   }
 
 -- | Draft-07 dialect (adds if/then/else, readOnly/writeOnly, $comment)
+--
+-- JSON Schema Draft-07 predates the vocabulary system.
+-- Format is annotation-only by default.
 draft07Dialect :: Dialect
 draft07Dialect = Dialect
-  { dialectVersion = Draft07
+  { dialectURI = "http://json-schema.org/draft-07/schema#"
+  , dialectVersion = Draft07
   , dialectName = "JSON Schema Draft-07"
   , dialectVocabularies = Map.empty  -- No $vocabulary keyword in draft-07
   , dialectDefaultFormat = FormatAnnotation
@@ -83,9 +247,14 @@ draft07Dialect = Dialect
   }
 
 -- | Draft 2019-09 dialect (adds $vocabulary, unevaluated*, dependent*)
+--
+-- First version to support the $vocabulary keyword.
+-- Includes core, applicator, and validation vocabularies as required.
+-- Format is annotation-only by default (use format-assertion vocabulary for validation).
 draft201909Dialect :: Dialect
 draft201909Dialect = Dialect
-  { dialectVersion = Draft201909
+  { dialectURI = "https://json-schema.org/draft/2019-09/schema"
+  , dialectVersion = Draft201909
   , dialectName = "JSON Schema 2019-09"
   , dialectVocabularies = Map.fromList
       [ ("https://json-schema.org/draft/2019-09/vocab/core", True)
@@ -100,9 +269,14 @@ draft201909Dialect = Dialect
   }
 
 -- | Draft 2020-12 dialect (adds prefixItems, $dynamicRef)
+--
+-- Latest JSON Schema specification with improved vocabulary system.
+-- Separates format into annotation and assertion vocabularies.
+-- Format is annotation-only by default (use format-assertion vocabulary for validation).
 draft202012Dialect :: Dialect
 draft202012Dialect = Dialect
-  { dialectVersion = Draft202012
+  { dialectURI = "https://json-schema.org/draft/2020-12/schema"
+  , dialectVersion = Draft202012
   , dialectName = "JSON Schema 2020-12"
   , dialectVocabularies = Map.fromList
       [ ("https://json-schema.org/draft/2020-12/vocab/core", True)
