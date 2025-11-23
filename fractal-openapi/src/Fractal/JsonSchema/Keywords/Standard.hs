@@ -60,6 +60,7 @@ import qualified Fractal.JsonSchema.Keywords.Navigation as Nav
 import qualified Fractal.JsonSchema.Keywords.AllOf as AllOf
 import qualified Fractal.JsonSchema.Keywords.AnyOf as AnyOf
 import qualified Fractal.JsonSchema.Keywords.OneOf as OneOf
+import qualified Fractal.JsonSchema.Keywords.Not as Not
 -- Draft-04 specific keywords
 import qualified Fractal.JsonSchema.Keywords.Draft04.Minimum as D04
 import qualified Fractal.JsonSchema.Keywords.Draft04.Maximum as D04
@@ -102,7 +103,7 @@ standardKeywordRegistry =
   registerKeyword AllOf.allOfKeyword $
   registerKeyword AnyOf.anyOfKeyword $
   registerKeyword OneOf.oneOfKeyword $
-  registerKeyword Nav.notKeyword $
+  registerKeyword Not.notKeyword $
   registerKeyword Nav.ifKeyword $
   registerKeyword Nav.thenKeyword $
   registerKeyword Nav.elseKeyword $
@@ -149,7 +150,7 @@ draft04Registry =
   registerKeyword AllOf.allOfKeyword $
   registerKeyword AnyOf.anyOfKeyword $
   registerKeyword OneOf.oneOfKeyword $
-  registerKeyword Nav.notKeyword $
+  registerKeyword Not.notKeyword $
   registerKeyword Nav.ifKeyword $
   registerKeyword Nav.thenKeyword $
   registerKeyword Nav.elseKeyword $
