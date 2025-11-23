@@ -27,6 +27,8 @@ module Fractal.JsonSchema.Validator.Result
   , SomeAnnotation(..)
   , emptyAnnotationCollection
   , addAnnotation
+  , addAnnotations
+  , mergeAnnotations
   , getAnnotations
   , getAnnotationsOfType
     -- * Output Formats
@@ -119,6 +121,22 @@ getAnnotationsOfType (AnnotationCollection m) =
      , ty == targetType
      , Just value <- [fromDynamic (toDyn val)]
      ]
+
+-- | Merge two annotation collections
+mergeAnnotations :: AnnotationCollection -> AnnotationCollection -> AnnotationCollection
+mergeAnnotations (AnnotationCollection m1) (AnnotationCollection m2) =
+  AnnotationCollection (Map.unionWith (++) m1 m2)
+
+instance Semigroup AnnotationCollection where
+  (<>) = mergeAnnotations
+
+instance Monoid AnnotationCollection where
+  mempty = emptyAnnotationCollection
+
+-- | Add multiple annotations at once (batch operation)
+addAnnotations :: Typeable a => JSONPointer -> [a] -> AnnotationCollection -> AnnotationCollection
+addAnnotations path values col =
+  foldr (addAnnotation path) col values
 
 -- | Output format for validation results
 --

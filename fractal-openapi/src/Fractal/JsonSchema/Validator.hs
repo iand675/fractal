@@ -63,7 +63,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Scientific as Sci
 import Data.Foldable (toList)
-import Data.Maybe (fromJust, fromMaybe, isJust, listToMaybe, maybeToList)
+import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, listToMaybe, maybeToList)
 import Control.Monad (mplus)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
@@ -297,6 +297,25 @@ arrayIndexPointer idx = JSONPointer [T.pack (show idx)]
 -- | Create a JSON Pointer for an object property
 propertyPointer :: Text -> JSONPointer
 propertyPointer prop = JSONPointer [prop]
+
+-- | Collect metadata annotations from schema (title, description, default, etc.)
+collectMetadataAnnotations :: SchemaObject -> ValidationAnnotations
+collectMetadataAnnotations obj =
+  let anns = schemaAnnotations obj
+      annMap = Map.fromList $ catMaybes
+        [ ("title",) . Aeson.String <$> annotationTitle anns
+        , ("description",) . Aeson.String <$> annotationDescription anns
+        , ("default",) <$> annotationDefault anns
+        , if null (annotationExamples anns)
+            then Nothing
+            else Just ("examples", Aeson.Array $ fromList $ annotationExamples anns)
+        , ("deprecated",) . Aeson.Bool <$> annotationDeprecated anns
+        , ("readOnly",) . Aeson.Bool <$> annotationReadOnly anns
+        , ("writeOnly",) . Aeson.Bool <$> annotationWriteOnly anns
+        ]
+  in if Map.null annMap
+       then mempty
+       else ValidationAnnotations $ Map.singleton emptyPointer annMap
 
 -- | Validate against object schema
 validateAgainstObject :: ValidationContext -> ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
@@ -648,8 +667,10 @@ validateAgainstObject parentCtx ctx schema obj val =
             ]
           -- Combine results to get accumulated annotations (including ref annotations)
           combinedResult = combineResults results
+          -- Collect metadata annotations from schema
+          metadataAnns = collectMetadataAnnotations obj'
           combinedWithRefs = case combinedResult of
-            ValidationSuccess anns -> ValidationSuccess (refAnns <> anns)
+            ValidationSuccess anns -> ValidationSuccess (refAnns <> anns <> metadataAnns)
             ValidationFailure errs -> ValidationFailure errs
       in case combinedWithRefs of
            ValidationSuccess anns ->
