@@ -35,9 +35,15 @@ module Fractal.JsonSchema.Dialect
   , DialectError(..)
     -- * Helpers
   , defaultDialectURI
+  , applyDialectToConfig
   ) where
 
 import Fractal.JsonSchema.Types
+  ( JsonSchemaVersion(..)
+  , FormatBehavior(..)
+  , UnknownKeywordMode(..)
+  , ValidationConfig(..)
+  )
 import Fractal.JsonSchema.Vocabulary.Types (VocabularyURI, VocabularyRegistry)
 import qualified Fractal.JsonSchema.Vocabulary.Registry as VocabReg
 import Data.Text (Text)
@@ -46,19 +52,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.List (intercalate)
 
--- | Format keyword behavior
-data FormatBehavior
-  = FormatAssertion      -- ^ Format is validation constraint
-  | FormatAnnotation     -- ^ Format is annotation only
-  deriving (Eq, Show, Ord, Enum, Bounded)
-
--- | Unknown keyword handling strategy
-data UnknownKeywordMode
-  = IgnoreUnknown        -- ^ Silently ignore
-  | WarnUnknown          -- ^ Emit warnings but continue
-  | ErrorOnUnknown       -- ^ Fail parsing
-  | CollectUnknown       -- ^ Collect in extensions map
-  deriving (Eq, Show, Ord, Enum, Bounded)
+-- Re-export for convenience (types are defined in Types.hs to avoid circular dependencies)
 
 -- | A dialect is a complete configuration of vocabularies
 --
@@ -319,5 +313,52 @@ draft202012Dialect = Dialect
       ]
   , dialectDefaultFormat = FormatAnnotation
   , dialectUnknownKeywords = CollectUnknown
+  }
+
+-- | Apply dialect settings to a validation configuration
+--
+-- Updates the given 'ValidationConfig' with dialect-specific behavior:
+--
+-- * Sets 'validationDialectFormatBehavior' to the dialect's format behavior
+-- * Sets 'validationVersion' to the dialect's schema version
+--
+-- This allows validating schemas with dialect-specific semantics after parsing
+-- them with 'parseSchemaWithDialectRegistry'.
+--
+-- __Usage Example__:
+--
+-- @
+-- import Fractal.JsonSchema.Parser (parseSchemaWithDialectRegistry)
+-- import Fractal.JsonSchema.Validator (validateValue, defaultValidationConfig)
+-- import Fractal.JsonSchema.Vocabulary (standardDialectRegistry)
+-- import Fractal.JsonSchema.Dialect (applyDialectToConfig)
+-- import Fractal.JsonSchema.Parser (resolveDialectFromSchema)
+--
+-- -- Parse schema with dialect
+-- schema <- parseSchemaWithDialectRegistry standardDialectRegistry schemaJson
+--
+-- -- Get the dialect and apply it to config
+-- case resolveDialectFromSchema standardDialectRegistry schema of
+--   Just dialect ->
+--     let config = applyDialectToConfig dialect defaultValidationConfig
+--     in validateValue config schema value
+--   Nothing ->
+--     validateValue defaultValidationConfig schema value
+-- @
+--
+-- __Behavior__:
+--
+-- * __Format behavior__: The dialect's 'dialectDefaultFormat' overrides the
+--   config's 'validationFormatAssertion' via 'validationDialectFormatBehavior'
+--
+-- * __Schema version__: The dialect's 'dialectVersion' is set as 'validationVersion'
+--
+-- * __Unknown keywords__: Currently not applied (requires parser-level integration)
+--
+-- @since 0.1.0.0
+applyDialectToConfig :: Dialect -> ValidationConfig -> ValidationConfig
+applyDialectToConfig dialect config = config
+  { validationDialectFormatBehavior = Just (dialectDefaultFormat dialect)
+  , validationVersion = dialectVersion dialect
   }
 

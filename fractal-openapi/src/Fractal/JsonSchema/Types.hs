@@ -53,6 +53,8 @@ module Fractal.JsonSchema.Types
   , ValidationError(..)
   , ValidationContext(..)
   , ValidationConfig(..)
+  , FormatBehavior(..)
+  , UnknownKeywordMode(..)
   , SchemaRegistry(..)
   , emptyRegistry
   , registerSchemaInRegistry
@@ -1070,13 +1072,139 @@ type CustomValidator = Value -> Either ValidationError ()
 -- This allows pluggable loading strategies (HTTP, file system, cache, etc.)
 type ReferenceLoader = Text -> IO (Either Text Schema)
 
+-- | Format keyword behavior
+--
+-- Controls how the @format@ keyword is interpreted during validation.
+--
+-- __JSON Schema Specification Compliance__:
+--
+-- * __'FormatAssertion'__: Format validation failures cause schema validation to fail.
+--   This is enabled via the @format-assertion@ vocabulary in JSON Schema 2019-09+.
+--   Spec-compliant for implementations that support the format-assertion vocabulary.
+--
+-- * __'FormatAnnotation'__: Format validation failures are collected as annotations only.
+--   This is the __default behavior__ in JSON Schema 2019-09 and 2020-12.
+--   Spec-compliant as the default format behavior.
+--
+-- __Historical Context__:
+--
+-- * JSON Schema Draft-07 and earlier: The spec was ambiguous, and most implementations
+--   treated format as assertions.
+-- * JSON Schema 2019-09+: Format is explicitly annotation-only by default, with an
+--   optional @format-assertion@ vocabulary to enable assertion behavior.
+--
+-- __Usage__:
+--
+-- This setting can be configured via:
+--
+-- 1. Dialect configuration ('dialectDefaultFormat' in 'Dialect')
+-- 2. Global validation config ('validationFormatAssertion' in 'ValidationConfig')
+-- 3. Per-schema via @$vocabulary@ declarations (when using dialect-aware parsing)
+--
+-- @since 0.1.0.0
+data FormatBehavior
+  = FormatAssertion
+    -- ^ Format validation failures __cause schema validation to fail__.
+    --
+    -- Use this for strict validation where format violations are errors.
+    -- This corresponds to enabling the @format-assertion@ vocabulary.
+  | FormatAnnotation
+    -- ^ Format validation failures are __collected as annotations only__.
+    --
+    -- Use this for permissive validation where format is informational.
+    -- This is the default behavior in JSON Schema 2019-09 and 2020-12.
+  deriving (Eq, Show, Ord, Enum, Bounded, Generic)
+
+-- | Unknown keyword handling strategy
+--
+-- Controls how unrecognized keywords (not in registered vocabularies) are handled
+-- during schema parsing.
+--
+-- __JSON Schema Specification Compliance__:
+--
+-- * __'IgnoreUnknown'__: Spec-compliant. Unknown keywords are silently ignored.
+--
+-- * __'CollectUnknown'__: Spec-compliant. Unknown keywords are collected in
+--   'schemaExtensions' for introspection but don't affect validation.
+--   This is the default behavior.
+--
+-- * __'WarnUnknown'__: Extension (non-standard). Emits warnings for unknown keywords
+--   but continues parsing. Useful for development and debugging.
+--   Does not violate spec compliance.
+--
+-- * __'ErrorOnUnknown'__: Extension (non-standard). Parsing fails when encountering
+--   unknown keywords. Common in strict implementations for catching typos and
+--   configuration errors. __Users should be aware this is stricter than the spec requires__.
+--
+-- __Important__: This setting is separate from @$vocabulary@ validation:
+--
+-- * Required vocabularies (via @$vocabulary@) __always__ cause failure if not understood
+-- * Optional vocabularies are ignored per spec
+-- * Unknown keywords are keywords not in __any__ registered vocabulary
+--
+-- __Usage__:
+--
+-- Configure via:
+--
+-- 1. Dialect configuration ('dialectUnknownKeywords' in 'Dialect')
+-- 2. Parser-specific settings (when available)
+--
+-- __Recommendations__:
+--
+-- * __Production__: Use 'CollectUnknown' (default, spec-compliant)
+-- * __Development__: Use 'WarnUnknown' to catch potential issues
+-- * __Strict validation__: Use 'ErrorOnUnknown' to enforce clean schemas
+-- * __Permissive parsing__: Use 'IgnoreUnknown' to skip unknown keywords entirely
+--
+-- @since 0.1.0.0
+data UnknownKeywordMode
+  = IgnoreUnknown
+    -- ^ Silently ignore unknown keywords (not collected in extensions).
+    --
+    -- __Spec-compliant__: Unknown keywords have no effect on validation.
+  | WarnUnknown
+    -- ^ Emit warnings for unknown keywords but continue parsing.
+    --
+    -- __Extension (non-standard)__: Helpful for development.
+    -- Warnings may be logged or collected separately.
+  | ErrorOnUnknown
+    -- ^ Fail parsing when unknown keywords are encountered.
+    --
+    -- __Extension (non-standard)__: Stricter than spec requires.
+    -- Use to catch typos and enforce vocabulary usage.
+  | CollectUnknown
+    -- ^ Collect unknown keywords in 'schemaExtensions' map.
+    --
+    -- __Spec-compliant__ (default): Unknown keywords available for introspection.
+  deriving (Eq, Show, Ord, Enum, Bounded, Generic)
+
 -- | Configuration for validation behavior
+--
+-- This configuration controls various aspects of JSON Schema validation,
+-- including format behavior, content validation, and custom extensions.
 data ValidationConfig = ValidationConfig
   { validationVersion :: JsonSchemaVersion
     -- ^ Schema version to validate against
   
   , validationFormatAssertion :: Bool
-    -- ^ Treat format as assertion (True) or annotation (False)
+    -- ^ Treat format as assertion (True) or annotation (False).
+    --
+    -- __Deprecated__: Use 'validationDialectFormatBehavior' for more precise control.
+    -- This field is kept for backward compatibility.
+    --
+    -- When 'validationDialectFormatBehavior' is 'Nothing', this boolean is used.
+
+  , validationDialectFormatBehavior :: Maybe FormatBehavior
+    -- ^ Dialect-specific format behavior (overrides 'validationFormatAssertion').
+    --
+    -- * 'Just' 'FormatAssertion': Format validation failures cause schema failures
+    -- * 'Just' 'FormatAnnotation': Format validation failures are annotations only
+    -- * 'Nothing': Use 'validationFormatAssertion' for backward compatibility
+    --
+    -- This field is typically set when parsing with 'parseSchemaWithDialectRegistry'
+    -- to respect the dialect's format behavior configuration.
+    --
+    -- @since 0.1.0.0
 
   , validationContentAssertion :: Bool
     -- ^ Treat contentEncoding/contentMediaType as assertion (True) or annotation (False)

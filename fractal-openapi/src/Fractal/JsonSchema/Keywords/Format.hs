@@ -32,9 +32,31 @@ import qualified Network.URI.Template.Parser as URITemplate
 
 -- | Validate format constraints
 --
--- Respects the validationFormatAssertion configuration flag:
--- - False (default): Format validation produces annotations only
--- - True: Format validation failures cause schema validation to fail
+-- __Format Behavior__:
+--
+-- The behavior is determined by the validation configuration:
+--
+-- 1. If 'validationDialectFormatBehavior' is set (from dialect configuration):
+--    * 'FormatAssertion': Format failures cause validation to fail
+--    * 'FormatAnnotation': Format failures are annotations only
+--
+-- 2. Otherwise, falls back to 'validationFormatAssertion':
+--    * 'True': Format failures cause validation to fail
+--    * 'False': Format failures are annotations only (default)
+--
+-- __JSON Schema Specification__:
+--
+-- * JSON Schema 2019-09+: Format is annotation-only by default
+-- * Format-assertion vocabulary: Optional vocabulary to enable format assertions
+-- * Draft-07 and earlier: Spec was ambiguous
+--
+-- __Implementation Notes__:
+--
+-- This function respects dialect-specific format behavior when schemas are parsed
+-- with 'parseSchemaWithDialectRegistry'. When no dialect is specified, it uses
+-- the global 'validationFormatAssertion' flag for backward compatibility.
+--
+-- @since 0.1.0.0
 validateFormatConstraints :: ValidationContext -> SchemaObject -> Value -> ValidationResult
 validateFormatConstraints ctx obj (String txt) =
   let validation = schemaValidation obj
@@ -42,7 +64,11 @@ validateFormatConstraints ctx obj (String txt) =
     Nothing -> ValidationSuccess mempty
     Just format ->
       let config = contextConfig ctx
-          shouldAssert = validationFormatAssertion config
+          -- Check dialect-specific format behavior first, fall back to boolean flag
+          shouldAssert = case validationDialectFormatBehavior config of
+            Just FormatAssertion -> True
+            Just FormatAnnotation -> False
+            Nothing -> validationFormatAssertion config
           result = validateFormatValue format txt
       in if shouldAssert
          then result  -- Format validation failures cause schema failure

@@ -91,6 +91,7 @@ defaultValidationConfig :: ValidationConfig
 defaultValidationConfig = ValidationConfig
   { validationVersion = Draft202012
   , validationFormatAssertion = False  -- Format as annotation
+  , validationDialectFormatBehavior = Nothing  -- No dialect override
   , validationContentAssertion = False  -- Content as annotation
   , validationShortCircuit = False     -- Collect all errors
   , validationCollectAnnotations = False
@@ -102,6 +103,7 @@ defaultValidationConfig = ValidationConfig
 strictValidationConfig :: ValidationConfig
 strictValidationConfig = defaultValidationConfig
   { validationFormatAssertion = True
+  , validationDialectFormatBehavior = Just FormatAssertion
   , validationContentAssertion = True
   , validationShortCircuit = False
   }
