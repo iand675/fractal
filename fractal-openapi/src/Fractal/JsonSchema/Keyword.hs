@@ -128,6 +128,6 @@ mkSimpleKeyword name scope parseValue validateValue =
     { keywordName = name
     , keywordScope = scope
     , keywordCompile = \val _schema _ctx -> parseValue val
-    , keywordValidate = \_ compiledData _ val -> validateValue compiledData val  -- Adapt to new signature
+    , keywordValidate = \_ compiledData _ val -> pure $ validateValue compiledData val  -- Adapt to new signature
     , keywordNavigation = NoNavigation
     }

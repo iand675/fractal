@@ -20,7 +20,7 @@ testCompile :: CompileFunc ()
 testCompile _ _ _ = Right ()
 
 testValidate :: ValidateFunc ()
-testValidate _ _ _ _ = []
+testValidate _ _ _ _ = pure []
 
 mkTestKeyword :: Text -> KeywordDefinition
 mkTestKeyword name = KeywordDefinition

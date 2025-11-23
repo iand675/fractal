@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'multipleOf' keyword
 --
 -- The multipleOf keyword requires that a numeric value is a multiple
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.MultipleOf
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -48,7 +50,7 @@ validateMultipleOf _recursiveValidator (MultipleOfData divisor) _ctx (Number n) 
           let reciprocal = 1 / divisorDouble
               isValidDivisor = reciprocal == fromIntegral (round reciprocal :: Integer)
           in if isValidDivisor
-             then []  -- Any integer is a multiple
+             then pure []  -- Any integer is a multiple
              else checkStandard  -- Fall back to standard check
         else checkStandard
       
@@ -58,10 +60,10 @@ validateMultipleOf _recursiveValidator (MultipleOfData divisor) _ctx (Number n) 
             remainder = quotient - fromIntegral (round quotient :: Integer)
             epsilon = 1e-10
         in if abs remainder < epsilon || abs (1 - remainder) < epsilon
-           then []
-           else ["Value is not a multiple of " <> T.pack (show divisor)]
+           then pure []
+           else pure ["Value is not a multiple of " <> T.pack (show divisor)]
   in handleOverflowCase
-validateMultipleOf _ _ _ _ = []  -- Only applies to numbers
+validateMultipleOf _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The 'multipleOf' keyword definition
 multipleOfKeyword :: KeywordDefinition

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'minItems' keyword
 --
 -- The minItems keyword requires that an array value has at least the
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.MinItems
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -33,9 +35,9 @@ validateMinItems :: ValidateFunc MinItemsData
 validateMinItems _recursiveValidator (MinItemsData minLen) _ctx (Array arr) =
   let arrLength = fromIntegral (length arr) :: Natural
   in if arrLength >= minLen
-     then []
-     else ["Array length " <> T.pack (show arrLength) <> " is less than minItems " <> T.pack (show minLen)]
-validateMinItems _ _ _ _ = []  -- Only applies to arrays
+     then pure []
+     else pure ["Array length " <> T.pack (show arrLength) <> " is less than minItems " <> T.pack (show minLen)]
+validateMinItems _ _ _ _ = pure []  -- Only applies to arrays
 
 -- | The 'minItems' keyword definition
 minItemsKeyword :: KeywordDefinition

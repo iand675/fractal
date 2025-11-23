@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'minLength' keyword
 --
 -- The minLength keyword requires that a string value has at least the
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.MinLength
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -30,9 +32,9 @@ compileMinLength value _schema _ctx = case value of
 validateMinLength :: ValidateFunc MinLengthData
 validateMinLength _recursiveValidator (MinLengthData minLen) _ctx (String txt) =
   if T.length txt >= minLen
-    then []
-    else ["String length " <> T.pack (show (T.length txt)) <> " is less than minLength " <> T.pack (show minLen)]
-validateMinLength _ _ _ _ = []  -- Only applies to strings
+    then pure []
+    else pure ["String length " <> T.pack (show (T.length txt)) <> " is less than minLength " <> T.pack (show minLen)]
+validateMinLength _ _ _ _ = pure []  -- Only applies to strings
 
 -- | The 'minLength' keyword definition
 minLengthKeyword :: KeywordDefinition

@@ -13,6 +13,7 @@ import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Types (Schema(..), schemaRawKeywords)
 import Data.Aeson (Value(..))
 import Data.Text (Text)
+import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 import qualified Data.Scientific as Sci
 import Data.Typeable (Typeable)
@@ -44,12 +45,12 @@ validateMaximum :: ValidateFunc MaximumData
 validateMaximum _recursiveValidator (MaximumData maxVal exclusive) _ctx (Number n) =
   if exclusive
     then if n < maxVal
-         then []
-         else ["Value " <> T.pack (show n) <> " must be less than maximum " <> T.pack (show maxVal)]
+         then pure []
+         else pure ["Value " <> T.pack (show n) <> " must be less than maximum " <> T.pack (show maxVal)]
     else if n <= maxVal
-         then []
-         else ["Value " <> T.pack (show n) <> " is greater than maximum " <> T.pack (show maxVal)]
-validateMaximum _ _ _ _ = []  -- Only applies to numbers
+         then pure []
+         else pure ["Value " <> T.pack (show n) <> " is greater than maximum " <> T.pack (show maxVal)]
+validateMaximum _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The Draft-04 'maximum' keyword definition
 maximumKeyword :: KeywordDefinition
@@ -78,7 +79,7 @@ compileExclusiveMaximum value _schema _ctx = case value of
 -- This keyword doesn't validate on its own - it only modifies
 -- the behavior of the 'maximum' keyword via adjacent data.
 validateExclusiveMaximum :: ValidateFunc ExclusiveMaximumData
-validateExclusiveMaximum _ _ _ _ = []
+validateExclusiveMaximum _ _ _ _ = pure []
 
 -- | The Draft-04 'exclusiveMaximum' keyword definition
 exclusiveMaximumKeyword :: KeywordDefinition

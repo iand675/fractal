@@ -13,6 +13,7 @@ module Fractal.JsonSchema.Keywords.AllOf
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Vector as V
 import Data.List.NonEmpty (NonEmpty)
@@ -49,8 +50,8 @@ compileAllOf value schema ctx = case value of
 validateAllOfKeyword :: ValidateFunc AllOfData
 validateAllOfKeyword recursiveValidator (AllOfData schemas) _ctx value =
   case validateAllOf recursiveValidator schemas value of
-    ValidationSuccess _ -> []
-    ValidationFailure errs -> validationErrorsToTexts errs
+    ValidationSuccess _ -> pure []
+    ValidationFailure errs -> pure $ validationErrorsToTexts errs
   where
     validationErrorsToTexts errs = [T.pack $ show errs]  -- TODO: proper error formatting
 

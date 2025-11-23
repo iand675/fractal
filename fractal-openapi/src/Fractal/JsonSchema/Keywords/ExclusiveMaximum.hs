@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'exclusiveMaximum' keyword (Draft-06+ standalone numeric)
 --
 -- The exclusiveMaximum keyword requires that a numeric value is strictly
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.ExclusiveMaximum
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -30,9 +32,9 @@ compileExclusiveMaximum value _schema _ctx = case value of
 validateExclusiveMaximum :: ValidateFunc ExclusiveMaximumData
 validateExclusiveMaximum _recursiveValidator (ExclusiveMaximumData maxVal) _ctx (Number n) =
   if n < maxVal
-    then []
-    else ["Value " <> T.pack (show n) <> " must be less than exclusiveMaximum " <> T.pack (show maxVal)]
-validateExclusiveMaximum _ _ _ _ = []  -- Only applies to numbers
+    then pure []
+    else pure ["Value " <> T.pack (show n) <> " must be less than exclusiveMaximum " <> T.pack (show maxVal)]
+validateExclusiveMaximum _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The 'exclusiveMaximum' keyword definition (Draft-06+ style)
 exclusiveMaximumKeyword :: KeywordDefinition

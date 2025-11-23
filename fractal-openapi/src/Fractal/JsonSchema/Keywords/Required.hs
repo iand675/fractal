@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'required' keyword
 --
 -- The required keyword specifies an array of property names that must
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.Required
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -42,9 +44,9 @@ validateRequired _recursiveValidator (RequiredData requiredProps) _ctx (Object o
   let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
       missingProps = Set.difference requiredProps presentProps
   in if Set.null missingProps
-     then []
-     else ["Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)]
-validateRequired _ _ _ _ = []  -- Only applies to objects
+     then pure []
+     else pure ["Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)]
+validateRequired _ _ _ _ = pure []  -- Only applies to objects
 
 -- | The 'required' keyword definition
 requiredKeyword :: KeywordDefinition

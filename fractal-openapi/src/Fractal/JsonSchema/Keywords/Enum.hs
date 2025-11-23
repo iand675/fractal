@@ -1,4 +1,5 @@
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Implementation of the 'enum' keyword
 --
@@ -11,6 +12,7 @@ module Fractal.JsonSchema.Keywords.Enum
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -35,8 +37,8 @@ compileEnum value _schema _ctx = case value of
 validateEnum :: ValidateFunc EnumData
 validateEnum _recursiveValidator (EnumData allowedValues) _ctx actual =
   if actual `elem` allowedValues
-    then []
-    else ["Value not in enum: " <> T.pack (show actual)]
+    then pure []
+    else pure ["Value not in enum: " <> T.pack (show actual)]
 
 -- | The 'enum' keyword definition
 enumKeyword :: KeywordDefinition

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'minProperties' keyword
 --
 -- The minProperties keyword requires that an object value has at least
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.MinProperties
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -34,9 +36,9 @@ validateMinProperties :: ValidateFunc MinPropertiesData
 validateMinProperties _recursiveValidator (MinPropertiesData minProps) _ctx (Object objMap) =
   let propCount = fromIntegral (KeyMap.size objMap) :: Natural
   in if propCount >= minProps
-     then []
-     else ["Object has " <> T.pack (show propCount) <> " properties, but minProperties is " <> T.pack (show minProps)]
-validateMinProperties _ _ _ _ = []  -- Only applies to objects
+     then pure []
+     else pure ["Object has " <> T.pack (show propCount) <> " properties, but minProperties is " <> T.pack (show minProps)]
+validateMinProperties _ _ _ _ = pure []  -- Only applies to objects
 
 -- | The 'minProperties' keyword definition
 minPropertiesKeyword :: KeywordDefinition

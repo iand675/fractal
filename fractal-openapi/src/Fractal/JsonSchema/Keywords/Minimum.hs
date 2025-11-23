@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'minimum' keyword
 --
 -- The minimum keyword requires that a numeric value is greater than or
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.Minimum
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -30,9 +32,9 @@ compileMinimum value _schema _ctx = case value of
 validateMinimum :: ValidateFunc MinimumData
 validateMinimum _recursiveValidator (MinimumData minVal) _ctx (Number n) =
   if n >= minVal
-    then []
-    else ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinimum _ _ _ _ = []  -- Only applies to numbers
+    then pure []
+    else pure ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
+validateMinimum _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The 'minimum' keyword definition
 minimumKeyword :: KeywordDefinition

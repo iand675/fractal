@@ -74,7 +74,7 @@ validateExtendedWithConfig config extSchema value =
       
       -- Validate with custom keywords
       kwCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-      customErrors = validateKeywords recursiveValidator (extendedCompiledKeywords extSchema) value kwCtx
+      customErrors = validateKeywords recursiveValidator (extendedCompiledKeywords extSchema) value kwCtx config
 
       -- Combine results
       overallValid = isSuccess standardResult && null customErrors

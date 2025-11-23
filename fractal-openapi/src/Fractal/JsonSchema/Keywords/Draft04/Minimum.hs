@@ -13,6 +13,7 @@ import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Types (Schema(..), schemaRawKeywords)
 import Data.Aeson (Value(..))
 import Data.Text (Text)
+import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 import qualified Data.Scientific as Sci
 import Data.Typeable (Typeable)
@@ -44,12 +45,12 @@ validateMinimum :: ValidateFunc MinimumData
 validateMinimum _recursiveValidator (MinimumData minVal exclusive) _ctx (Number n) =
   if exclusive
     then if n > minVal
-         then []
-         else ["Value " <> T.pack (show n) <> " must be greater than minimum " <> T.pack (show minVal)]
+         then pure []
+         else pure ["Value " <> T.pack (show n) <> " must be greater than minimum " <> T.pack (show minVal)]
     else if n >= minVal
-         then []
-         else ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinimum _ _ _ _ = []  -- Only applies to numbers
+         then pure []
+         else pure ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
+validateMinimum _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The Draft-04 'minimum' keyword definition
 minimumKeyword :: KeywordDefinition
@@ -78,7 +79,7 @@ compileExclusiveMinimum value _schema _ctx = case value of
 -- This keyword doesn't validate on its own - it only modifies
 -- the behavior of the 'minimum' keyword via adjacent data.
 validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
-validateExclusiveMinimum _ _ _ _ = []
+validateExclusiveMinimum _ _ _ _ = pure []
 
 -- | The Draft-04 'exclusiveMinimum' keyword definition
 exclusiveMinimumKeyword :: KeywordDefinition

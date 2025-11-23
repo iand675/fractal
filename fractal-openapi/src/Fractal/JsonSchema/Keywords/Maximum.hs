@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'maximum' keyword
 --
 -- The maximum keyword requires that a numeric value is less than or
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.Maximum
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -30,9 +32,9 @@ compileMaximum value _schema _ctx = case value of
 validateMaximum :: ValidateFunc MaximumData
 validateMaximum _recursiveValidator (MaximumData maxVal) _ctx (Number n) =
   if n <= maxVal
-    then []
-    else ["Value " <> T.pack (show n) <> " exceeds maximum " <> T.pack (show maxVal)]
-validateMaximum _ _ _ _ = []  -- Only applies to numbers
+    then pure []
+    else pure ["Value " <> T.pack (show n) <> " exceeds maximum " <> T.pack (show maxVal)]
+validateMaximum _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The 'maximum' keyword definition
 maximumKeyword :: KeywordDefinition

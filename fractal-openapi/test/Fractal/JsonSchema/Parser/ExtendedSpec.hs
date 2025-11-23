@@ -27,9 +27,9 @@ compileMaxValue _ _schema _ctx = Left "x-max-value must be a number"
 validateMaxValue :: ValidateFunc MaxValueData
 validateMaxValue _recursiveValidator (MaxValueData maxVal) _ctx (Number n) =
   if realToFrac n <= maxVal
-    then []
-    else ["Value exceeds maximum"]
-validateMaxValue _ _ _ _ = []
+    then pure []
+    else pure ["Value exceeds maximum"]
+validateMaxValue _ _ _ _ = pure []
 
 spec :: Spec
 spec = describe "Extended Parser" $ do

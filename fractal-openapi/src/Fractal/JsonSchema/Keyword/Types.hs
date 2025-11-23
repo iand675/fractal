@@ -34,6 +34,7 @@ module Fractal.JsonSchema.Keyword.Types
 
 import Control.Monad.Trans.State.Strict (StateT, runStateT, get, modify')
 import Control.Monad.Trans.Class (lift)
+import Control.Monad.Reader (Reader)
 import Data.Aeson (Value)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -42,7 +43,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema, ValidationResult)
+import Fractal.JsonSchema.Types (Schema, ValidationResult, ValidationConfig)
 
 -- | Scope restriction for keywords - defines which schema types they apply to
 data KeywordScope
@@ -102,8 +103,9 @@ type CompileFunc a = Value -> Schema -> CompilationContext -> Either Text a
 -- 3. A validation context (instance and schema paths)
 -- 4. The instance value being validated
 --
--- Returns validation errors (empty list = success), not a ValidationResult
--- to allow composition of multiple keyword validators.
+-- Returns validation errors in a Reader monad with ValidationConfig as the environment.
+-- This allows keywords to access configuration (e.g., format assertion vs annotation mode)
+-- without explicit parameter passing.
 --
 -- For simple keywords that don't need recursive validation (e.g., type, enum),
 -- the recursive validator parameter can be ignored.
@@ -112,7 +114,7 @@ type ValidateFunc a =
   -> a                                    -- ^ Compiled data
   -> ValidationContext'                  -- ^ Validation context (paths)
   -> Value                                -- ^ Instance value
-  -> [Text]                              -- ^ Validation errors
+  -> Reader ValidationConfig [Text]      -- ^ Validation errors in Reader monad
 
 -- | Validation context for keyword validators
 --
@@ -139,9 +141,10 @@ data CompiledKeyword = CompiledKeyword
     -- ^ Name of the keyword
   , compiledData :: SomeCompiledData
     -- ^ The compiled data (existentially quantified)
-  , compiledValidate :: (Schema -> Value -> ValidationResult) -> ValidationContext' -> Value -> [Text]
+  , compiledValidate :: (Schema -> Value -> ValidationResult) -> ValidationContext' -> Value -> Reader ValidationConfig [Text]
     -- ^ Type-erased validate function (closed over compiled data)
     -- Takes: recursive validator, validation context, value
+    -- Returns validation errors in Reader monad with ValidationConfig
     -- Returns: list of validation errors
   , compiledAdjacentData :: Map Text Value
     -- ^ Values from adjacent keywords accessed during compilation

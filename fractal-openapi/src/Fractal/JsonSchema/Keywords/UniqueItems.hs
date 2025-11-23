@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'uniqueItems' keyword
 --
 -- The uniqueItems keyword requires that all items in an array are unique
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.UniqueItems
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Foldable (toList)
@@ -32,14 +34,14 @@ validateUniqueItems _recursiveValidator (UniqueItemsData True) _ctx (Array arr) 
   let items = toList arr
       uniqueItems = length items == length (nubOrd items)
   in if uniqueItems
-     then []
-     else ["Array contains duplicate items"]
+     then pure []
+     else pure ["Array contains duplicate items"]
   where
     -- Simple deduplication using Ord (works for most JSON values)
     nubOrd :: Ord a => [a] -> [a]
     nubOrd = Set.toList . Set.fromList
-validateUniqueItems _ (UniqueItemsData False) _ _ = []  -- uniqueItems: false means no constraint
-validateUniqueItems _ _ _ _ = []  -- Only applies to arrays when true
+validateUniqueItems _ (UniqueItemsData False) _ _ = pure []  -- uniqueItems: false means no constraint
+validateUniqueItems _ _ _ _ = pure []  -- Only applies to arrays when true
 
 -- | The 'uniqueItems' keyword definition
 uniqueItemsKeyword :: KeywordDefinition

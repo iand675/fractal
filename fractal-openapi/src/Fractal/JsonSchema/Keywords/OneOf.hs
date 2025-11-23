@@ -13,6 +13,7 @@ module Fractal.JsonSchema.Keywords.OneOf
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Vector as V
 import Data.List.NonEmpty (NonEmpty)
@@ -49,8 +50,8 @@ compileOneOf value schema ctx = case value of
 validateOneOfKeyword :: ValidateFunc OneOfData
 validateOneOfKeyword recursiveValidator (OneOfData schemas) _ctx value =
   case validateOneOf recursiveValidator schemas value of
-    ValidationSuccess _ -> []
-    ValidationFailure errs -> [T.pack $ show errs]  -- TODO: proper error formatting
+    ValidationSuccess _ -> pure []
+    ValidationFailure errs -> pure [T.pack $ show errs]  -- TODO: proper error formatting
 
 -- | Validate that a value satisfies EXACTLY ONE schema in oneOf
 --

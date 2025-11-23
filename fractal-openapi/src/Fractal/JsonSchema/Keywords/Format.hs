@@ -10,6 +10,7 @@
 -- - Assertion mode: Format validation failures cause schema validation to fail
 module Fractal.JsonSchema.Keywords.Format
   ( validateFormatConstraints
+  , validateFormatValue
   ) where
 
 import Fractal.JsonSchema.Types

@@ -40,10 +40,10 @@ validateRange :: ValidateFunc RangeData
 validateRange _recursiveValidator (RangeData minVal maxVal) _ctx (Number n) =
   let val = realToFrac n
   in if val >= minVal && val <= maxVal
-       then []
-       else ["Value " <> T.pack (show val) <> " is not in range [" <>
+       then pure []
+       else pure ["Value " <> T.pack (show val) <> " is not in range [" <>
              T.pack (show minVal) <> ", " <> T.pack (show maxVal) <> "]"]
-validateRange _ _ _ _ = ["x-range can only validate numbers"]
+validateRange _ _ _ _ = pure ["x-range can only validate numbers"]
 
 -- Test keyword: string prefix
 data PrefixData = PrefixData Text
@@ -56,9 +56,9 @@ compilePrefix _ _schema _ctx = Left "x-prefix must be a string"
 validatePrefix :: ValidateFunc PrefixData
 validatePrefix _recursiveValidator (PrefixData prefix) _ctx (String s) =
   if prefix `T.isPrefixOf` s
-    then []
-    else ["String does not start with prefix: " <> prefix]
-validatePrefix _ _ _ _ = ["x-prefix can only validate strings"]
+    then pure []
+    else pure ["String does not start with prefix: " <> prefix]
+validatePrefix _ _ _ _ = pure ["x-prefix can only validate strings"]
 
 spec :: Spec
 spec = describe "Extended Validator" $ do

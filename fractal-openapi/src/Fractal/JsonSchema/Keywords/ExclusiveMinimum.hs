@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
 --
 -- The exclusiveMinimum keyword requires that a numeric value is strictly
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.ExclusiveMinimum
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -30,9 +32,9 @@ compileExclusiveMinimum value _schema _ctx = case value of
 validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
 validateExclusiveMinimum _recursiveValidator (ExclusiveMinimumData minVal) _ctx (Number n) =
   if n > minVal
-    then []
-    else ["Value " <> T.pack (show n) <> " must be greater than exclusiveMinimum " <> T.pack (show minVal)]
-validateExclusiveMinimum _ _ _ _ = []  -- Only applies to numbers
+    then pure []
+    else pure ["Value " <> T.pack (show n) <> " must be greater than exclusiveMinimum " <> T.pack (show minVal)]
+validateExclusiveMinimum _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The 'exclusiveMinimum' keyword definition (Draft-06+ style)
 exclusiveMinimumKeyword :: KeywordDefinition

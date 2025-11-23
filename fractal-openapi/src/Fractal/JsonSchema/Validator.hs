@@ -631,7 +631,8 @@ validateAgainstObject parentCtx ctx schema obj val =
                     , Keyword.Types.kwContextSchemaPath = []
                     }
                   -- Validate using compiled keywords with recursive validator
-                  errors = KeywordValidate.validateKeywords recursiveValidator compiled val keywordCtx
+                  -- Pass ValidationConfig from context to keyword validators
+                  errors = KeywordValidate.validateKeywords recursiveValidator compiled val keywordCtx (contextConfig ctx)
               in if null errors
                 then ValidationSuccess mempty
                 else ValidationFailure $ ValidationErrors $ NE.fromList $

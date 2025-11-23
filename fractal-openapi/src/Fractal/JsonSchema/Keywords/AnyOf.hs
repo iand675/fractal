@@ -13,6 +13,7 @@ module Fractal.JsonSchema.Keywords.AnyOf
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Vector as V
 import Data.List.NonEmpty (NonEmpty)
@@ -49,8 +50,8 @@ compileAnyOf value schema ctx = case value of
 validateAnyOfKeyword :: ValidateFunc AnyOfData
 validateAnyOfKeyword recursiveValidator (AnyOfData schemas) _ctx value =
   case validateAnyOf recursiveValidator schemas value of
-    ValidationSuccess _ -> []
-    ValidationFailure errs -> [T.pack $ show errs]  -- TODO: proper error formatting
+    ValidationSuccess _ -> pure []
+    ValidationFailure errs -> pure [T.pack $ show errs]  -- TODO: proper error formatting
 
 -- | Validate that a value satisfies AT LEAST ONE schema in anyOf
 --

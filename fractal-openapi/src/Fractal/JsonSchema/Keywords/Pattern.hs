@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'pattern' keyword
 --
 -- The pattern keyword requires that a string value matches the specified
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.Pattern
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -40,9 +42,9 @@ compilePattern value _schema _ctx = case value of
 validatePattern :: ValidateFunc PatternData
 validatePattern _recursiveValidator (PatternData regex patternStr) _ctx (String txt) =
   if Regex.matchRegex regex txt
-    then []
-    else ["String does not match pattern: " <> patternStr]
-validatePattern _ _ _ _ = []  -- Only applies to strings
+    then pure []
+    else pure ["String does not match pattern: " <> patternStr]
+validatePattern _ _ _ _ = pure []  -- Only applies to strings
 
 -- | The 'pattern' keyword definition
 patternKeyword :: KeywordDefinition

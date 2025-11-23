@@ -23,10 +23,28 @@ module Fractal.JsonSchema.Keywords.Standard
   , minItemsKeyword
   , maxItemsKeyword
   , uniqueItemsKeyword
+  , itemsKeyword
+  , prefixItemsKeyword
+  , containsKeyword
+  , minContainsKeyword
+  , maxContainsKeyword
     -- * Object Keywords
   , requiredKeyword
   , minPropertiesKeyword
   , maxPropertiesKeyword
+  , propertiesKeyword
+  , patternPropertiesKeyword
+  , additionalPropertiesKeyword
+  , propertyNamesKeyword
+  , dependentRequiredKeyword
+  , dependentSchemasKeyword
+  , unevaluatedPropertiesKeyword
+  , unevaluatedItemsKeyword
+  , formatKeyword
+    -- * Conditional Keywords
+  , ifKeyword
+  , thenKeyword
+  , elseKeyword
     -- * Registry
   , standardKeywordRegistry
   , draft04Registry
@@ -51,10 +69,25 @@ import Fractal.JsonSchema.Keywords.ExclusiveMaximum (exclusiveMaximumKeyword)
 import Fractal.JsonSchema.Keywords.MinItems (minItemsKeyword)
 import Fractal.JsonSchema.Keywords.MaxItems (maxItemsKeyword)
 import Fractal.JsonSchema.Keywords.UniqueItems (uniqueItemsKeyword)
+import Fractal.JsonSchema.Keywords.Items (itemsKeyword)
+import Fractal.JsonSchema.Keywords.PrefixItems (prefixItemsKeyword)
+import Fractal.JsonSchema.Keywords.Contains (containsKeyword, minContainsKeyword, maxContainsKeyword)
 -- Object keywords
 import Fractal.JsonSchema.Keywords.Required (requiredKeyword)
 import Fractal.JsonSchema.Keywords.MinProperties (minPropertiesKeyword)
 import Fractal.JsonSchema.Keywords.MaxProperties (maxPropertiesKeyword)
+import Fractal.JsonSchema.Keywords.Properties (propertiesKeyword)
+import Fractal.JsonSchema.Keywords.PatternProperties (patternPropertiesKeyword)
+import Fractal.JsonSchema.Keywords.AdditionalProperties (additionalPropertiesKeyword)
+import Fractal.JsonSchema.Keywords.PropertyNames (propertyNamesKeyword)
+import Fractal.JsonSchema.Keywords.DependentRequired (dependentRequiredKeyword)
+import Fractal.JsonSchema.Keywords.DependentSchemas (dependentSchemasKeyword)
+import Fractal.JsonSchema.Keywords.UnevaluatedProperties (unevaluatedPropertiesKeyword)
+import Fractal.JsonSchema.Keywords.UnevaluatedItems (unevaluatedItemsKeyword)
+import Fractal.JsonSchema.Keywords.FormatKeyword (formatKeyword)
+
+-- Conditional keywords
+import Fractal.JsonSchema.Keywords.Conditional (ifKeyword, thenKeyword, elseKeyword)
 -- Navigable keywords (for $ref resolution)
 import qualified Fractal.JsonSchema.Keywords.Navigation as Nav
 import qualified Fractal.JsonSchema.Keywords.AllOf as AllOf
@@ -79,6 +112,7 @@ standardKeywordRegistry =
   registerKeyword minLengthKeyword $
   registerKeyword maxLengthKeyword $
   registerKeyword patternKeyword $
+  registerKeyword formatKeyword $
   -- Numeric validation
   registerKeyword minimumKeyword $
   registerKeyword maximumKeyword $
@@ -89,27 +123,32 @@ standardKeywordRegistry =
   registerKeyword minItemsKeyword $
   registerKeyword maxItemsKeyword $
   registerKeyword uniqueItemsKeyword $
+  registerKeyword itemsKeyword $
+  registerKeyword prefixItemsKeyword $
+  registerKeyword containsKeyword $
+  registerKeyword minContainsKeyword $
+  registerKeyword maxContainsKeyword $
   -- Object validation
   registerKeyword requiredKeyword $
   registerKeyword minPropertiesKeyword $
   registerKeyword maxPropertiesKeyword $
+  registerKeyword propertiesKeyword $
+  registerKeyword patternPropertiesKeyword $
+  registerKeyword additionalPropertiesKeyword $
+  registerKeyword propertyNamesKeyword $
+  registerKeyword dependentRequiredKeyword $
+  registerKeyword dependentSchemasKeyword $
+  registerKeyword unevaluatedPropertiesKeyword $
+  registerKeyword unevaluatedItemsKeyword $
+  -- Conditional keywords (if/then/else, Draft-07+)
+  registerKeyword ifKeyword $
+  registerKeyword thenKeyword $
+  registerKeyword elseKeyword $
   -- Navigable keywords (for $ref resolution)
-  registerKeyword Nav.propertiesKeyword $
-  registerKeyword Nav.patternPropertiesKeyword $
-  registerKeyword Nav.additionalPropertiesKeyword $
-  registerKeyword Nav.itemsKeyword $
-  registerKeyword Nav.prefixItemsKeyword $
-  registerKeyword Nav.containsKeyword $
   registerKeyword AllOf.allOfKeyword $
   registerKeyword AnyOf.anyOfKeyword $
   registerKeyword OneOf.oneOfKeyword $
   registerKeyword Not.notKeyword $
-  registerKeyword Nav.ifKeyword $
-  registerKeyword Nav.thenKeyword $
-  registerKeyword Nav.elseKeyword $
-  registerKeyword Nav.dependentSchemasKeyword $
-  registerKeyword Nav.propertyNamesKeyword $
-  registerKeyword Nav.unevaluatedPropertiesKeyword $
   registerKeyword Nav.defsKeyword $
   emptyKeywordRegistry
 
@@ -127,6 +166,7 @@ draft04Registry =
   registerKeyword minLengthKeyword $
   registerKeyword maxLengthKeyword $
   registerKeyword patternKeyword $
+  registerKeyword formatKeyword $
   -- Numeric validation (Draft-04 specific)
   registerKeyword D04.minimumKeyword $
   registerKeyword D04.maximumKeyword $
@@ -137,24 +177,18 @@ draft04Registry =
   registerKeyword minItemsKeyword $
   registerKeyword maxItemsKeyword $
   registerKeyword uniqueItemsKeyword $
+  registerKeyword itemsKeyword $
   -- Object validation
   registerKeyword requiredKeyword $
   registerKeyword minPropertiesKeyword $
   registerKeyword maxPropertiesKeyword $
+  registerKeyword propertiesKeyword $
+  registerKeyword patternPropertiesKeyword $
+  registerKeyword additionalPropertiesKeyword $
   -- Navigable keywords (for $ref resolution)
-  registerKeyword Nav.propertiesKeyword $
-  registerKeyword Nav.patternPropertiesKeyword $
-  registerKeyword Nav.additionalPropertiesKeyword $
-  registerKeyword Nav.itemsKeyword $
-  registerKeyword Nav.containsKeyword $
   registerKeyword AllOf.allOfKeyword $
   registerKeyword AnyOf.anyOfKeyword $
   registerKeyword OneOf.oneOfKeyword $
   registerKeyword Not.notKeyword $
-  registerKeyword Nav.ifKeyword $
-  registerKeyword Nav.thenKeyword $
-  registerKeyword Nav.elseKeyword $
-  registerKeyword Nav.dependentSchemasKeyword $
-  registerKeyword Nav.propertyNamesKeyword $
   registerKeyword Nav.defsKeyword $
   emptyKeywordRegistry

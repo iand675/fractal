@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 -- | Implementation of the 'maxProperties' keyword
 --
 -- The maxProperties keyword requires that an object value has at most
@@ -8,6 +9,7 @@ module Fractal.JsonSchema.Keywords.MaxProperties
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -34,9 +36,9 @@ validateMaxProperties :: ValidateFunc MaxPropertiesData
 validateMaxProperties _recursiveValidator (MaxPropertiesData maxProps) _ctx (Object objMap) =
   let propCount = fromIntegral (KeyMap.size objMap) :: Natural
   in if propCount <= maxProps
-     then []
-     else ["Object has " <> T.pack (show propCount) <> " properties, but maxProperties is " <> T.pack (show maxProps)]
-validateMaxProperties _ _ _ _ = []  -- Only applies to objects
+     then pure []
+     else pure ["Object has " <> T.pack (show propCount) <> " properties, but maxProperties is " <> T.pack (show maxProps)]
+validateMaxProperties _ _ _ _ = pure []  -- Only applies to objects
 
 -- | The 'maxProperties' keyword definition
 maxPropertiesKeyword :: KeywordDefinition

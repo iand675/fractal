@@ -1,0 +1,80 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
+-- | Implementation of the 'properties' keyword
+--
+-- The properties keyword validates specific object properties against
+-- their corresponding schemas. Each property name maps to a schema that
+-- validates values for that property.
+module Fractal.JsonSchema.Keywords.Properties
+  ( propertiesKeyword
+  , compileProperties
+  , PropertiesData(..)
+  ) where
+
+import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Typeable (Typeable)
+
+import Fractal.JsonSchema.Types 
+  ( Schema(..), SchemaCore(..), SchemaObject(..)
+  , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
+  , validationProperties, schemaValidation
+  )
+import Fractal.JsonSchema.Keyword.Types 
+  ( KeywordDefinition(..), CompileFunc, ValidateFunc
+  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  )
+import Fractal.JsonSchema.Parser (parseSchema)
+
+-- | Compiled data for properties keyword
+newtype PropertiesData = PropertiesData (Map Text Schema)
+  deriving (Typeable)
+
+-- | Compile the properties keyword
+compileProperties :: CompileFunc PropertiesData
+compileProperties (Object obj) _schema _ctx = do
+  -- Parse each property value as a schema
+  let entries = KeyMap.toList obj
+  schemas <- mapM parseEntry entries
+  Right $ PropertiesData $ Map.fromList schemas
+  where
+    parseEntry (k, v) = case parseSchema v of
+      Left err -> Left $ "Invalid schema for property '" <> Key.toText k <> "': " <> T.pack (show err)
+      Right schema -> Right (Key.toText k, schema)
+
+compileProperties _ _ _ = Left "properties must be an object"
+
+-- | Validate properties using the pluggable keyword system
+validatePropertiesKeyword :: ValidateFunc PropertiesData
+validatePropertiesKeyword recursiveValidator (PropertiesData propSchemas) _ctx (Object objMap) =
+  -- Validate each property that exists in the instance
+  let results = 
+        [ recursiveValidator propSchema propValue
+        | (propName, propSchema) <- Map.toList propSchemas
+        , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
+        ]
+      failures = [errs | ValidationFailure errs <- results]
+  in case failures of
+    [] -> pure []  -- Success
+    _ -> pure [T.pack $ show err | err <- failures]
+
+validatePropertiesKeyword _ _ _ _ = pure []  -- Only applies to objects
+
+-- | Keyword definition for properties
+propertiesKeyword :: KeywordDefinition
+propertiesKeyword = KeywordDefinition
+  { keywordName = "properties"
+  , keywordScope = AnyScope
+  , keywordCompile = compileProperties
+  , keywordValidate = validatePropertiesKeyword
+  , keywordNavigation = SchemaMap $ \schema -> case schemaCore schema of
+      ObjectSchema obj -> validationProperties (schemaValidation obj)
+      _ -> Nothing
+  }
+

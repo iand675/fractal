@@ -12,6 +12,7 @@ module Fractal.JsonSchema.Keywords.Not
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 
 import Fractal.JsonSchema.Types (Schema, SchemaCore(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaCore, schemaNot)
@@ -53,8 +54,8 @@ validateNot validateSchema schema value =
 validateNotKeyword :: ValidateFunc NotData
 validateNotKeyword recursiveValidator (NotData schema) _ctx value =
   case recursiveValidator schema value of
-    ValidationSuccess _ -> ["Value matches schema in 'not'"]
-    ValidationFailure _ -> []
+    ValidationSuccess _ -> pure ["Value matches schema in 'not'"]
+    ValidationFailure _ -> pure []
 
 -- | Keyword definition for 'not'
 notKeyword :: KeywordDefinition

@@ -1,4 +1,5 @@
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Implementation of the 'const' keyword
 --
@@ -11,6 +12,7 @@ module Fractal.JsonSchema.Keywords.Const
   ) where
 
 import Data.Aeson (Value)
+import Control.Monad.Reader (Reader)
 import Data.Typeable (Typeable)
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
@@ -29,8 +31,8 @@ compileConst value _schema _ctx = Right $ ConstData { constExpectedValue = value
 validateConst :: ValidateFunc ConstData
 validateConst _recursiveValidator (ConstData expected) _ctx actual =
   if actual == expected
-    then []
-    else ["Value does not match const"]
+    then pure []
+    else pure ["Value does not match const"]
 
 -- | The 'const' keyword definition
 constKeyword :: KeywordDefinition

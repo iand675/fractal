@@ -99,7 +99,7 @@ spec = describe "Dialect" $ do
             { keywordName = "conflicting"
             , keywordScope = AnyScope
             , keywordCompile = \_ _ _ -> Left "Not implemented" :: Either Text ()
-            , keywordValidate = \_ (_ :: ()) _ _ -> []
+            , keywordValidate = \_ (_ :: ()) _ _ -> pure []
             , keywordNavigation = NoNavigation
             }
           vocab1 = Vocabulary
