@@ -15,7 +15,7 @@
 --
 -- A valid dialect must satisfy:
 --
--- 1. Dialect URI must be an absolute URI
+-- 1. Dialect URI must be an absolute URI with a valid scheme (http:\/\/, https:\/\/, file:\/\/, urn:, etc.)
 -- 2. All vocabulary URIs must be resolvable (when used with a VocabularyRegistry)
 -- 3. No keyword conflicts between composed vocabularies
 module Fractal.JsonSchema.Dialect
@@ -67,12 +67,12 @@ data UnknownKeywordMode
 --
 -- Invariants (checked by 'validateDialect'):
 --
--- * 'dialectURI' must be an absolute URI
+-- * 'dialectURI' must be an absolute URI (with a valid scheme)
 -- * All vocabulary URIs in 'dialectVocabularies' must be resolvable
 -- * No keyword conflicts between composed vocabularies
 data Dialect = Dialect
   { dialectURI :: Text
-    -- ^ Unique identifier for this dialect (must be absolute URI)
+    -- ^ Unique identifier for this dialect (must be absolute URI with scheme: http:\/\/, https:\/\/, file:\/\/, urn:, etc.)
   , dialectVersion :: JsonSchemaVersion
     -- ^ JSON Schema version this dialect is based on
   , dialectName :: Text
@@ -117,11 +117,39 @@ validateDialect registry dialect = do
   checkNoKeywordConflicts registry vocabURIs
 
 -- | Validate that a dialect URI is absolute
+--
+-- An absolute URI must have a scheme (e.g., http://, https://, file://, urn:)
+-- This accepts any URI with a scheme, not just HTTP/HTTPS.
+--
+-- Valid examples:
+--
+-- * https://json-schema.org/draft/2020-12/schema
+-- * http://json-schema.org/draft-04/schema#
+-- * file:///path/to/dialect.json
+-- * urn:example:dialect:v1
 validateDialectURI :: Text -> Either DialectError ()
 validateDialectURI uri
   | T.null uri = Left $ InvalidDialectURI uri "URI is empty"
-  | "http://" `T.isPrefixOf` uri || "https://" `T.isPrefixOf` uri = Right ()
-  | otherwise = Left $ InvalidDialectURI uri "URI must be absolute (http:// or https://)"
+  | hasScheme uri = Right ()
+  | otherwise = Left $ InvalidDialectURI uri "URI must be absolute (must have a scheme like http://, https://, file://, or urn:)"
+  where
+    -- Check if URI has a valid scheme (characters before ':')
+    -- Scheme must start with letter and contain only letters, digits, +, -, .
+    hasScheme u = case T.breakOn ":" u of
+      (scheme, rest)
+        | T.null rest -> False  -- No ':' found
+        | T.null scheme -> False  -- Empty scheme
+        | not (isValidScheme scheme) -> False
+        | otherwise -> True
+    
+    isValidScheme scheme =
+      let schemeChars = T.unpack scheme
+      in case schemeChars of
+        (c:cs) -> isLetter c && all (\ch -> isAlphaNum ch || ch `elem` ['+', '-', '.']) cs
+        [] -> False
+    
+    isLetter c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+    isAlphaNum c = isLetter c || (c >= '0' && c <= '9')
 
 -- | Check if a vocabulary can be resolved in the registry
 checkVocabularyResolvable :: VocabularyRegistry -> VocabularyURI -> Either DialectError ()
@@ -146,13 +174,14 @@ checkNoKeywordConflicts registry uris = do
 --
 -- Returns the standard URI for each JSON Schema version:
 --
--- * Draft-04: http://json-schema.org/draft-04/schema#
--- * Draft-06: http://json-schema.org/draft-06/schema#
--- * Draft-07: http://json-schema.org/draft-07/schema#
--- * Draft 2019-09: https://json-schema.org/draft/2019-09/schema
--- * Draft 2020-12: https://json-schema.org/draft/2020-12/schema
+-- * Draft-04: @http:\/\/json-schema.org\/draft-04\/schema#@
+-- * Draft-06: @http:\/\/json-schema.org\/draft-06\/schema#@
+-- * Draft-07: @http:\/\/json-schema.org\/draft-07\/schema#@
+-- * Draft 2019-09: @https:\/\/json-schema.org\/draft\/2019-09\/schema@
+-- * Draft 2020-12: @https:\/\/json-schema.org\/draft\/2020-12\/schema@
 --
 -- This is useful when composing dialects from vocabularies without a custom URI.
+-- For custom dialects, you can use any absolute URI (http:\/\/, https:\/\/, file:\/\/, urn:, etc.)
 defaultDialectURI :: JsonSchemaVersion -> Text
 defaultDialectURI Draft04 = "http://json-schema.org/draft-04/schema#"
 defaultDialectURI Draft06 = "http://json-schema.org/draft-06/schema#"

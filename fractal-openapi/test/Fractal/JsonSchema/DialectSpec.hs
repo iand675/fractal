@@ -46,6 +46,15 @@ spec = describe "Dialect" $ do
     it "accepts https:// URIs" $ do
       validateDialectURI "https://example.com/schema" `shouldBe` Right ()
     
+    it "accepts file:// URIs" $ do
+      validateDialectURI "file:///path/to/dialect.json" `shouldBe` Right ()
+    
+    it "accepts urn: URIs" $ do
+      validateDialectURI "urn:example:dialect:v1" `shouldBe` Right ()
+    
+    it "accepts custom schemes" $ do
+      validateDialectURI "x-custom://example.com/schema" `shouldBe` Right ()
+    
     it "rejects empty URIs" $ do
       validateDialectURI "" `shouldSatisfy` isLeft
     
@@ -54,6 +63,9 @@ spec = describe "Dialect" $ do
     
     it "rejects URIs without scheme" $ do
       validateDialectURI "example.com/schema" `shouldSatisfy` isLeft
+    
+    it "rejects URIs with invalid scheme" $ do
+      validateDialectURI "123://invalid" `shouldSatisfy` isLeft
 
   describe "validateDialect" $ do
     let emptyRegistry = emptyVocabularyRegistry
