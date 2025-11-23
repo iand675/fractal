@@ -176,6 +176,7 @@ test-suite fractal-openapi-test
                     , Fractal.JsonSchema.IntegrationSpec
                     , Fractal.JsonSchema.JSONPointerSpec
                     , Fractal.JsonSchema.EmbeddedMetaschemasSpec
+                    , Fractal.JsonSchema.UnknownKeywordSpec
                     , Fractal.JsonSchema.Keyword.KeywordSpec
                     , Fractal.JsonSchema.Parser.ExtendedSpec
                     , Fractal.JsonSchema.Validator.ExtendedSpec
