@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | Core types for JSON Schema representation
 --
@@ -43,8 +45,9 @@ module Fractal.JsonSchema.Types
   , parsePointer
   
     -- * Validation Types
-  , ValidationResult(..)
-  , ValidationSuccess
+  , ValidationResult
+  , pattern ValidationSuccess
+  , pattern ValidationFailure
   , ValidationAnnotations(..)
   , ValidationErrors(..)
   , ValidationError(..)
@@ -87,52 +90,13 @@ import Data.Hashable (Hashable)
 import GHC.Generics (Generic)
 import Numeric.Natural (Natural)
 import Language.Haskell.TH.Syntax (Lift)
-import Network.URI (parseURIReference, uriScheme, uriToString, relativeTo, unEscapeString)
+import Network.URI (parseURIReference, uriScheme, uriToString, relativeTo)
 
--- | JSON Pointer (RFC 6901) for identifying locations in JSON documents
-newtype JSONPointer = JSONPointer [Text]
-  deriving (Eq, Show, Ord, Generic)
-  deriving newtype (Semigroup, Monoid, ToJSON, FromJSON, Hashable)
-  deriving stock Lift
+-- Import JSON Pointer from separate module (avoids circular dependency)
+import Fractal.JSONPointer (JSONPointer(..), emptyPointer, (/.), renderPointer, parsePointer)
 
--- | Empty JSON Pointer (root)
-emptyPointer :: JSONPointer
-emptyPointer = JSONPointer []
-
--- | Append a segment to a JSON Pointer
-(/.) :: JSONPointer -> Text -> JSONPointer
-(JSONPointer segments) /. seg = JSONPointer (segments <> [seg])
-
--- | Render JSON Pointer to standard string format (RFC 6901)
-renderPointer :: JSONPointer -> Text
-renderPointer (JSONPointer []) = ""
-renderPointer (JSONPointer segments) = "/" <> T.intercalate "/" (map escapeSegment segments)
-  where
-    -- IMPORTANT: Must escape ~ before / to avoid double-escaping
-    -- First: ~ → ~0
-    -- Then: / → ~1
-    escapeSegment seg = T.replace "/" "~1" $ T.replace "~" "~0" seg
-
--- | Parse JSON Pointer from string (RFC 6901)
--- Also handles URL-encoded pointers (e.g., %25 → %)
-parsePointer :: Text -> Either Text JSONPointer
-parsePointer "" = Right emptyPointer
-parsePointer txt
-  | T.head txt /= '/' = Left "JSON Pointer must start with /"
-  | otherwise = Right $ JSONPointer $ map unescapeSegment $ T.splitOn "/" (T.tail txt)
-  where
-    -- IMPORTANT: Must unescape ~1 before ~0 to avoid double-unescaping
-    -- First: URL decode (if pointer was in a URI fragment)
-    -- Then: ~1 → /
-    -- Finally: ~0 → ~
-    unescapeSegment seg = 
-      let urlDecoded = urlDecode seg
-          step1 = T.replace "~1" "/" urlDecoded
-          step2 = T.replace "~0" "~" step1
-      in step2
-    
-    -- URL decode percent-encoded sequences
-    urlDecode s = T.pack $ unEscapeString (T.unpack s)
+-- Import new validation result types
+import qualified Fractal.JsonSchema.Validator.Result as VR
 
 -- | Reference to another schema ($ref, $dynamicRef)
 newtype Reference = Reference Text
@@ -605,7 +569,15 @@ data Schema = Schema
   deriving (Eq, Show, Generic)
   deriving stock Lift
 
--- | Collected annotations from validation
+-- | Re-export new validation result types from Validator.Result
+type ValidationResult = VR.ValidationResult
+type ValidationError = VR.ValidationError
+type ValidationErrorTree = VR.ValidationErrorTree
+type AnnotationCollection = VR.AnnotationCollection
+type SomeAnnotation = VR.SomeAnnotation
+
+-- | Legacy type for backward compatibility
+-- Maps JSON Pointer -> keyword -> value (untyped annotations)
 newtype ValidationAnnotations = ValidationAnnotations 
   { unAnnotations :: Map JSONPointer (Map Text Value) }
   deriving (Eq, Show, Generic)
@@ -614,19 +586,15 @@ instance Semigroup ValidationAnnotations where
   ValidationAnnotations a <> ValidationAnnotations b =
     ValidationAnnotations (Map.unionWith mergeAnnotationMaps a b)
     where
-      -- Merge two annotation maps, combining arrays when keys collide
       mergeAnnotationMaps :: Map Text Value -> Map Text Value -> Map Text Value
       mergeAnnotationMaps = Map.unionWith mergeAnnotationValues
-
-      -- Merge two annotation values - for arrays, concatenate; otherwise left-biased
       mergeAnnotationValues :: Value -> Value -> Value
       mergeAnnotationValues (Aeson.Array a1) (Aeson.Array a2) = Aeson.Array (a1 <> a2)
-      mergeAnnotationValues v1 _ = v1  -- For non-arrays, keep left value
+      mergeAnnotationValues v1 _ = v1
 
 instance Monoid ValidationAnnotations where
   mempty = ValidationAnnotations Map.empty
 
--- Custom ToJSON/FromJSON using JSONPointer as text keys
 instance ToJSON ValidationAnnotations where
   toJSON (ValidationAnnotations m) =
     Aeson.Object $ KeyMap.fromList [(Key.fromText $ renderPointer k, toJSON v) | (k, v) <- Map.toList m]
@@ -643,75 +611,80 @@ instance FromJSON ValidationAnnotations where
       ]
     pure $ ValidationAnnotations $ Map.fromList pairs
 
--- | Non-empty list of validation errors
+-- | Legacy type for backward compatibility
 newtype ValidationErrors = ValidationErrors 
   { unErrors :: NonEmpty ValidationError }
   deriving (Eq, Show, Generic)
   deriving newtype (Semigroup)
 
--- | Single validation error with context
-data ValidationError = ValidationError
-  { errorKeyword :: Text
-    -- ^ Keyword that failed (e.g., "minimum", "pattern")
-  
-  , errorSchemaPath :: JSONPointer
-    -- ^ Path to the failing keyword in the schema
-  
-  , errorInstancePath :: JSONPointer
-    -- ^ Path to the failing value in the instance
-  
-  , errorMessage :: Text
-    -- ^ Human-readable error message
-  
-  , errorDetails :: Maybe Value
-    -- ^ Additional context (actual value, expected constraint, etc.)
-  }
-  deriving (Eq, Show, Generic)
+-- | Pattern synonym for backward compatibility with ValidationSuccess constructor
+pattern ValidationSuccess :: ValidationAnnotations -> ValidationResult
+pattern ValidationSuccess anns <- (extractLegacyAnnotations -> Just anns)
+  where
+    ValidationSuccess anns = legacyToValidationResult anns
 
-instance ToJSON ValidationError where
-  toJSON err = object
-    [ "keyword" .= errorKeyword err
-    , "schemaPath" .= renderPointer (errorSchemaPath err)
-    , "instancePath" .= renderPointer (errorInstancePath err)
-    , "message" .= errorMessage err
-    , "details" .= errorDetails err
-    ]
+-- | Pattern synonym for backward compatibility with ValidationFailure constructor  
+pattern ValidationFailure :: ValidationErrors -> ValidationResult
+pattern ValidationFailure errs <- (extractLegacyErrors -> Just errs)
+  where
+    ValidationFailure errs = legacyErrorsToValidationResult errs
 
--- | Result of validation: success with annotations or failure with errors
-data ValidationResult
-  = ValidationSuccess ValidationAnnotations
-    -- ^ Validation succeeded, collected annotations
-  | ValidationFailure ValidationErrors
-    -- ^ Validation failed with one or more errors
-  deriving (Eq, Show, Generic)
+{-# COMPLETE ValidationSuccess, ValidationFailure #-}
 
--- | Type alias for successful validation
+-- | Extract legacy annotations from new ValidationResult (for pattern matching)
+extractLegacyAnnotations :: ValidationResult -> Maybe ValidationAnnotations
+extractLegacyAnnotations result
+  | VR.isSuccess result = Just mempty  -- TODO: Convert AnnotationCollection to ValidationAnnotations
+  | otherwise = Nothing
+
+-- | Extract legacy errors from new ValidationResult (for pattern matching)
+extractLegacyErrors :: ValidationResult -> Maybe ValidationErrors
+extractLegacyErrors result
+  | VR.isFailure result = 
+      -- Convert error tree to flat list
+      let flatErrors = flattenErrorTree (VR.resultErrors result)
+      in case NE.nonEmpty flatErrors of
+        Just ne -> Just (ValidationErrors ne)
+        Nothing -> Nothing
+  | otherwise = Nothing
+
+-- | Flatten error tree to list
+flattenErrorTree :: ValidationErrorTree -> [ValidationError]
+flattenErrorTree (VR.ErrorLeaf err) = [err]
+flattenErrorTree (VR.ErrorBranch _ children) = concatMap flattenErrorTree children
+
+-- | Convert legacy annotations to new ValidationResult
+legacyToValidationResult :: ValidationAnnotations -> ValidationResult
+legacyToValidationResult _anns = VR.validationSuccess  -- TODO: Convert annotations
+
+-- | Convert legacy errors to new ValidationResult
+legacyErrorsToValidationResult :: ValidationErrors -> ValidationResult
+legacyErrorsToValidationResult (ValidationErrors errs) =
+  VR.validationFailureTree $ VR.ErrorBranch "root" (map VR.ErrorLeaf $ NE.toList errs)
+
+-- | Type alias for successful validation (legacy)
 type ValidationSuccess = ValidationAnnotations
 
 -- | Check if validation succeeded
 isSuccess :: ValidationResult -> Bool
-isSuccess (ValidationSuccess _) = True
-isSuccess _ = False
+isSuccess = VR.isSuccess
 
 -- | Check if validation failed
 isFailure :: ValidationResult -> Bool
-isFailure = not . isSuccess
+isFailure = VR.isFailure
 
--- | Create a simple validation error
+-- | Create a simple validation error (legacy helper)
 validationError :: Text -> ValidationError
-validationError msg = ValidationError
-  { errorKeyword = "validation"
-  , errorSchemaPath = emptyPointer
-  , errorInstancePath = emptyPointer
-  , errorMessage = msg
-  , errorDetails = Nothing
+validationError msg = VR.ValidationError
+  { VR.errorMessage = msg
+  , VR.errorSchemaPath = emptyPointer
+  , VR.errorInstancePath = emptyPointer
+  , VR.errorKeyword = "validation"
   }
 
 -- | Create validation failure with keyword and message
 validationFailure :: Text -> Text -> ValidationResult
-validationFailure keyword message =
-  ValidationFailure $ ValidationErrors $ pure $
-    ValidationError keyword emptyPointer emptyPointer message Nothing
+validationFailure = VR.validationFailure
 
 -- | Schema fingerprint for cycle detection
 newtype SchemaFingerprint = SchemaFingerprint ByteString

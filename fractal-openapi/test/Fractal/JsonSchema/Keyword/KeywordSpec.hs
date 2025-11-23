@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Keyword.KeywordSpec (spec) where
 
 import Test.Hspec
@@ -13,7 +14,7 @@ import Fractal.JsonSchema.Keyword
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword.Compile
 import Fractal.JsonSchema.Keyword.Validate
-import Fractal.JsonSchema.Types (Schema, emptyPointer, ValidationResult(..), ValidationAnnotations)
+import Fractal.JsonSchema.Types (Schema, emptyPointer, ValidationResult, pattern ValidationSuccess, ValidationAnnotations)
 import Fractal.JsonSchema.Parser (parseSchema)
 
 -- | Test compiled data: minimum value for numbers

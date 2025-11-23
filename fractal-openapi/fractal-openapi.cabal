@@ -50,7 +50,8 @@ common extensions
 
 library
     import:           warnings, extensions
-    exposed-modules:  Fractal.JsonSchema
+    exposed-modules:  Fractal.JSONPointer
+                    , Fractal.JsonSchema
                     , Fractal.JsonSchema.Types
                     , Fractal.JsonSchema.Parser
                     , Fractal.JsonSchema.Parser.Extended

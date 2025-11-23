@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Implementation of the 'anyOf' composition keyword
 --
@@ -20,7 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult(..), ValidationAnnotations, validationFailure, schemaAnyOf)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaAnyOf)
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser (parseSchema, ParseError)

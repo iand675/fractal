@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'not' composition keyword
 --
 -- The not keyword requires that the instance does NOT validate against the
@@ -10,7 +11,7 @@ module Fractal.JsonSchema.Keywords.Not
 
 import Data.Aeson (Value)
 
-import Fractal.JsonSchema.Types (Schema, ValidationResult(..), ValidationAnnotations, validationFailure)
+import Fractal.JsonSchema.Types (Schema, ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure)
 
 -- | Validate that a value does NOT satisfy the schema in 'not'
 --

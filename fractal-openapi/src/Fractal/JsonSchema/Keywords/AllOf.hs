@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Implementation of the 'allOf' composition keyword
 --
@@ -20,7 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult(..), ValidationErrors, ValidationAnnotations, schemaAllOf)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationErrors, ValidationAnnotations, schemaAllOf)
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser (parseSchema, ParseError)

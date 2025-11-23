@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Implementation of the 'enum' keyword
 --
@@ -17,7 +18,7 @@ import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult(..), validationFailure)
+import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure)
 
 -- | Compiled data for the 'enum' keyword
 data EnumData = EnumData

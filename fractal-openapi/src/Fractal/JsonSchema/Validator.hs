@@ -22,6 +22,7 @@ module Fractal.JsonSchema.Validator
   ) where
 
 import Fractal.JsonSchema.Types
+import qualified Fractal.JsonSchema.Validator.Result as VR
 import qualified Fractal.JsonSchema.Parser as Parser
 import qualified Fractal.JsonSchema.Keywords.Type as KW
 import qualified Fractal.JsonSchema.Keywords.Enum as KW
@@ -153,7 +154,7 @@ validateValueWithContext ctx schema val =
   in case schemaCore schema of
        BooleanSchema True -> ValidationSuccess mempty
        BooleanSchema False -> ValidationFailure $ ValidationErrors $ pure $
-         ValidationError "schema" emptyPointer emptyPointer "Schema is 'false'" Nothing
+         validationError "Schema is 'false'"
        ObjectSchema obj ->
          -- First validate against standard keywords, then custom keywords
          combineResults
@@ -372,10 +373,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                       ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                   in validateValueWithContext ctxForRefWithVersion resolvedSchema val
                 Nothing ->
-                  ValidationFailure $ ValidationErrors $ pure $
-                    ValidationError "$ref" emptyPointer emptyPointer
-                      ("Unable to resolve reference: " <> showReference ref)
-                      Nothing
+                  ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                    { VR.errorKeyword = "$ref"
+                    , VR.errorSchemaPath = emptyPointer
+                    , VR.errorInstancePath = emptyPointer
+                    , VR.errorMessage = "Unable to resolve reference: " <> showReference ref
+                    }
         Nothing -> validateObjectSchemaContent ctx obj val
   where
     refCtx =
@@ -430,10 +433,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                       ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                   in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                 Nothing ->
-                  ValidationFailure $ ValidationErrors $ pure $
-                    ValidationError "$ref" emptyPointer emptyPointer
-                      ("Unable to resolve reference: " <> showReference ref)
-                      Nothing
+                  ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                    { VR.errorKeyword = "$ref"
+                    , VR.errorSchemaPath = emptyPointer
+                    , VR.errorInstancePath = emptyPointer
+                    , VR.errorMessage = "Unable to resolve reference: " <> showReference ref
+                    }
         Nothing ->
           -- No $ref, check for $dynamicRef (2020-12+)
           case schemaDynamicRef obj' of
@@ -479,10 +484,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                               ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                           in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                         Nothing ->
-                          ValidationFailure $ ValidationErrors $ pure $
-                            ValidationError "$dynamicRef" emptyPointer emptyPointer
-                              ("Unable to resolve dynamic reference: " <> showReference dynRef)
-                              Nothing
+                          ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                            { VR.errorKeyword = "$dynamicRef"
+                            , VR.errorSchemaPath = emptyPointer
+                            , VR.errorInstancePath = emptyPointer
+                            , VR.errorMessage = "Unable to resolve dynamic reference: " <> showReference dynRef
+                            }
             Nothing ->
               -- No $dynamicRef, check for $recursiveRef (2019-09)
               case schemaRecursiveRef obj' of
@@ -523,10 +530,12 @@ validateAgainstObject parentCtx ctx schema obj val =
                                   ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
                               in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
                             Nothing ->
-                              ValidationFailure $ ValidationErrors $ pure $
-                                ValidationError "$recursiveRef" emptyPointer emptyPointer
-                                  ("Unable to resolve recursive reference: " <> showReference recRef)
-                                  Nothing
+                              ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                                { VR.errorKeyword = "$recursiveRef"
+                                , VR.errorSchemaPath = emptyPointer
+                                , VR.errorInstancePath = emptyPointer
+                                , VR.errorMessage = "Unable to resolve recursive reference: " <> showReference recRef
+                                }
                 Nothing -> ValidationSuccess mempty  -- No ref at all
 
     combineResults :: [ValidationResult] -> ValidationResult
@@ -605,7 +614,12 @@ validateAgainstObject parentCtx ctx schema obj val =
               in if null errors
                 then ValidationSuccess mempty
                 else ValidationFailure $ ValidationErrors $ NE.fromList $
-                  map (\msg -> ValidationError "keyword" emptyPointer emptyPointer msg Nothing) errors
+                  map (\msg -> VR.ValidationError
+                    { VR.errorKeyword = "keyword"
+                    , VR.errorSchemaPath = emptyPointer
+                    , VR.errorInstancePath = emptyPointer
+                    , VR.errorMessage = msg
+                    }) errors
 
     -- Validate object schema content without ref annotations (for pre-2019-09 or when no ref)
     validateObjectSchemaContent ctx' obj' val' =
@@ -1056,10 +1070,12 @@ validateObjectPropertyConstraints ctx obj objMap =
             missingProps = Set.difference requiredProps presentProps
         in if Set.null missingProps
           then ValidationSuccess mempty
-          else ValidationFailure $ ValidationErrors $ pure $
-            ValidationError "required" emptyPointer emptyPointer
-              ("Missing required properties: " <> T.intercalate ", " (Set.toList missingProps))
-              Nothing
+          else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+            { VR.errorKeyword = "required"
+            , VR.errorSchemaPath = emptyPointer
+            , VR.errorInstancePath = emptyPointer
+            , VR.errorMessage = "Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)
+            }
     
     validatePropertyNames ctx' schemaObj om = case validationPropertyNames (schemaValidation schemaObj) of
       Nothing -> ValidationSuccess mempty
@@ -1289,11 +1305,13 @@ validateDependentRequired ctx validation objMap =
                   let missingDeps = Set.difference requiredDeps presentProps
                   in if Set.null missingDeps
                     then ValidationSuccess mempty
-                    else ValidationFailure $ ValidationErrors $ pure $
-                      ValidationError "dependentRequired" emptyPointer emptyPointer
-                        ("Property '" <> propName <> "' requires these properties: " <>
-                         T.intercalate ", " (Set.toList missingDeps))
-                        Nothing
+                    else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                      { VR.errorKeyword = "dependentRequired"
+                      , VR.errorSchemaPath = emptyPointer
+                      , VR.errorInstancePath = emptyPointer
+                      , VR.errorMessage = "Property '" <> propName <> "' requires these properties: " <>
+                                          T.intercalate ", " (Set.toList missingDeps)
+                      }
             | (propName, requiredDeps) <- Map.toList depReqMap
             ]
           failures = [errs | ValidationFailure errs <- results]
@@ -1338,11 +1356,13 @@ validateDependencies ctx validation objMap = case validationDependencies validat
                     let missingDeps = Set.difference requiredDeps presentProps
                     in if Set.null missingDeps
                       then ValidationSuccess mempty
-                      else ValidationFailure $ ValidationErrors $ pure $
-                        ValidationError "dependencies" emptyPointer emptyPointer
-                          ("Property '" <> propName <> "' requires these properties: " <>
-                           T.intercalate ", " (Set.toList missingDeps))
-                          Nothing
+                      else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+                        { VR.errorKeyword = "dependencies"
+                        , VR.errorSchemaPath = emptyPointer
+                        , VR.errorInstancePath = emptyPointer
+                        , VR.errorMessage = "Property '" <> propName <> "' requires these properties: " <>
+                                            T.intercalate ", " (Set.toList missingDeps)
+                        }
                   -- Schema dependency: validate entire object against the schema
                   DependencySchema depSchema ->
                     validateValueWithContext ctx depSchema (Object objMap)

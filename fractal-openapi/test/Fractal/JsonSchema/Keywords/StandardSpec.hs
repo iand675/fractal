@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Keywords.StandardSpec (spec) where
 
 import Test.Hspec
@@ -14,7 +15,7 @@ import Fractal.JsonSchema.Keywords.Standard
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword (emptyKeywordRegistry)
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword, buildCompilationContext)
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), emptyRegistry, ValidationResult(..), ValidationAnnotations)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), emptyRegistry, ValidationResult, pattern ValidationSuccess, ValidationAnnotations)
 
 -- Helper to create a minimal schema
 mkSchema :: Value -> Schema

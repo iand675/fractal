@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Implementation of conditional keywords (if/then/else)
 --
@@ -13,7 +14,7 @@ module Fractal.JsonSchema.Keywords.Conditional
 
 import Data.Aeson (Value)
 
-import Fractal.JsonSchema.Types (Schema, ValidationResult(..), ValidationAnnotations)
+import Fractal.JsonSchema.Types (Schema, ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations)
 
 -- | Validate conditional keywords (if/then/else)
 --

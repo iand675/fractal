@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | Implementation of the 'type' keyword
 --
@@ -18,7 +19,7 @@ import qualified Data.Scientific as Sci
 import qualified Data.List.NonEmpty as NE
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema, SchemaType(..), SchemaObject(..), OneOrMany(..), ValidationResult(..), validationFailure)
+import Fractal.JsonSchema.Types (Schema, SchemaType(..), SchemaObject(..), OneOrMany(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure)
 
 -- | Compiled data for the 'type' keyword
 data TypeData = TypeData

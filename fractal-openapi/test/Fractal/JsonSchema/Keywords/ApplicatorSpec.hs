@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Keywords.ApplicatorSpec (spec) where
 
 import Test.Hspec
@@ -10,7 +11,7 @@ import qualified Data.Text as T
 import Fractal.JsonSchema.Keywords.AllOf (validateAllOf, allOfKeyword, compileAllOf)
 import Fractal.JsonSchema.Keywords.AnyOf (validateAnyOf, anyOfKeyword, compileAnyOf)
 import Fractal.JsonSchema.Keywords.OneOf (validateOneOf, oneOfKeyword, compileOneOf)
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), ValidationResult(..), ValidationAnnotations)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations)
 import Fractal.JsonSchema.Parser (parseSchema)
 import Fractal.JsonSchema.Validator (validateValueWithRegistry, defaultValidationConfig)
 import Fractal.JsonSchema.Types (emptyRegistry)
