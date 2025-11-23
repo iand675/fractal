@@ -87,6 +87,7 @@ import Data.Vector (fromList)
 import Data.Foldable (toList)
 import Data.Scientific (Scientific)
 import Data.Hashable (Hashable)
+import Data.Typeable (typeOf, cast)
 import GHC.Generics (Generic)
 import Numeric.Natural (Natural)
 import Language.Haskell.TH.Syntax (Lift)
@@ -634,8 +635,27 @@ pattern ValidationFailure errs <- (extractLegacyErrors -> Just errs)
 -- | Extract legacy annotations from new ValidationResult (for pattern matching)
 extractLegacyAnnotations :: ValidationResult -> Maybe ValidationAnnotations
 extractLegacyAnnotations result
-  | VR.isSuccess result = Just mempty  -- TODO: Convert AnnotationCollection to ValidationAnnotations
+  | VR.isSuccess result =
+      -- Convert AnnotationCollection back to ValidationAnnotations
+      -- Since AnnotationCollection doesn't store keyword names, we reconstruct
+      -- a compatible format where all annotations are stored under an empty keyword map
+      Just $ annotationCollectionToLegacy (VR.resultAnnotations result)
   | otherwise = Nothing
+  where
+    annotationCollectionToLegacy :: VR.AnnotationCollection -> ValidationAnnotations
+    annotationCollectionToLegacy (VR.AnnotationCollection m) =
+      -- Convert back to legacy format by extracting stored keyword maps
+      ValidationAnnotations $ Map.fromList
+        [ (path, extractKeywordMap annotations)
+        | (path, annotations) <- Map.toList m
+        ]
+    
+    extractKeywordMap :: [VR.SomeAnnotation] -> Map Text Value
+    extractKeywordMap [] = Map.empty
+    extractKeywordMap (VR.SomeAnnotation val ty : rest) =
+      case cast val of
+        Just (kwMap :: Map Text Value) -> kwMap <> extractKeywordMap rest
+        Nothing -> extractKeywordMap rest
 
 -- | Extract legacy errors from new ValidationResult (for pattern matching)
 extractLegacyErrors :: ValidationResult -> Maybe ValidationErrors
@@ -655,7 +675,14 @@ flattenErrorTree (VR.ErrorBranch _ children) = concatMap flattenErrorTree childr
 
 -- | Convert legacy annotations to new ValidationResult
 legacyToValidationResult :: ValidationAnnotations -> ValidationResult
-legacyToValidationResult _anns = VR.validationSuccess  -- TODO: Convert annotations
+legacyToValidationResult (ValidationAnnotations annMap) =
+  -- Convert legacy annotations to new AnnotationCollection
+  -- Store the entire keyword map as a single annotation to preserve all data
+  let annotations = VR.AnnotationCollection $ Map.fromList
+        [ (path, [VR.SomeAnnotation kwMap (typeOf kwMap)])
+        | (path, kwMap) <- Map.toList annMap
+        ]
+  in VR.validationSuccessWithAnnotations annotations
 
 -- | Convert legacy errors to new ValidationResult
 legacyErrorsToValidationResult :: ValidationErrors -> ValidationResult
