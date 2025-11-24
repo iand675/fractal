@@ -184,16 +184,24 @@ test-suite fractal-openapi-test
                     , Fractal.JsonSchema.ValidatorSpec
                     , Fractal.JsonSchema.VocabularySpec
                     , Fractal.JsonSchema.DialectSpec
+                    , Fractal.JsonSchema.DialectFormatSpec
                     , Fractal.JsonSchema.ComplianceSpec
                     , Fractal.JsonSchema.IntegrationSpec
                     , Fractal.JsonSchema.JSONPointerSpec
                     , Fractal.JsonSchema.EmbeddedMetaschemasSpec
                     , Fractal.JsonSchema.UnknownKeywordSpec
                     , Fractal.JsonSchema.Keyword.KeywordSpec
+                    , Fractal.JsonSchema.Keyword.MonadicSpec
+                    , Fractal.JsonSchema.Keyword.NavigationSpec
                     , Fractal.JsonSchema.Parser.ExtendedSpec
+                    , Fractal.JsonSchema.Keywords.StandardSpec
+                    , Fractal.JsonSchema.ParserDialectSpec
                     , Fractal.JsonSchema.Validator.ExtendedSpec
+                    , Fractal.JsonSchema.Validator.AnnotationSpec
                     , Fractal.JsonSchema.Vocabulary.RegistrySpec
                     , Fractal.JsonSchema.Vocabulary.ValidationSpec
+                    , Fractal.JsonSchema.Keywords.ApplicatorSpec
+                    , Fractal.JsonSchema.TestHelpers
                     , Fractal.OpenApi.ParserSpec
                     , Fractal.OpenApi.ValidatorSpec
                     , Fractal.OpenApi.Codegen.THSpec
@@ -213,6 +221,7 @@ test-suite fractal-openapi-test
                     , base64-bytestring >= 1.2 && < 2
                     , containers >= 0.6 && < 1
                     , transformers >= 0.6 && < 1
+                    , mtl >= 2.2 && < 3
                     , yaml >= 0.11 && < 1
                     , filepath >= 1.4 && < 2
                     , directory >= 1.3 && < 2

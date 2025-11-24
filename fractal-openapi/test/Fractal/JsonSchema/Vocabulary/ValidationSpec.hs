@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Vocabulary.ValidationSpec (spec) where
 
 import Test.Hspec
@@ -14,13 +15,14 @@ import Fractal.JsonSchema.Vocabulary.Validation
 import Fractal.JsonSchema.Types (Schema(..))
 import Fractal.JsonSchema.Parser (parseSchema)
 import Fractal.JsonSchema.Keyword.Types
+import Fractal.JsonSchema.Types (pattern ValidationSuccess)
 
 -- Test keyword definitions
 testCompile :: CompileFunc ()
 testCompile _ _ _ = Right ()
 
 testValidate :: ValidateFunc ()
-testValidate _ _ _ _ = pure []
+testValidate _ _ _ _ = pure (ValidationSuccess mempty)
 
 mkTestKeyword :: Text -> KeywordDefinition
 mkTestKeyword name = KeywordDefinition

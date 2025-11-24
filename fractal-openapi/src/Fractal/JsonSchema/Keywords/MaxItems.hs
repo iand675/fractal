@@ -9,14 +9,13 @@ module Fractal.JsonSchema.Keywords.MaxItems
   ) where
 
 import Data.Aeson (Value(..))
-import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Numeric.Natural (Natural)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..), LegacyValidateFunc, legacyValidate)
 import Fractal.JsonSchema.Types (Schema)
 
 -- | Compiled data for the 'maxItems' keyword
@@ -32,12 +31,15 @@ compileMaxItems value _schema _ctx = case value of
 
 -- | Validate function for 'maxItems' keyword
 validateMaxItems :: ValidateFunc MaxItemsData
-validateMaxItems _recursiveValidator (MaxItemsData maxLen) _ctx (Array arr) =
+validateMaxItems = legacyValidate "maxItems" validateMaxItemsLegacy
+
+validateMaxItemsLegacy :: LegacyValidateFunc MaxItemsData
+validateMaxItemsLegacy _recursiveValidator (MaxItemsData maxLen) _ctx (Array arr) =
   let arrLength = fromIntegral (length arr) :: Natural
   in if arrLength <= maxLen
      then pure []
      else pure ["Array length " <> T.pack (show arrLength) <> " exceeds maxItems " <> T.pack (show maxLen)]
-validateMaxItems _ _ _ _ = pure []  -- Only applies to arrays
+validateMaxItemsLegacy _ _ _ _ = pure []  -- Only applies to arrays
 
 -- | The 'maxItems' keyword definition
 maxItemsKeyword :: KeywordDefinition

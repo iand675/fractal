@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'maxLength' keyword
 --
 -- The maxLength keyword requires that a string value has at most the
@@ -16,7 +17,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'maxLength' keyword
 newtype MaxLengthData = MaxLengthData Int
@@ -32,9 +33,10 @@ compileMaxLength value _schema _ctx = case value of
 validateMaxLength :: ValidateFunc MaxLengthData
 validateMaxLength _recursiveValidator (MaxLengthData maxLen) _ctx (String txt) =
   if T.length txt <= maxLen
-    then pure []
-    else pure ["String length " <> T.pack (show (T.length txt)) <> " exceeds maxLength " <> T.pack (show maxLen)]
-validateMaxLength _ _ _ _ = pure []  -- Only applies to strings
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "maxLength" $
+                "String length " <> T.pack (show (T.length txt)) <> " exceeds maxLength " <> T.pack (show maxLen))
+validateMaxLength _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to strings
 
 -- | The 'maxLength' keyword definition
 maxLengthKeyword :: KeywordDefinition

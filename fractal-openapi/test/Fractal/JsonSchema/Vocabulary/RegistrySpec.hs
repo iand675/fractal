@@ -1,24 +1,22 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Vocabulary.RegistrySpec (spec) where
 
 import Test.Hspec
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Typeable (Typeable)
 
 import Fractal.JsonSchema.Vocabulary.Types
 import Fractal.JsonSchema.Vocabulary.Registry
 import Fractal.JsonSchema.Keyword.Types
-import Fractal.JsonSchema.Keyword (emptyKeywordRegistry)
-import Data.Aeson (Value(..))
+import Fractal.JsonSchema.Types (pattern ValidationSuccess)
 
 -- Test keyword definitions
 testCompile :: CompileFunc ()
 testCompile _ _ _ = Right ()
 
 testValidate :: ValidateFunc ()
-testValidate _ _ _ _ = pure []
+testValidate _ _ _ _ = pure (ValidationSuccess mempty)
 
 mkTestKeyword :: Text -> KeywordDefinition
 mkTestKeyword name = KeywordDefinition
@@ -26,6 +24,7 @@ mkTestKeyword name = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = testCompile
   , keywordValidate = testValidate
+  , keywordNavigation = NoNavigation
   }
 
 spec :: Spec

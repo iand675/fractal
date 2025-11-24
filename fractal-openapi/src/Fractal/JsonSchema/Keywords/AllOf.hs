@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
 import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationErrors, ValidationAnnotations, schemaAllOf)
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..), CompilationContext(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser (parseSchema, ParseError)
 
@@ -35,25 +35,17 @@ newtype AllOfData = AllOfData (NonEmpty Schema)
 compileAllOf :: CompileFunc AllOfData
 compileAllOf value schema ctx = case value of
   Array arr | not (V.null arr) -> do
-    -- Parse each element as a schema
-    parsedSchemas <- mapM parseSchemaElem (V.toList arr)
+    -- Parse each element as a schema using context-aware parser
+    parsedSchemas <- mapM (contextParseSubschema ctx) (V.toList arr)
     case NE.nonEmpty parsedSchemas of
       Just schemas' -> Right (AllOfData schemas')
       Nothing -> Left "allOf must contain at least one schema"
   _ -> Left "allOf must be a non-empty array"
-  where
-    parseSchemaElem v = case parseSchema v of
-      Left err -> Left $ "Invalid schema in allOf: " <> T.pack (show err)
-      Right s -> Right s
 
 -- | Validate allOf using the pluggable keyword system
 validateAllOfKeyword :: ValidateFunc AllOfData
 validateAllOfKeyword recursiveValidator (AllOfData schemas) _ctx value =
-  case validateAllOf recursiveValidator schemas value of
-    ValidationSuccess _ -> pure []
-    ValidationFailure errs -> pure $ validationErrorsToTexts errs
-  where
-    validationErrorsToTexts errs = [T.pack $ show errs]  -- TODO: proper error formatting
+  pure $ validateAllOf recursiveValidator schemas value
 
 -- | Validate that a value satisfies ALL schemas in allOf
 --

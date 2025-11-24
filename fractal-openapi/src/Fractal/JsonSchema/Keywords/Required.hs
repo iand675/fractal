@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'required' keyword
 --
 -- The required keyword specifies an array of property names that must
@@ -19,7 +20,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'required' keyword
 newtype RequiredData = RequiredData (Set.Set Text)
@@ -44,9 +45,10 @@ validateRequired _recursiveValidator (RequiredData requiredProps) _ctx (Object o
   let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
       missingProps = Set.difference requiredProps presentProps
   in if Set.null missingProps
-     then pure []
-     else pure ["Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)]
-validateRequired _ _ _ _ = pure []  -- Only applies to objects
+     then pure (ValidationSuccess mempty)
+     else pure (validationFailure "required" $
+                "Missing required properties: " <> T.intercalate ", " (Set.toList missingProps))
+validateRequired _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
 -- | The 'required' keyword definition
 requiredKeyword :: KeywordDefinition

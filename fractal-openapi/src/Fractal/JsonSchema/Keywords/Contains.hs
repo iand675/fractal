@@ -26,7 +26,7 @@ import Data.Maybe (fromMaybe)
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
-  , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
+  , ValidationResult, validationFailure, pattern ValidationSuccess, pattern ValidationFailure
   , validationContains, validationMinContains, validationMaxContains, schemaValidation
   )
 import Fractal.JsonSchema.Keyword.Types 
@@ -90,21 +90,28 @@ validateContainsKeyword recursiveValidator (ContainsData schema' minCount maxCou
       
       minCheck = matchCount >= minCount
       maxCheck = maybe True (matchCount <=) maxCount
-  in if not minCheck
-    then pure ["Array has " <> T.pack (show matchCount) <> " items matching contains, but minContains requires at least " <> T.pack (show minCount)]
+  in pure $
+    if not minCheck
+      then validationFailure "contains" $
+        "Array has " <> T.pack (show matchCount)
+        <> " items matching contains, but minContains requires at least "
+        <> T.pack (show minCount)
     else if not maxCheck
-      then pure ["Array has " <> T.pack (show matchCount) <> " items matching contains, but maxContains allows at most " <> T.pack (show (fromMaybe 0 maxCount))]
-      else pure []  -- Success
+      then validationFailure "contains" $
+        "Array has " <> T.pack (show matchCount)
+        <> " items matching contains, but maxContains allows at most "
+        <> maybe "0" (T.pack . show) maxCount
+    else ValidationSuccess mempty
 
-validateContainsKeyword _ _ _ _ = pure []  -- Only applies to arrays
+validateContainsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to arrays
 
 -- | Validate minContains (no-op, behavior is enforced by contains keyword)
 validateMinContainsKeyword :: ValidateFunc MinContainsData
-validateMinContainsKeyword _ _ _ _ = pure []  -- Behavior is handled by contains keyword
+validateMinContainsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Behavior handled by contains keyword
 
 -- | Validate maxContains (no-op, behavior is enforced by contains keyword)
 validateMaxContainsKeyword :: ValidateFunc MaxContainsData
-validateMaxContainsKeyword _ _ _ _ = pure []  -- Behavior is handled by contains keyword
+validateMaxContainsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Behavior handled by contains keyword
 
 -- | Keyword definition for contains
 containsKeyword :: KeywordDefinition

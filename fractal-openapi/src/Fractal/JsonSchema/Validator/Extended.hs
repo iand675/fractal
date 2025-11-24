@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 -- | Extended validator with custom keyword support
 --
 -- This module extends the standard validator to validate instances
@@ -13,8 +15,19 @@ module Fractal.JsonSchema.Validator.Extended
 
 import Data.Aeson (Value)
 import Data.Text (Text)
+import qualified Data.List.NonEmpty as NE
+import qualified Data.Text as T
 
-import Fractal.JsonSchema.Types (ValidationResult, ValidationConfig, isSuccess, Schema, ValidationContext)
+import Fractal.JsonSchema.Types
+  ( ValidationResult
+  , ValidationConfig
+  , isSuccess
+  , Schema
+  , ValidationContext
+  , ValidationErrors(..)
+  , pattern ValidationSuccess
+  , pattern ValidationFailure
+  )
 import Fractal.JsonSchema.Validator (validateValue, defaultValidationConfig, validateValueWithContext)
 import Fractal.JsonSchema.Parser.Extended (ExtendedSchema(..), fromExtendedSchema)
 import Fractal.JsonSchema.Keyword.Validate (validateKeywords)
@@ -74,7 +87,11 @@ validateExtendedWithConfig config extSchema value =
       
       -- Validate with custom keywords
       kwCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-      customErrors = validateKeywords recursiveValidator (extendedCompiledKeywords extSchema) value kwCtx config
+      customResult = validateKeywords recursiveValidator (extendedCompiledKeywords extSchema) value kwCtx config
+      customErrors = case customResult of
+        ValidationSuccess _ -> []
+        ValidationFailure (ValidationErrors errs) ->
+          map errorMessage (NE.toList errs)
 
       -- Combine results
       overallValid = isSuccess standardResult && null customErrors

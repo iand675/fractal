@@ -12,7 +12,6 @@ module Fractal.JsonSchema.Keywords.AdditionalProperties
   ) where
 
 import Data.Aeson (Value(..))
-import Control.Monad.Reader (Reader)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Map.Strict (Map)
@@ -27,13 +26,13 @@ import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..), Regex(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , validationAdditionalProperties, validationProperties, validationPatternProperties
-  , schemaValidation
+  , schemaValidation, ValidationAnnotations(..)
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , CompilationContext(..), combineValidationResults
   )
-import Fractal.JsonSchema.Parser (parseSchema)
 import qualified Fractal.JsonSchema.Regex as RegexModule
 
 -- | Compiled data for additionalProperties keyword
@@ -46,10 +45,10 @@ data AdditionalPropertiesData = AdditionalPropertiesData
 
 -- | Compile the additionalProperties keyword
 compileAdditionalProperties :: CompileFunc AdditionalPropertiesData
-compileAdditionalProperties value schema _ctx = do
+compileAdditionalProperties value schema ctx = do
   -- Parse the additionalProperties value as a schema
-  addlSchema <- case parseSchema value of
-    Left err -> Left $ "Invalid schema in additionalProperties: " <> T.pack (show err)
+  addlSchema <- case contextParseSubschema ctx value of
+    Left err -> Left $ "Invalid schema in additionalProperties: " <> err
     Right s -> Right s
   
   -- Read adjacent 'properties' and 'patternProperties' keywords from schema
@@ -84,12 +83,9 @@ validateAdditionalPropertiesKeyword recursiveValidator (AdditionalPropertiesData
       
       -- Validate each additional property
       results = [recursiveValidator addlSchema propValue | (_, propValue) <- additionalProps]
-      failures = [errs | ValidationFailure errs <- results]
-  in case failures of
-    [] -> pure []  -- Success
-    _ -> pure [T.pack $ show err | err <- failures]
+  in pure $ combineValidationResults results
 
-validateAdditionalPropertiesKeyword _ _ _ _ = pure []  -- Only applies to objects
+validateAdditionalPropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
 -- | Keyword definition for additionalProperties
 additionalPropertiesKeyword :: KeywordDefinition

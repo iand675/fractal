@@ -32,8 +32,7 @@ import qualified Fractal.JsonSchema.Keywords.String as KW
 import qualified Fractal.JsonSchema.Keywords.Format as KW
 -- Pluggable keyword system
 import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry, draft04Registry)
-import Fractal.JsonSchema.Keywords.Registry (draft06Registry, draft07Registry, draft201909Registry, draft202012Registry)
-import Fractal.JsonSchema.Keyword (keywordMap, lookupKeyword)
+import Fractal.JsonSchema.Keyword (KeywordRegistry(..), keywordMap, lookupKeyword)
 import qualified Fractal.JsonSchema.Keyword as Keyword
 import qualified Fractal.JsonSchema.Keyword.Types as Keyword.Types
 import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..))
@@ -578,19 +577,6 @@ validateAgainstObject parentCtx ctx schema obj val =
     validateBasicKeywords :: ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
     validateBasicKeywords ctx schema obj val =
       let rawKeywords = schemaRawKeywords schema
-          schemaVersion' = schemaVersion schema
-          schemaRegistry = contextSchemaRegistry ctx
-          registryMap = registrySchemas schemaRegistry  -- Extract Map Text Schema from SchemaRegistry
-          
-          -- Select appropriate keyword registry based on schema version
-          keywordRegistry = case schemaVersion' of
-            Just Draft04 -> draft04Registry
-            Just Draft06 -> draft06Registry
-            Just Draft07 -> draft07Registry
-            Just Draft201909 -> draft201909Registry
-            Just Draft202012 -> draft202012Registry
-            _ -> standardKeywordRegistry  -- Default to standard (Draft-06+)
-          
           -- Filter to only basic validation keywords (exclude array/object/composition keywords)
           basicKeywordNames = 
             [ "type", "enum", "const"
@@ -598,50 +584,22 @@ validateAgainstObject parentCtx ctx schema obj val =
             , "maxLength", "minLength", "pattern"
             ]
           basicKeywords = Map.filterWithKey (\k _ -> k `elem` basicKeywordNames) rawKeywords
+          legacyResult =
+            combineResults
+              [ KW.validateTypeConstraint obj val
+              , KW.validateEnumConstraint obj val
+              , KW.validateConstConstraint obj val
+              , KW.validateNumericConstraints obj val
+              , KW.validateStringConstraints ctx obj val
+              ]
       in
         -- Fall back to old validation functions for manually constructed schemas (empty schemaRawKeywords)
         if Map.null rawKeywords
-        then
-          -- Fall back to old validation functions for backward compatibility
-          combineResults
-            [ KW.validateTypeConstraint obj val
-            , KW.validateEnumConstraint obj val
-            , KW.validateConstConstraint obj val
-            , KW.validateNumericConstraints obj val
-            , KW.validateStringConstraints ctx obj val
-            ]
+        then legacyResult
         else if Map.null basicKeywords
         then ValidationSuccess mempty
         else
-          -- Use pluggable keyword system with version-appropriate registry
-          -- Build compilation context
-          let compilationCtx = buildCompilationContext registryMap keywordRegistry schema []
-              -- Get keyword definitions from registry
-              keywordDefs = keywordMap keywordRegistry
-              -- Compile keywords
-              compiledResult = compileKeywords keywordDefs basicKeywords schema compilationCtx
-          in case compiledResult of
-            Left err -> validationFailure "compilation" $ "Failed to compile keywords: " <> err
-            Right compiled ->
-              -- Create recursive validator for subschemas
-              let recursiveValidator sch v = validateValueWithContext ctx sch v
-                  -- Build keyword validation context (just paths for now)
-                  keywordCtx = Keyword.Types.ValidationContext'
-                    { Keyword.Types.kwContextInstancePath = []
-                    , Keyword.Types.kwContextSchemaPath = []
-                    }
-                  -- Validate using compiled keywords with recursive validator
-                  -- Pass ValidationConfig from context to keyword validators
-                  errors = KeywordValidate.validateKeywords recursiveValidator compiled val keywordCtx (contextConfig ctx)
-              in if null errors
-                then ValidationSuccess mempty
-                else ValidationFailure $ ValidationErrors $ NE.fromList $
-                  map (\msg -> VR.ValidationError
-                    { VR.errorKeyword = "keyword"
-                    , VR.errorSchemaPath = emptyPointer
-                    , VR.errorInstancePath = emptyPointer
-                    , VR.errorMessage = msg
-                    }) errors
+          validateKeywordMap ctx schema val basicKeywords
 
     -- Validate object schema content without ref annotations (for pre-2019-09 or when no ref)
     validateObjectSchemaContent ctx' obj' val' =
@@ -662,7 +620,7 @@ validateAgainstObject parentCtx ctx schema obj val =
                   ]
              else [])
             ++
-            [ validateComposition ctx'' obj' val'
+            [ validateComposition ctx'' schema obj' val'
             , validateConditional ctx'' obj' val'
             , KW.validateFormatConstraints ctx'' obj' val'
             , validateArrayConstraintsWithoutUnevaluated ctx'' obj' val'
@@ -696,18 +654,26 @@ validateAgainstObject parentCtx ctx schema obj val =
           validateUnevaluatedProperties ctx''' schemaObj objMap accAnns
         validateUnevaluatedForObject _ _ _ _ = ValidationSuccess mempty
 
--- | Validate composition keywords (allOf, anyOf, oneOf, not)
-validateComposition :: ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateComposition ctx obj val =
+validateComposition :: ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
+validateComposition ctx schema obj val =
   combineResults
-    [ maybe (ValidationSuccess mempty) (\schemas -> AllOf.validateAllOf validator schemas val) (schemaAllOf obj)
-    , maybe (ValidationSuccess mempty) (\schemas -> AnyOf.validateAnyOf validator schemas val) (schemaAnyOf obj)
-    , maybe (ValidationSuccess mempty) (\schemas -> OneOf.validateOneOf validator schemas val) (schemaOneOf obj)
-    , maybe (ValidationSuccess mempty) (\schema -> Not.validateNot validator schema val) (schemaNot obj)
+    [ validateKeywordWithFallback ctx schema val "allOf" allOfFallback
+    , validateKeywordWithFallback ctx schema val "anyOf" anyOfFallback
+    , oneOfFallback
+    , notFallback
     ]
   where
     -- Validator function that captures the context
-    validator schema value = validateValueWithContext ctx schema value
+    validator schema' value' = validateValueWithContext ctx schema' value'
+
+    allOfFallback =
+      maybe (ValidationSuccess mempty) (\schemas -> AllOf.validateAllOf validator schemas val) (schemaAllOf obj)
+    anyOfFallback =
+      maybe (ValidationSuccess mempty) (\schemas -> AnyOf.validateAnyOf validator schemas val) (schemaAnyOf obj)
+    oneOfFallback =
+      maybe (ValidationSuccess mempty) (\schemas -> OneOf.validateOneOf validator schemas val) (schemaOneOf obj)
+    notFallback =
+      maybe (ValidationSuccess mempty) (\schema' -> Not.validateNot validator schema' val) (schemaNot obj)
 
     combineResults results =
       let failures = [errs | ValidationFailure errs <- results]
@@ -715,6 +681,24 @@ validateComposition ctx obj val =
       in case failures of
         [] -> ValidationSuccess $ mconcat annotations
         (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Attempt to validate a specific keyword via the registry, falling back to the legacy path.
+validateKeywordWithFallback
+  :: ValidationContext
+  -> Schema
+  -> Value
+  -> Text
+  -> ValidationResult
+  -> ValidationResult
+validateKeywordWithFallback ctx schema value keywordName fallback =
+  let rawKeywords = schemaRawKeywords schema
+  in if Map.null rawKeywords
+     then fallback
+     else
+       case Map.lookup keywordName rawKeywords of
+         Nothing -> fallback
+         Just keywordValue ->
+           validateKeywordMap ctx schema value (Map.singleton keywordName keywordValue)
 
 -- | Validate conditional keywords (if/then/else, draft-07+)
 validateConditional :: ValidationContext -> SchemaObject -> Value -> ValidationResult
@@ -725,6 +709,39 @@ validateConditional ctx obj val = case schemaIf obj of
   where
     -- Validator function that captures the context
     validator schema value = validateValueWithContext ctx schema value
+
+-- | Compile and validate a subset of keywords via the registry.
+validateKeywordMap
+  :: ValidationContext
+  -> Schema
+  -> Value
+  -> Map Text Value
+  -> ValidationResult
+validateKeywordMap ctx schema value keywordValues
+  | Map.null keywordValues = ValidationSuccess mempty
+  | otherwise =
+      let keywordRegistry = keywordRegistryForSchemaVersion (schemaVersion schema)
+          schemaRegistry = contextSchemaRegistry ctx
+          registryMap = registrySchemas schemaRegistry
+          compilationCtx = buildCompilationContext registryMap keywordRegistry schema []
+          keywordDefs = keywordMap keywordRegistry
+      in case compileKeywords keywordDefs keywordValues schema compilationCtx of
+           Left err ->
+             validationFailure "compilation" $ "Failed to compile keywords: " <> err
+           Right compiledKeywords ->
+             let recursiveValidator sch v = validateValueWithContext ctx sch v
+                 keywordCtx = Keyword.Types.ValidationContext'
+                   { Keyword.Types.kwContextInstancePath = []
+                   , Keyword.Types.kwContextSchemaPath = []
+                   }
+             in KeywordValidate.validateKeywords recursiveValidator compiledKeywords value keywordCtx (contextConfig ctx)
+
+-- | Select the appropriate keyword registry for the schema version.
+keywordRegistryForSchemaVersion :: Maybe JsonSchemaVersion -> KeywordRegistry
+keywordRegistryForSchemaVersion version =
+  case version of
+    Just Draft04 -> draft04Registry
+    _ -> standardKeywordRegistry
 
 -- | Validate array constraints WITHOUT unevaluatedItems (for use when collecting annotations)
 validateArrayConstraintsWithoutUnevaluated :: ValidationContext -> SchemaObject -> Value -> ValidationResult

@@ -29,6 +29,7 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 import qualified Fractal.JsonSchema.Regex as RegexModule
@@ -65,11 +66,9 @@ validatePatternPropertiesKeyword recursiveValidator (PatternPropertiesData patte
             Left _ -> False  -- Invalid regex, skip
         ]
       failures = [errs | ValidationFailure errs <- results]
-  in case failures of
-    [] -> pure []  -- Success
-    _ -> pure [T.pack $ show err | err <- failures]
+  in pure $ combineValidationResults results
 
-validatePatternPropertiesKeyword _ _ _ _ = pure []  -- Only applies to objects
+validatePatternPropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
 -- | Keyword definition for patternProperties
 patternPropertiesKeyword :: KeywordDefinition

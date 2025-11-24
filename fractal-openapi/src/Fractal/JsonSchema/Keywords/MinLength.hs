@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'minLength' keyword
 --
 -- The minLength keyword requires that a string value has at least the
@@ -16,7 +17,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'minLength' keyword
 newtype MinLengthData = MinLengthData Int
@@ -32,9 +33,10 @@ compileMinLength value _schema _ctx = case value of
 validateMinLength :: ValidateFunc MinLengthData
 validateMinLength _recursiveValidator (MinLengthData minLen) _ctx (String txt) =
   if T.length txt >= minLen
-    then pure []
-    else pure ["String length " <> T.pack (show (T.length txt)) <> " is less than minLength " <> T.pack (show minLen)]
-validateMinLength _ _ _ _ = pure []  -- Only applies to strings
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "minLength" $
+                "String length " <> T.pack (show (T.length txt)) <> " is less than minLength " <> T.pack (show minLen))
+validateMinLength _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to strings
 
 -- | The 'minLength' keyword definition
 minLengthKeyword :: KeywordDefinition

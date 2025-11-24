@@ -25,6 +25,7 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 
@@ -44,12 +45,9 @@ validatePropertyNamesKeyword recursiveValidator (PropertyNamesData nameSchema) _
   -- Validate each property name (as a string) against the schema
   let propNames = [Key.toText k | k <- KeyMap.keys objMap]
       results = [recursiveValidator nameSchema (String propName) | propName <- propNames]
-      failures = [errs | ValidationFailure errs <- results]
-  in case failures of
-    [] -> pure []  -- Success
-    _ -> pure [T.pack $ show err | err <- failures]
+  in pure $ combineValidationResults results
 
-validatePropertyNamesKeyword _ _ _ _ = pure []  -- Only applies to objects
+validatePropertyNamesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
 -- | Keyword definition for propertyNames
 propertyNamesKeyword :: KeywordDefinition

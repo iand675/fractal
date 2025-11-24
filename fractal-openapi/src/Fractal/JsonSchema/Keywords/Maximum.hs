@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'maximum' keyword
 --
 -- The maximum keyword requires that a numeric value is less than or
@@ -16,7 +17,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'maximum' keyword
 newtype MaximumData = MaximumData Sci.Scientific
@@ -32,9 +33,10 @@ compileMaximum value _schema _ctx = case value of
 validateMaximum :: ValidateFunc MaximumData
 validateMaximum _recursiveValidator (MaximumData maxVal) _ctx (Number n) =
   if n <= maxVal
-    then pure []
-    else pure ["Value " <> T.pack (show n) <> " exceeds maximum " <> T.pack (show maxVal)]
-validateMaximum _ _ _ _ = pure []  -- Only applies to numbers
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "maximum" $
+                "Value " <> T.pack (show n) <> " exceeds maximum " <> T.pack (show maxVal))
+validateMaximum _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to numbers
 
 -- | The 'maximum' keyword definition
 maximumKeyword :: KeywordDefinition

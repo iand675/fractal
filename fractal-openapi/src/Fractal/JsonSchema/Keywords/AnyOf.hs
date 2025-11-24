@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
 import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaAnyOf)
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..), CompilationContext(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser (parseSchema, ParseError)
 
@@ -33,25 +33,30 @@ newtype AnyOfData = AnyOfData (NonEmpty Schema)
 
 -- | Compile the anyOf keyword
 compileAnyOf :: CompileFunc AnyOfData
-compileAnyOf value schema ctx = case value of
-  Array arr | not (V.null arr) -> do
-    -- Parse each element as a schema
-    parsedSchemas <- mapM parseSchemaElem (V.toList arr)
-    case NE.nonEmpty parsedSchemas of
-      Just schemas' -> Right (AnyOfData schemas')
-      Nothing -> Left "anyOf must contain at least one schema"
-  _ -> Left "anyOf must be a non-empty array"
+compileAnyOf value schema ctx =
+  case schemaCore schema of
+    ObjectSchema obj ->
+      case schemaAnyOf obj of
+        Just schemas -> Right (AnyOfData schemas)
+        Nothing -> parseFromValue
+    _ -> parseFromValue
   where
-    parseSchemaElem v = case parseSchema v of
-      Left err -> Left $ "Invalid schema in anyOf: " <> T.pack (show err)
+    parseFromValue = case value of
+      Array arr | not (V.null arr) -> do
+        parsedSchemas <- mapM parseSchemaElem (V.toList arr)
+        case NE.nonEmpty parsedSchemas of
+          Just schemas' -> Right (AnyOfData schemas')
+          Nothing -> Left "anyOf must contain at least one schema"
+      _ -> Left "anyOf must be a non-empty array"
+
+    parseSchemaElem v = case contextParseSubschema ctx v of
+      Left err -> Left $ "Invalid schema in anyOf: " <> err
       Right s -> Right s
 
 -- | Validate anyOf using the pluggable keyword system
 validateAnyOfKeyword :: ValidateFunc AnyOfData
 validateAnyOfKeyword recursiveValidator (AnyOfData schemas) _ctx value =
-  case validateAnyOf recursiveValidator schemas value of
-    ValidationSuccess _ -> pure []
-    ValidationFailure errs -> pure [T.pack $ show errs]  -- TODO: proper error formatting
+  pure $ validateAnyOf recursiveValidator schemas value
 
 -- | Validate that a value satisfies AT LEAST ONE schema in anyOf
 --

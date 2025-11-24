@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Fractal.JsonSchema.DialectSpec (spec) where
 
@@ -10,7 +11,7 @@ import qualified Data.Map.Strict as Map
 import Data.List (sort)
 
 import Fractal.JsonSchema.Dialect
-import Fractal.JsonSchema.Types (JsonSchemaVersion(..))
+import Fractal.JsonSchema.Types (JsonSchemaVersion(..), pattern ValidationSuccess)
 import Fractal.JsonSchema.Vocabulary.Types
 import Fractal.JsonSchema.Vocabulary.Registry
 import qualified Fractal.JsonSchema.Vocabulary as Vocab
@@ -99,7 +100,7 @@ spec = describe "Dialect" $ do
             { keywordName = "conflicting"
             , keywordScope = AnyScope
             , keywordCompile = \_ _ _ -> Left "Not implemented" :: Either Text ()
-            , keywordValidate = \_ (_ :: ()) _ _ -> pure []
+            , keywordValidate = \_ (_ :: ()) _ _ -> pure (ValidationSuccess mempty)
             , keywordNavigation = NoNavigation
             }
           vocab1 = Vocabulary

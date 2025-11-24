@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Draft-04 style minimum keyword with exclusiveMinimum support
 --
 -- In Draft-04, exclusiveMinimum is a boolean that modifies the behavior
@@ -10,10 +11,9 @@ module Fractal.JsonSchema.Keywords.Draft04.Minimum
   ) where
 
 import Fractal.JsonSchema.Keyword.Types
-import Fractal.JsonSchema.Types (Schema(..), schemaRawKeywords)
+import Fractal.JsonSchema.Types (Schema(..), schemaRawKeywords, ValidationAnnotations(..), pattern ValidationSuccess)
 import Data.Aeson (Value(..))
 import Data.Text (Text)
-import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 import qualified Data.Scientific as Sci
 import Data.Typeable (Typeable)
@@ -42,7 +42,10 @@ compileMinimum value schema _ctx = case value of
 
 -- | Validate function for Draft-04 'minimum' keyword
 validateMinimum :: ValidateFunc MinimumData
-validateMinimum _recursiveValidator (MinimumData minVal exclusive) _ctx (Number n) =
+validateMinimum = legacyValidate "minimum" validateMinimumLegacy
+
+validateMinimumLegacy :: LegacyValidateFunc MinimumData
+validateMinimumLegacy _recursiveValidator (MinimumData minVal exclusive) _ctx (Number n) =
   if exclusive
     then if n > minVal
          then pure []
@@ -50,7 +53,7 @@ validateMinimum _recursiveValidator (MinimumData minVal exclusive) _ctx (Number 
     else if n >= minVal
          then pure []
          else pure ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinimum _ _ _ _ = pure []  -- Only applies to numbers
+validateMinimumLegacy _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The Draft-04 'minimum' keyword definition
 minimumKeyword :: KeywordDefinition
@@ -79,7 +82,7 @@ compileExclusiveMinimum value _schema _ctx = case value of
 -- This keyword doesn't validate on its own - it only modifies
 -- the behavior of the 'minimum' keyword via adjacent data.
 validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
-validateExclusiveMinimum _ _ _ _ = pure []
+validateExclusiveMinimum _ _ _ _ = pure (ValidationSuccess mempty)
 
 -- | The Draft-04 'exclusiveMinimum' keyword definition
 exclusiveMinimumKeyword :: KeywordDefinition

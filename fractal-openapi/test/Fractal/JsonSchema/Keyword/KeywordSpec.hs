@@ -6,19 +6,20 @@ import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Typeable (Typeable)
 
-import Control.Monad.Trans.Reader (runReader)
 import Fractal.JsonSchema.Keyword
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword.Compile
-import Fractal.JsonSchema.Types (ValidationConfig)
-import Fractal.JsonSchema.Validator (defaultValidationConfig)
 import Fractal.JsonSchema.Keyword.Validate
-import Fractal.JsonSchema.Types (Schema, emptyPointer, ValidationResult, pattern ValidationSuccess, ValidationAnnotations)
+import Fractal.JsonSchema.Types
+  ( validationFailure
+  , pattern ValidationSuccess
+  )
+import Fractal.JsonSchema.Validator (defaultValidationConfig)
 import Fractal.JsonSchema.Parser (parseSchema)
+import Fractal.JsonSchema.TestHelpers (validationErrors)
 
 -- | Test compiled data: minimum value for numbers
 data MinValueData = MinValueData Double
@@ -33,9 +34,11 @@ compileMinValue _ _schema _ctx = Left "x-min-value must be a number"
 validateMinValue :: ValidateFunc MinValueData
 validateMinValue _recursiveValidator (MinValueData minVal) _ctx (Number n) =
   if realToFrac n >= minVal
-    then pure []
-    else pure ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinValue _ _ _ _ = pure ["x-min-value can only validate numbers"]
+    then pure (ValidationSuccess mempty)
+    else pure $ validationFailure "x-min-value" $
+      "Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)
+validateMinValue _ _ _ _ =
+  pure $ validationFailure "x-min-value" "x-min-value can only validate numbers"
 
 -- | Test compiled data: string must match pattern
 data PatternData = PatternData Text
@@ -48,9 +51,10 @@ compilePattern _ _schema _ctx = Left "x-pattern must be a string"
 validatePattern :: ValidateFunc PatternData
 validatePattern _recursiveValidator (PatternData pat) _ctx (String s) =
   if pat `T.isInfixOf` s
-    then pure []
-    else pure ["String does not contain pattern: " <> pat]
-validatePattern _ _ _ _ = pure ["x-pattern can only validate strings"]
+    then pure (ValidationSuccess mempty)
+    else pure $ validationFailure "x-pattern" ("String does not contain pattern: " <> pat)
+validatePattern _ _ _ _ =
+  pure $ validationFailure "x-pattern" "x-pattern can only validate strings"
 
 spec :: Spec
 spec = describe "Keyword System" $ do
@@ -154,12 +158,15 @@ spec = describe "Keyword System" $ do
           recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Valid: 15 >= 10
-      validateKeywords recursiveValidator compiledKeywords (Number 15) validationCtx defaultValidationConfig `shouldBe` []
+      case validateKeywords recursiveValidator compiledKeywords (Number 15) validationCtx defaultValidationConfig of
+        ValidationSuccess _ -> pure ()
+        _ -> expectationFailure "Expected validation success"
 
       -- Invalid: 5 < 10
-      let errors = validateKeywords recursiveValidator compiledKeywords (Number 5) validationCtx defaultValidationConfig
-      length errors `shouldBe` 1
-      head errors `shouldSatisfy` T.isInfixOf "less than minimum"
+      let result = validateKeywords recursiveValidator compiledKeywords (Number 5) validationCtx defaultValidationConfig
+      let minErrs = validationErrors result
+      length minErrs `shouldBe` 1
+      head minErrs `shouldSatisfy` T.isInfixOf "less than minimum"
 
     it "validates with multiple keywords" $ do
       let minDef = mkKeywordDefinition "x-min" AnyScope compileMinValue validateMinValue
@@ -179,16 +186,16 @@ spec = describe "Keyword System" $ do
           recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Test number validation
-      let numErrors = validateKeywords recursiveValidator compiled (Number 10) validationCtx defaultValidationConfig
-      -- x-min succeeds (10 >= 5), x-pattern fails (can only validate strings)
-      length numErrors `shouldBe` 1
-      head numErrors `shouldSatisfy` T.isInfixOf "can only validate strings"
+      let numResult = validateKeywords recursiveValidator compiled (Number 10) validationCtx defaultValidationConfig
+      let numErrs = validationErrors numResult
+      length numErrs `shouldBe` 1
+      head numErrs `shouldSatisfy` T.isInfixOf "can only validate strings"
 
       -- Test string validation
-      let strErrors = validateKeywords recursiveValidator compiled (String "hello world") validationCtx defaultValidationConfig
-      -- x-pattern succeeds (contains "hello"), x-min fails (can only validate numbers)
-      length strErrors `shouldBe` 1
-      head strErrors `shouldSatisfy` T.isInfixOf "can only validate numbers"
+      let strResult = validateKeywords recursiveValidator compiled (String "hello world") validationCtx defaultValidationConfig
+      let strErrs = validationErrors strResult
+      length strErrs `shouldBe` 1
+      head strErrs `shouldSatisfy` T.isInfixOf "can only validate numbers"
 
     it "collects all errors from all keywords" $ do
       let minDef = mkKeywordDefinition "x-min" AnyScope compileMinValue validateMinValue
@@ -201,9 +208,10 @@ spec = describe "Keyword System" $ do
           recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Value way below minimum
-      let errors = validateKeywords recursiveValidator compiled (Number 1) validationCtx defaultValidationConfig
-      length errors `shouldBe` 1
-      head errors `shouldSatisfy` T.isInfixOf "less than minimum"
+      let result = validateKeywords recursiveValidator compiled (Number 1) validationCtx defaultValidationConfig
+      let belowErrs = validationErrors result
+      length belowErrs `shouldBe` 1
+      head belowErrs `shouldSatisfy` T.isInfixOf "less than minimum"
 
   describe "Keyword Scope" $ do
     it "creates keywords with different scopes" $ do

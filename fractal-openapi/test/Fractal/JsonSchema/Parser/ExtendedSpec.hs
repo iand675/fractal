@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Parser.ExtendedSpec (spec) where
 
 import Test.Hspec
@@ -12,9 +13,13 @@ import Data.Typeable (Typeable)
 import Fractal.JsonSchema.Parser.Extended
 import Fractal.JsonSchema.Parser (parseSchema, ParseError(..))
 import Fractal.JsonSchema.Keyword
-import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword.Compile
-import Fractal.JsonSchema.Types (Schema, JsonSchemaVersion(..))
+import Fractal.JsonSchema.Types
+  ( Schema
+  , JsonSchemaVersion(..)
+  , validationFailure
+  , pattern ValidationSuccess
+  )
 
 -- Test keyword implementations
 data MaxValueData = MaxValueData Double
@@ -27,9 +32,10 @@ compileMaxValue _ _schema _ctx = Left "x-max-value must be a number"
 validateMaxValue :: ValidateFunc MaxValueData
 validateMaxValue _recursiveValidator (MaxValueData maxVal) _ctx (Number n) =
   if realToFrac n <= maxVal
-    then pure []
-    else pure ["Value exceeds maximum"]
-validateMaxValue _ _ _ _ = pure []
+    then pure (ValidationSuccess mempty)
+    else pure $ validationFailure "x-max-value" "Value exceeds maximum"
+validateMaxValue _ _ _ _ =
+  pure $ validationFailure "x-max-value" "x-max-value can only validate numbers"
 
 spec :: Spec
 spec = describe "Extended Parser" $ do

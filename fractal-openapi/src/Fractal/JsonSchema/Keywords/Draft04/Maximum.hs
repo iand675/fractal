@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Draft-04 style maximum keyword with exclusiveMaximum support
 --
 -- In Draft-04, exclusiveMaximum is a boolean that modifies the behavior
@@ -10,10 +11,9 @@ module Fractal.JsonSchema.Keywords.Draft04.Maximum
   ) where
 
 import Fractal.JsonSchema.Keyword.Types
-import Fractal.JsonSchema.Types (Schema(..), schemaRawKeywords)
+import Fractal.JsonSchema.Types (Schema(..), schemaRawKeywords, ValidationAnnotations(..), pattern ValidationSuccess)
 import Data.Aeson (Value(..))
 import Data.Text (Text)
-import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 import qualified Data.Scientific as Sci
 import Data.Typeable (Typeable)
@@ -42,7 +42,10 @@ compileMaximum value schema _ctx = case value of
 
 -- | Validate function for Draft-04 'maximum' keyword
 validateMaximum :: ValidateFunc MaximumData
-validateMaximum _recursiveValidator (MaximumData maxVal exclusive) _ctx (Number n) =
+validateMaximum = legacyValidate "maximum" validateMaximumLegacy
+
+validateMaximumLegacy :: LegacyValidateFunc MaximumData
+validateMaximumLegacy _recursiveValidator (MaximumData maxVal exclusive) _ctx (Number n) =
   if exclusive
     then if n < maxVal
          then pure []
@@ -50,7 +53,7 @@ validateMaximum _recursiveValidator (MaximumData maxVal exclusive) _ctx (Number 
     else if n <= maxVal
          then pure []
          else pure ["Value " <> T.pack (show n) <> " is greater than maximum " <> T.pack (show maxVal)]
-validateMaximum _ _ _ _ = pure []  -- Only applies to numbers
+validateMaximumLegacy _ _ _ _ = pure []  -- Only applies to numbers
 
 -- | The Draft-04 'maximum' keyword definition
 maximumKeyword :: KeywordDefinition
@@ -79,7 +82,7 @@ compileExclusiveMaximum value _schema _ctx = case value of
 -- This keyword doesn't validate on its own - it only modifies
 -- the behavior of the 'maximum' keyword via adjacent data.
 validateExclusiveMaximum :: ValidateFunc ExclusiveMaximumData
-validateExclusiveMaximum _ _ _ _ = pure []
+validateExclusiveMaximum _ _ _ _ = pure (ValidationSuccess mempty)
 
 -- | The Draft-04 'exclusiveMaximum' keyword definition
 exclusiveMaximumKeyword :: KeywordDefinition

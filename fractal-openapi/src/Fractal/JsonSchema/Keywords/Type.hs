@@ -58,8 +58,9 @@ compileType value _schema _ctx = case value of
 validateType :: ValidateFunc TypeData
 validateType _recursiveValidator (TypeData expectedTypes) _ctx actual =
   if any (matchesType actual) expectedTypes
-    then pure []
-    else pure ["Expected one of: " <> T.intercalate ", " (map (T.pack . show) expectedTypes)]
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "type" $
+                "Expected one of: " <> T.intercalate ", " (map (T.pack . show) expectedTypes))
   where
     matchesType :: Value -> SchemaType -> Bool
     matchesType Null NullType = True

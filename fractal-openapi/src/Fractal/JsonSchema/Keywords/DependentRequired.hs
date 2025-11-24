@@ -19,7 +19,6 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Data.List.NonEmpty (NonEmpty)
@@ -29,7 +28,7 @@ import Data.Foldable (toList)
 import Fractal.JsonSchema.Types 
   ( Schema, SchemaCore(..), SchemaObject(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
-  , ValidationErrors(..), emptyPointer
+  , ValidationErrors(..), emptyPointer, ValidationAnnotations(..)
   )
 import qualified Fractal.JsonSchema.Validator.Result as VR
 import Fractal.JsonSchema.Keyword.Types 
@@ -78,10 +77,10 @@ validateDependentRequiredKeyword _recursiveValidator (DependentRequiredData depR
         , not (Set.null missingDeps)  -- Has missing dependencies
         ]
   in case errors of
-    [] -> pure []
-    (e:es) -> pure [T.pack $ show $ ValidationErrors $ e NE.:| es]
+    [] -> pure (ValidationSuccess mempty)
+    (e:es) -> pure (ValidationFailure $ ValidationErrors $ e NE.:| es)
 
-validateDependentRequiredKeyword _ _ _ _ = pure []  -- Only applies to objects
+validateDependentRequiredKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
 -- | Keyword definition for dependentRequired
 dependentRequiredKeyword :: KeywordDefinition

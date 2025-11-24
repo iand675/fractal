@@ -1,21 +1,20 @@
+{-# LANGUAGE PatternSynonyms #-}
 -- | Tests for monadic keyword compilation and adjacent keyword access
 module Fractal.JsonSchema.Keyword.MonadicSpec (spec) where
 
 import Test.Hspec
 import Data.Aeson (Value(..), object, (.=))
-import qualified Data.Aeson as Aeson
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Typeable (Typeable, cast)
+import Data.Typeable (Typeable)
 import Data.Scientific (Scientific)
 
 import Fractal.JsonSchema.Keyword
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword.Monadic
 import Fractal.JsonSchema.Parser (parseSchema)
-import Fractal.JsonSchema.Types (Schema(..))
+import Fractal.JsonSchema.Types (Schema(..), pattern ValidationSuccess)
 
 -- | Test keyword that accesses an adjacent "minimum" keyword
 -- This simulates Draft-04 behavior where exclusiveMinimum is boolean
@@ -29,7 +28,7 @@ compileDraft04ExclusiveMin value _schema _ctx = case value of
   _ -> Left "exclusiveMinimum must be a boolean"
 
 validateDraft04ExclusiveMin :: ValidateFunc Draft04ExclusiveMinData
-validateDraft04ExclusiveMin _ _ _ _ = pure []  -- Validation handled by minimum keyword
+validateDraft04ExclusiveMin _ _ _ _ = pure (ValidationSuccess mempty)  -- Validation handled by minimum keyword
 
 draft04ExclusiveMinKeyword :: KeywordDefinition
 draft04ExclusiveMinKeyword = KeywordDefinition
@@ -37,6 +36,7 @@ draft04ExclusiveMinKeyword = KeywordDefinition
   , keywordScope = AnyScope
   , keywordCompile = compileDraft04ExclusiveMin
   , keywordValidate = validateDraft04ExclusiveMin
+  , keywordNavigation = NoNavigation
   }
 
 -- | Test keyword that reads adjacent data using CompileM
@@ -44,18 +44,15 @@ newtype MinimumWithExclusiveData = MinimumWithExclusiveData
   { minimumValue :: Scientific
   } deriving (Show, Eq, Typeable)
 
--- This would be the monadic compile function (not yet integrated)
--- compileMinimumWithExclusive :: Value -> CompileM MinimumWithExclusiveData
--- compileMinimumWithExclusive value = do
---   -- Get the minimum value
---   minimum <- case value of
---     Number n -> pure n
---     _ -> liftEither $ Left "minimum must be a number"
---
---   -- Check if adjacent exclusiveMinimum is true
---   mExclusive <- getAdjacentData @Draft04ExclusiveMinData "exclusiveMinimum"
---
---   pure $ MinimumWithExclusiveData minimum
+mkCompilationContext :: Schema -> KeywordRegistry -> CompilationContext
+mkCompilationContext schema registry = CompilationContext
+  { contextRegistry = Map.empty
+  , contextResolveRef = \_ -> Left "No refs"
+  , contextCurrentSchema = schema
+  , contextParentPath = []
+  , contextKeywordRegistry = registry
+  , contextParseSubschema = \_ -> Left "No subschema parsing in tests"
+  }
 
 spec :: Spec
 spec = do
@@ -101,13 +98,7 @@ spec = do
       case parseSchema schemaJson of
         Left err -> expectationFailure $ "Failed to parse schema: " ++ show err
         Right schema -> do
-          let ctx = CompilationContext
-                { contextRegistry = Map.empty
-                , contextResolveRef = \_ -> Left "No refs"
-                , contextCurrentSchema = schema
-                , contextParentPath = []
-                , contextKeywordRegistry = registry
-                }
+          let ctx = mkCompilationContext schema registry
               state = initCompilationState schema ctx
 
           case runCompileM (compileAdjacent "exclusiveMinimum") state of
@@ -122,13 +113,7 @@ spec = do
       case parseSchema schemaJson of
         Left err -> expectationFailure $ "Failed to parse schema: " ++ show err
         Right schema -> do
-          let ctx = CompilationContext
-                { contextRegistry = Map.empty
-                , contextResolveRef = \_ -> Left "No refs"
-                , contextCurrentSchema = schema
-                , contextParentPath = []
-                , contextKeywordRegistry = registry
-                }
+          let ctx = mkCompilationContext schema registry
               state = initCompilationState schema ctx
 
           case runCompileM (compileAdjacent "x-custom") state of
@@ -142,13 +127,7 @@ spec = do
       case parseSchema schemaJson of
         Left err -> expectationFailure $ "Failed to parse schema: " ++ show err
         Right schema -> do
-          let ctx = CompilationContext
-                { contextRegistry = Map.empty
-                , contextResolveRef = \_ -> Left "No refs"
-                , contextCurrentSchema = schema
-                , contextParentPath = []
-                , contextKeywordRegistry = registry
-                }
+          let ctx = mkCompilationContext schema registry
               state = initCompilationState schema ctx
 
           case runCompileM (compileAdjacent "exclusiveMinimum") state of
@@ -166,13 +145,7 @@ spec = do
       case parseSchema schemaJson of
         Left err -> expectationFailure $ "Failed to parse schema: " ++ show err
         Right schema -> do
-          let ctx = CompilationContext
-                { contextRegistry = Map.empty
-                , contextResolveRef = \_ -> Left "No refs"
-                , contextCurrentSchema = schema
-                , contextParentPath = []
-                , contextKeywordRegistry = registry
-                }
+          let ctx = mkCompilationContext schema registry
               state = initCompilationState schema ctx
 
           case runCompileM (getAdjacentData @Draft04ExclusiveMinData "exclusiveMinimum") state of
@@ -187,13 +160,7 @@ spec = do
       case parseSchema schemaJson of
         Left err -> expectationFailure $ "Failed to parse schema: " ++ show err
         Right schema -> do
-          let ctx = CompilationContext
-                { contextRegistry = Map.empty
-                , contextResolveRef = \_ -> Left "No refs"
-                , contextCurrentSchema = schema
-                , contextParentPath = []
-                , contextKeywordRegistry = registry
-                }
+          let ctx = mkCompilationContext schema registry
               state = initCompilationState schema ctx
 
           -- Try to extract as wrong type (String instead of Bool)
@@ -209,19 +176,13 @@ spec = do
       case parseSchema schemaJson of
         Left err -> expectationFailure $ "Failed to parse schema: " ++ show err
         Right schema -> do
-          let ctx = CompilationContext
-                { contextRegistry = Map.empty
-                , contextResolveRef = \_ -> Left "No refs"
-                , contextCurrentSchema = schema
-                , contextParentPath = []
-                , contextKeywordRegistry = registry
-                }
+          let ctx = mkCompilationContext schema registry
               state = initCompilationState schema ctx
 
           -- Compile twice, should use memoization second time
           case runCompileM (compileAdjacent "exclusiveMinimum" >> compileAdjacent "exclusiveMinimum") state of
             Left err -> expectationFailure $ "Failed: " ++ T.unpack err
-            Right (mCompiled, finalState) -> do
+            Right (_, finalState) -> do
               -- Should be in compiled map
               Map.member "exclusiveMinimum" (stateCompiled finalState) `shouldBe` True
               -- Should not be in compiling set
@@ -236,13 +197,7 @@ spec = do
       case parseSchema schemaJson of
         Left err -> expectationFailure $ "Failed to parse schema: " ++ show err
         Right schema -> do
-          let ctx = CompilationContext
-                { contextRegistry = Map.empty
-                , contextResolveRef = \_ -> Left "No refs"
-                , contextCurrentSchema = schema
-                , contextParentPath = []
-                , contextKeywordRegistry = registry
-                }
+          let ctx = mkCompilationContext schema registry
               state = initCompilationState schema ctx
 
           -- State should have empty compiling set initially

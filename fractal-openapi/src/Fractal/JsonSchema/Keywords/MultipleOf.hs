@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'multipleOf' keyword
 --
 -- The multipleOf keyword requires that a numeric value is a multiple
@@ -16,7 +17,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationResult, ValidationAnnotations(..), pattern ValidationSuccess)
 
 -- | Compiled data for the 'multipleOf' keyword
 newtype MultipleOfData = MultipleOfData Sci.Scientific
@@ -37,33 +38,38 @@ validateMultipleOf :: ValidateFunc MultipleOfData
 validateMultipleOf _recursiveValidator (MultipleOfData divisor) _ctx (Number n) =
   let numDouble = Sci.toRealFloat n :: Double
       divisorDouble = Sci.toRealFloat divisor :: Double
-      
-      -- Check if the number is an integer (represented as Scientific but actually integer)
-      isIntegerValue = numDouble == fromIntegral (round numDouble :: Integer)
-      
-      -- Special case: if number is integer and divisor <= 1, check if 1/divisor is integer
-      -- This handles overflow cases like 1e308 / 0.5 without actually dividing
-      -- e.g., 0.5 -> 1/0.5 = 2 (integer), so any integer is a multiple of 0.5
-      -- e.g., 0.25 -> 1/0.25 = 4 (integer), so any integer is a multiple of 0.25
-      handleOverflowCase = if isIntegerValue && divisorDouble > 0 && divisorDouble <= 1
-        then
-          let reciprocal = 1 / divisorDouble
-              isValidDivisor = reciprocal == fromIntegral (round reciprocal :: Integer)
-          in if isValidDivisor
-             then pure []  -- Any integer is a multiple
-             else checkStandard  -- Fall back to standard check
-        else checkStandard
-      
+
+      successResult = ValidationSuccess mempty
+      failureResult msg = validationFailure "multipleOf" msg
+
       -- Standard check: divide and check remainder
+      checkStandard :: ValidationResult
       checkStandard =
         let quotient = numDouble / divisorDouble
             remainder = quotient - fromIntegral (round quotient :: Integer)
             epsilon = 1e-10
         in if abs remainder < epsilon || abs (1 - remainder) < epsilon
-           then pure []
-           else pure ["Value is not a multiple of " <> T.pack (show divisor)]
-  in handleOverflowCase
-validateMultipleOf _ _ _ _ = pure []  -- Only applies to numbers
+             then successResult
+             else failureResult ("Value is not a multiple of " <> T.pack (show divisor))
+
+      -- Check if the number is an integer (represented as Scientific but actually integer)
+      isIntegerValue = numDouble == fromIntegral (round numDouble :: Integer)
+
+      -- Special case: if number is integer and divisor <= 1, check if 1/divisor is integer
+      -- This handles overflow cases like 1e308 / 0.5 without actually dividing
+      -- e.g., 0.5 -> 1/0.5 = 2 (integer), so any integer is a multiple of 0.5
+      -- e.g., 0.25 -> 1/0.25 = 4 (integer), so any integer is a multiple of 0.25
+      result =
+        if isIntegerValue && divisorDouble > 0 && divisorDouble <= 1
+          then
+            let reciprocal = 1 / divisorDouble
+                isValidDivisor = reciprocal == fromIntegral (round reciprocal :: Integer)
+            in if isValidDivisor
+                 then successResult  -- Any integer is a multiple
+                 else checkStandard  -- Fall back to standard check
+          else checkStandard
+  in pure result
+validateMultipleOf _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to numbers
 
 -- | The 'multipleOf' keyword definition
 multipleOfKeyword :: KeywordDefinition

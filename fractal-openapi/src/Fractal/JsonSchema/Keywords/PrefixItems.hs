@@ -28,6 +28,7 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 
@@ -55,13 +56,10 @@ compilePrefixItems value _schema _ctx = case value of
 validatePrefixItemsKeyword :: ValidateFunc PrefixItemsData
 validatePrefixItemsKeyword recursiveValidator (PrefixItemsData prefixSchemas) _ctx (Array arr) =
   -- Validate each item against its corresponding schema
-  let results = zipWith (recursiveValidator) (NE.toList prefixSchemas) (toList arr)
-      failures = [errs | ValidationFailure errs <- results]
-  in case failures of
-    [] -> pure []  -- Success
-    _ -> pure [T.pack $ show err | err <- failures]
+  let results = zipWith recursiveValidator (NE.toList prefixSchemas) (toList arr)
+  in pure $ combineValidationResults results
 
-validatePrefixItemsKeyword _ _ _ _ = pure []  -- Only applies to arrays
+validatePrefixItemsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to arrays
 
 -- | Keyword definition for prefixItems
 prefixItemsKeyword :: KeywordDefinition

@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
 --
 -- The exclusiveMinimum keyword requires that a numeric value is strictly
@@ -16,7 +17,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
 newtype ExclusiveMinimumData = ExclusiveMinimumData Sci.Scientific
@@ -32,9 +33,10 @@ compileExclusiveMinimum value _schema _ctx = case value of
 validateExclusiveMinimum :: ValidateFunc ExclusiveMinimumData
 validateExclusiveMinimum _recursiveValidator (ExclusiveMinimumData minVal) _ctx (Number n) =
   if n > minVal
-    then pure []
-    else pure ["Value " <> T.pack (show n) <> " must be greater than exclusiveMinimum " <> T.pack (show minVal)]
-validateExclusiveMinimum _ _ _ _ = pure []  -- Only applies to numbers
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "exclusiveMinimum"
+                ("Value " <> T.pack (show n) <> " must be greater than exclusiveMinimum " <> T.pack (show minVal)))
+validateExclusiveMinimum _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to numbers
 
 -- | The 'exclusiveMinimum' keyword definition (Draft-06+ style)
 exclusiveMinimumKeyword :: KeywordDefinition

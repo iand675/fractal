@@ -53,9 +53,10 @@ validateNot validateSchema schema value =
 -- | ValidateFunc for 'not' keyword (pluggable system)
 validateNotKeyword :: ValidateFunc NotData
 validateNotKeyword recursiveValidator (NotData schema) _ctx value =
-  case recursiveValidator schema value of
-    ValidationSuccess _ -> pure ["Value matches schema in 'not'"]
-    ValidationFailure _ -> pure []
+  pure $
+    case recursiveValidator schema value of
+      ValidationSuccess _ -> validationFailure "not" "Value matches schema in 'not'"
+      ValidationFailure _ -> ValidationSuccess mempty
 
 -- | Keyword definition for 'not'
 notKeyword :: KeywordDefinition

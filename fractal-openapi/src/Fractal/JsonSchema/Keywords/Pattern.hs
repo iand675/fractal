@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'pattern' keyword
 --
 -- The pattern keyword requires that a string value matches the specified
@@ -15,7 +16,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 import qualified Fractal.JsonSchema.Regex as Regex
 
 -- | Compiled data for the 'pattern' keyword
@@ -42,9 +43,9 @@ compilePattern value _schema _ctx = case value of
 validatePattern :: ValidateFunc PatternData
 validatePattern _recursiveValidator (PatternData regex patternStr) _ctx (String txt) =
   if Regex.matchRegex regex txt
-    then pure []
-    else pure ["String does not match pattern: " <> patternStr]
-validatePattern _ _ _ _ = pure []  -- Only applies to strings
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "pattern" $ "String does not match pattern: " <> patternStr)
+validatePattern _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to strings
 
 -- | The 'pattern' keyword definition
 patternKeyword :: KeywordDefinition

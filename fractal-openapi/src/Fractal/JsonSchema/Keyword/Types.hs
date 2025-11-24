@@ -2,6 +2,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- | Core types for the pluggable keyword system
 --
@@ -15,6 +16,8 @@ module Fractal.JsonSchema.Keyword.Types
   , KeywordNavigation(..)
   , CompileFunc
   , ValidateFunc
+  , LegacyValidateFunc
+  , legacyValidate
     -- * Keyword Registry
   , KeywordRegistry(..)
     -- * Compilation Context
@@ -30,6 +33,8 @@ module Fractal.JsonSchema.Keyword.Types
   , getCompilationState
   , modifyCompilationState
   , liftEither
+    -- * Utilities
+  , combineValidationResults
   ) where
 
 import Control.Monad.Trans.State.Strict (StateT, runStateT, get, modify')
@@ -43,7 +48,15 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema, ValidationResult, ValidationConfig)
+import Fractal.JsonSchema.Types
+  ( Schema
+  , ValidationResult
+  , ValidationConfig
+  , ValidationAnnotations(..)
+  , validationFailure
+  , pattern ValidationSuccess
+  , pattern ValidationFailure
+  )
 
 -- | Scope restriction for keywords - defines which schema types they apply to
 data KeywordScope
@@ -82,6 +95,9 @@ data CompilationContext = CompilationContext
   , contextKeywordRegistry :: KeywordRegistry
     -- ^ Keyword registry for monadic compilation
     -- This allows compile functions to access adjacent keywords on-demand
+  , contextParseSubschema :: Value -> Either Text Schema
+    -- ^ Function to parse a subschema value with proper base URI context
+    -- This preserves the parent schema's base URI for correct reference resolution
   }
 
 -- | Compile function signature: processes keyword value at schema parse time
@@ -111,10 +127,37 @@ type CompileFunc a = Value -> Schema -> CompilationContext -> Either Text a
 -- the recursive validator parameter can be ignored.
 type ValidateFunc a = 
   (Schema -> Value -> ValidationResult)  -- ^ Recursive validator for subschemas
-  -> a                                    -- ^ Compiled data
+  -> a                                   -- ^ Compiled data
   -> ValidationContext'                  -- ^ Validation context (paths)
-  -> Value                                -- ^ Instance value
-  -> Reader ValidationConfig [Text]      -- ^ Validation errors in Reader monad
+  -> Value                               -- ^ Instance value
+  -> Reader ValidationConfig ValidationResult  -- ^ Validation result in Reader monad
+
+-- | Legacy validate function signature returning error messages.
+type LegacyValidateFunc a =
+  (Schema -> Value -> ValidationResult)
+  -> a
+  -> ValidationContext'
+  -> Value
+  -> Reader ValidationConfig [Text]
+
+-- | Combine multiple validation results, accumulating annotations and failures.
+combineValidationResults :: [ValidationResult] -> ValidationResult
+combineValidationResults = foldl combine (ValidationSuccess mempty)
+  where
+    combine (ValidationFailure e1) (ValidationFailure e2) = ValidationFailure (e1 <> e2)
+    combine failure@(ValidationFailure _) _ = failure
+    combine _ failure@(ValidationFailure _) = failure
+    combine (ValidationSuccess anns1) (ValidationSuccess anns2) = ValidationSuccess (anns1 <> anns2)
+
+-- | Helper to adapt legacy validators that return error messages into the new result type.
+legacyValidate :: Text -> LegacyValidateFunc a -> ValidateFunc a
+legacyValidate keyword legacyFn recursiveValidator compiledData ctx value = do
+  errors <- legacyFn recursiveValidator compiledData ctx value
+  let results =
+        if null errors
+          then [ValidationSuccess mempty]
+          else map (validationFailure keyword) errors
+  pure $ combineValidationResults results
 
 -- | Validation context for keyword validators
 --
@@ -141,11 +184,10 @@ data CompiledKeyword = CompiledKeyword
     -- ^ Name of the keyword
   , compiledData :: SomeCompiledData
     -- ^ The compiled data (existentially quantified)
-  , compiledValidate :: (Schema -> Value -> ValidationResult) -> ValidationContext' -> Value -> Reader ValidationConfig [Text]
+  , compiledValidate :: (Schema -> Value -> ValidationResult) -> ValidationContext' -> Value -> Reader ValidationConfig ValidationResult
     -- ^ Type-erased validate function (closed over compiled data)
     -- Takes: recursive validator, validation context, value
-    -- Returns validation errors in Reader monad with ValidationConfig
-    -- Returns: list of validation errors
+    -- Returns validation result in Reader monad with ValidationConfig
   , compiledAdjacentData :: Map Text Value
     -- ^ Values from adjacent keywords accessed during compilation
   }

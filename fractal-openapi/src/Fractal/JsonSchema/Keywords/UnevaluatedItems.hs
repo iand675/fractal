@@ -30,6 +30,7 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , LegacyValidateFunc, legacyValidate
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 
@@ -50,7 +51,7 @@ compileUnevaluatedItems value _schema _ctx = case parseSchema value of
 -- the hardcoded validation dispatch is replaced with keyword registry dispatch.
 --
 -- For now, validation continues to use the hardcoded functions in Validator.hs.
-validateUnevaluatedItemsKeyword :: ValidateFunc UnevaluatedItemsData
+validateUnevaluatedItemsKeyword :: LegacyValidateFunc UnevaluatedItemsData
 validateUnevaluatedItemsKeyword _recursiveValidator (UnevaluatedItemsData _schema) _ctx _val =
   -- TODO (fractal-b8g): Implement full validation with annotation tracking
   -- For now, this is handled by the hardcoded validateUnevaluatedItems function
@@ -62,7 +63,7 @@ unevaluatedItemsKeyword = KeywordDefinition
   { keywordName = "unevaluatedItems"
   , keywordScope = AnyScope
   , keywordCompile = compileUnevaluatedItems
-  , keywordValidate = validateUnevaluatedItemsKeyword
+  , keywordValidate = legacyValidate "unevaluatedItems" validateUnevaluatedItemsKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> validationUnevaluatedItems (schemaValidation obj)
       _ -> Nothing

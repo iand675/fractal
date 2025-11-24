@@ -74,10 +74,10 @@ validateFormatKeyword _recursiveValidator (FormatData format) _ctx (String txt) 
   -- Full assertion mode will be implemented in fractal-b8g
   let result = FormatImpl.validateFormatValue format txt
   in case result of
-    ValidationSuccess _ -> pure []  -- Format valid
-    ValidationFailure _ -> pure []  -- Format invalid but annotation mode only
+    ValidationSuccess anns -> pure (ValidationSuccess anns)  -- Format valid (annotations preserved)
+    ValidationFailure _ -> pure (ValidationSuccess mempty)    -- Format invalid but annotation mode only
 
-validateFormatKeyword _ _ _ _ = pure []  -- Only applies to strings
+validateFormatKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to strings
 
 -- | Keyword definition for format
 formatKeyword :: KeywordDefinition

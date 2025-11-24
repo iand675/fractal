@@ -9,7 +9,6 @@ module Fractal.JsonSchema.Keywords.MinProperties
   ) where
 
 import Data.Aeson (Value(..))
-import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -17,7 +16,7 @@ import Numeric.Natural (Natural)
 import qualified Data.Scientific as Sci
 import qualified Data.Aeson.KeyMap as KeyMap
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..), LegacyValidateFunc, legacyValidate)
 import Fractal.JsonSchema.Types (Schema)
 
 -- | Compiled data for the 'minProperties' keyword
@@ -33,12 +32,15 @@ compileMinProperties value _schema _ctx = case value of
 
 -- | Validate function for 'minProperties' keyword
 validateMinProperties :: ValidateFunc MinPropertiesData
-validateMinProperties _recursiveValidator (MinPropertiesData minProps) _ctx (Object objMap) =
+validateMinProperties = legacyValidate "minProperties" validateMinPropertiesLegacy
+
+validateMinPropertiesLegacy :: LegacyValidateFunc MinPropertiesData
+validateMinPropertiesLegacy _recursiveValidator (MinPropertiesData minProps) _ctx (Object objMap) =
   let propCount = fromIntegral (KeyMap.size objMap) :: Natural
   in if propCount >= minProps
      then pure []
      else pure ["Object has " <> T.pack (show propCount) <> " properties, but minProperties is " <> T.pack (show minProps)]
-validateMinProperties _ _ _ _ = pure []  -- Only applies to objects
+validateMinPropertiesLegacy _ _ _ _ = pure []  -- Only applies to objects
 
 -- | The 'minProperties' keyword definition
 minPropertiesKeyword :: KeywordDefinition

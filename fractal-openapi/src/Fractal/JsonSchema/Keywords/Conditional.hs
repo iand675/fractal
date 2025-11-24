@@ -113,17 +113,15 @@ compileElse value _schema _ctx = case parseSchema value of
 -- | Validate using the 'if' keyword (handles all conditional logic)
 validateIfKeyword :: ValidateFunc IfData
 validateIfKeyword recursiveValidator (IfData ifSchema' thenSchema' elseSchema') _ctx val =
-  case validateConditional recursiveValidator ifSchema' thenSchema' elseSchema' val of
-    ValidationSuccess _ -> pure []  -- Success
-    ValidationFailure errs -> pure [T.pack $ show errs]
+  pure $ validateConditional recursiveValidator ifSchema' thenSchema' elseSchema' val
 
 -- | Validate 'then' keyword (no-op, handled by 'if')
 validateThenKeyword :: ValidateFunc ThenData
-validateThenKeyword _ _ _ _ = pure []  -- No-op, logic is in 'if'
+validateThenKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- No-op, logic is in 'if'
 
 -- | Validate 'else' keyword (no-op, handled by 'if')
 validateElseKeyword :: ValidateFunc ElseData
-validateElseKeyword _ _ _ _ = pure []  -- No-op, logic is in 'if'
+validateElseKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- No-op, logic is in 'if'
 
 -- | Keyword definition for 'if'
 ifKeyword :: KeywordDefinition

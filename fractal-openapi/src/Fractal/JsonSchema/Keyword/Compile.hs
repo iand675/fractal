@@ -20,10 +20,12 @@ import Data.Aeson (Value)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Typeable (Typeable, cast)
 
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Types (Schema)
+import qualified Fractal.JsonSchema.Parser as Parser
 
 -- | Collection of compiled keywords
 --
@@ -69,6 +71,7 @@ buildCompilationContext registry keywordRegistry schema parentPath =
     , contextCurrentSchema = schema
     , contextParentPath = parentPath
     , contextKeywordRegistry = keywordRegistry
+    , contextParseSubschema = parseSubschemaWithContext schema
     }
   where
     -- Simple reference resolution - looks up URI in registry
@@ -77,6 +80,15 @@ buildCompilationContext registry keywordRegistry schema parentPath =
       case Map.lookup uri reg of
         Just s -> Right s
         Nothing -> Left $ "Reference not found: " <> uri
+    
+    -- Parse a subschema value with the parent schema's base URI context
+    parseSubschemaWithContext :: Schema -> Value -> Either Text Schema
+    parseSubschemaWithContext _parentSchema value =
+      -- For now, just use the standard parseSchema
+      -- TODO: This should preserve base URI context from parent
+      case Parser.parseSchema value of
+        Left err -> Left $ T.pack (show err)
+        Right s -> Right s
 
 -- | Compile a single keyword
 --

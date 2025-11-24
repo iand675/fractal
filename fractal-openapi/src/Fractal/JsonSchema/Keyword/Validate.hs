@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 -- | Keyword validation phase
 --
 -- This module implements the validate phase of the two-phase keyword system.
@@ -9,14 +11,17 @@ module Fractal.JsonSchema.Keyword.Validate
 
 import Control.Monad.Reader (runReader)
 import Data.Aeson (Value)
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Text (Text)
-import Data.Typeable (Typeable, cast)
 
 import Fractal.JsonSchema.Keyword.Types
-import Fractal.JsonSchema.Keyword.Compile (CompiledKeywords(..), lookupCompiledKeyword)
-import Fractal.JsonSchema.Types (Schema, ValidationResult, ValidationConfig)
+import Fractal.JsonSchema.Keyword.Compile (CompiledKeywords(..))
+import Fractal.JsonSchema.Types
+  ( Schema
+  , ValidationResult
+  , ValidationConfig
+  , pattern ValidationSuccess
+  , pattern ValidationFailure
+  )
 
 -- | Validate all keywords
 --
@@ -33,13 +38,28 @@ validateKeywords
   -> Value                                 -- ^ Instance value to validate
   -> ValidationContext'                    -- ^ Validation context (paths)
   -> ValidationConfig                      -- ^ Validation configuration (passed to Reader)
-  -> [Text]
+  -> ValidationResult
 validateKeywords recursiveValidator (CompiledKeywords compiled) value ctx config =
-  -- Validate each compiled keyword using its type-erased validate function
-  concatMap validateOne (Map.elems compiled)
+  case failures of
+    [] ->
+      ValidationSuccess (mconcat annotations)
+    (e:es) ->
+      ValidationFailure (foldl (<>) e es)
   where
-    validateOne :: CompiledKeyword -> [Text]
+    results = map validateOne (Map.elems compiled)
+
+    failures =
+      [ errs
+      | result <- results
+      , ValidationFailure errs <- pure result
+      ]
+
+    annotations =
+      [ anns
+      | result <- results
+      , ValidationSuccess anns <- pure result
+      ]
+
+    validateOne :: CompiledKeyword -> ValidationResult
     validateOne (CompiledKeyword _name _data validateFn _adjacent) =
-      -- Call the type-erased validate function with recursive validator and context
-      -- Run the Reader monad with the provided ValidationConfig
       runReader (validateFn recursiveValidator ctx value) config

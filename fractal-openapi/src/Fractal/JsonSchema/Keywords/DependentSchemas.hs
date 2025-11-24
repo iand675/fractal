@@ -29,6 +29,7 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 
@@ -58,12 +59,9 @@ validateDependentSchemasKeyword recursiveValidator (DependentSchemasData depSche
         | (propName, depSchema) <- Map.toList depSchemaMap
         , KeyMap.member (Key.fromText propName) objMap  -- Property is present
         ]
-      failures = [errs | ValidationFailure errs <- results]
-  in case failures of
-    [] -> pure []  -- Success
-    _ -> pure [T.pack $ show err | err <- failures]
+  in pure $ combineValidationResults results
 
-validateDependentSchemasKeyword _ _ _ _ = pure []  -- Only applies to objects
+validateDependentSchemasKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
 -- | Keyword definition for dependentSchemas
 dependentSchemasKeyword :: KeywordDefinition

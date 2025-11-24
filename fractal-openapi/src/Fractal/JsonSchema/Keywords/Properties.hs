@@ -12,7 +12,6 @@ module Fractal.JsonSchema.Keywords.Properties
   ) where
 
 import Data.Aeson (Value(..))
-import Control.Monad.Reader (Reader)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Map.Strict (Map)
@@ -24,11 +23,12 @@ import Data.Typeable (Typeable)
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
-  , validationProperties, schemaValidation
+  , validationProperties, schemaValidation, ValidationAnnotations(..)
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , CompilationContext(..), combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 
@@ -38,13 +38,13 @@ newtype PropertiesData = PropertiesData (Map Text Schema)
 
 -- | Compile the properties keyword
 compileProperties :: CompileFunc PropertiesData
-compileProperties (Object obj) _schema _ctx = do
+compileProperties (Object obj) _schema ctx = do
   -- Parse each property value as a schema
   let entries = KeyMap.toList obj
   schemas <- mapM parseEntry entries
   Right $ PropertiesData $ Map.fromList schemas
   where
-    parseEntry (k, v) = case parseSchema v of
+    parseEntry (k, v) = case (contextParseSubschema ctx) v of
       Left err -> Left $ "Invalid schema for property '" <> Key.toText k <> "': " <> T.pack (show err)
       Right schema -> Right (Key.toText k, schema)
 
@@ -59,12 +59,9 @@ validatePropertiesKeyword recursiveValidator (PropertiesData propSchemas) _ctx (
         | (propName, propSchema) <- Map.toList propSchemas
         , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
         ]
-      failures = [errs | ValidationFailure errs <- results]
-  in case failures of
-    [] -> pure []  -- Success
-    _ -> pure [T.pack $ show err | err <- failures]
+  in pure $ combineValidationResults results
 
-validatePropertiesKeyword _ _ _ _ = pure []  -- Only applies to objects
+validatePropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
 -- | Keyword definition for properties
 propertiesKeyword :: KeywordDefinition

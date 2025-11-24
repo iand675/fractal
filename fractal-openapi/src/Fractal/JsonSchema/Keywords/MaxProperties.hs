@@ -9,7 +9,6 @@ module Fractal.JsonSchema.Keywords.MaxProperties
   ) where
 
 import Data.Aeson (Value(..))
-import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -17,7 +16,7 @@ import Numeric.Natural (Natural)
 import qualified Data.Scientific as Sci
 import qualified Data.Aeson.KeyMap as KeyMap
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..), LegacyValidateFunc, legacyValidate)
 import Fractal.JsonSchema.Types (Schema)
 
 -- | Compiled data for the 'maxProperties' keyword
@@ -33,12 +32,15 @@ compileMaxProperties value _schema _ctx = case value of
 
 -- | Validate function for 'maxProperties' keyword
 validateMaxProperties :: ValidateFunc MaxPropertiesData
-validateMaxProperties _recursiveValidator (MaxPropertiesData maxProps) _ctx (Object objMap) =
+validateMaxProperties = legacyValidate "maxProperties" validateMaxPropertiesLegacy
+
+validateMaxPropertiesLegacy :: LegacyValidateFunc MaxPropertiesData
+validateMaxPropertiesLegacy _recursiveValidator (MaxPropertiesData maxProps) _ctx (Object objMap) =
   let propCount = fromIntegral (KeyMap.size objMap) :: Natural
   in if propCount <= maxProps
      then pure []
      else pure ["Object has " <> T.pack (show propCount) <> " properties, but maxProperties is " <> T.pack (show maxProps)]
-validateMaxProperties _ _ _ _ = pure []  -- Only applies to objects
+validateMaxPropertiesLegacy _ _ _ _ = pure []  -- Only applies to objects
 
 -- | The 'maxProperties' keyword definition
 maxPropertiesKeyword :: KeywordDefinition

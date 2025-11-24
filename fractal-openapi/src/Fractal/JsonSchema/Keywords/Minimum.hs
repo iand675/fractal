@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'minimum' keyword
 --
 -- The minimum keyword requires that a numeric value is greater than or
@@ -16,7 +17,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'minimum' keyword
 newtype MinimumData = MinimumData Sci.Scientific
@@ -32,9 +33,10 @@ compileMinimum value _schema _ctx = case value of
 validateMinimum :: ValidateFunc MinimumData
 validateMinimum _recursiveValidator (MinimumData minVal) _ctx (Number n) =
   if n >= minVal
-    then pure []
-    else pure ["Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal)]
-validateMinimum _ _ _ _ = pure []  -- Only applies to numbers
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "minimum" $
+                "Value " <> T.pack (show n) <> " is less than minimum " <> T.pack (show minVal))
+validateMinimum _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to numbers
 
 -- | The 'minimum' keyword definition
 minimumKeyword :: KeywordDefinition

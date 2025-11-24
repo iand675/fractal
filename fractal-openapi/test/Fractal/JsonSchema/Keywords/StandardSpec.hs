@@ -3,21 +3,21 @@ module Fractal.JsonSchema.Keywords.StandardSpec (spec) where
 
 import Test.Hspec
 import Data.Aeson (Value(..), object, toJSON)
-import qualified Data.Aeson as Aeson
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Vector (fromList)
-import qualified Data.Scientific as Sci
 
-import Control.Monad.Trans.Reader (runReader)
 import Fractal.JsonSchema.Keywords.Standard
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword (emptyKeywordRegistry)
-import Fractal.JsonSchema.Keyword.Compile (compileKeyword, buildCompilationContext)
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), emptyRegistry, ValidationResult, pattern ValidationSuccess, ValidationAnnotations, ValidationConfig)
-import Fractal.JsonSchema.Validator (defaultValidationConfig)
+import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
+import Fractal.JsonSchema.Types
+  ( Schema(..)
+  , SchemaCore(..)
+  , pattern ValidationSuccess
+  )
+import Fractal.JsonSchema.TestHelpers (runValidationErrors)
 
 -- Helper to create a minimal schema
 mkSchema :: Value -> Schema
@@ -39,11 +39,12 @@ mkContext schema = CompilationContext
   , contextCurrentSchema = schema
   , contextParentPath = []
   , contextKeywordRegistry = emptyKeywordRegistry
+  , contextParseSubschema = \_ -> Left "No subschema parsing in tests"
   }
+
 
 spec :: Spec
 spec = describe "Standard Keywords" $ do
-
   describe "const keyword" $ do
     it "compiles const value" $ do
       let value = toJSON ("hello" :: Text)
@@ -52,9 +53,7 @@ spec = describe "Standard Keywords" $ do
 
       case compileKeyword constKeyword value schema ctx of
         Left err -> expectationFailure $ "Compilation failed: " ++ T.unpack err
-        Right compiled -> do
-          let recursiveValidator = \_ _ -> ValidationSuccess mempty
-              vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
+        Right compiled ->
           compiledKeywordName compiled `shouldBe` "const"
 
     it "validates matching const value" $ do
@@ -67,8 +66,8 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          let errors = runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text))) defaultValidationConfig
-          errors `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text)))
+            `shouldBe` []
 
     it "rejects non-matching const value" $ do
       let value = toJSON ("hello" :: Text)
@@ -80,7 +79,7 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          let errors = runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("world" :: Text))) defaultValidationConfig
+          let errors = runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("world" :: Text)))
           length errors `shouldBe` 1
           head errors `shouldSatisfy` T.isInfixOf "does not match const"
 
@@ -94,8 +93,8 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) defaultValidationConfig `shouldBe` []
-          let errors = runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (43 :: Int))) defaultValidationConfig
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) `shouldBe` []
+          let errors = runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (43 :: Int)))
           length errors `shouldBe` 1
 
   describe "enum keyword" $ do
@@ -121,9 +120,9 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("red" :: Text))) defaultValidationConfig `shouldBe` []
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("green" :: Text))) defaultValidationConfig `shouldBe` []
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("blue" :: Text))) defaultValidationConfig `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("red" :: Text))) `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("green" :: Text))) `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("blue" :: Text))) `shouldBe` []
 
     it "rejects value not in enum" $ do
       let value = Array $ fromList [toJSON ("red" :: Text), toJSON ("green" :: Text), toJSON ("blue" :: Text)]
@@ -135,7 +134,7 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          let errors = runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("yellow" :: Text))) defaultValidationConfig
+          let errors = runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("yellow" :: Text)))
           length errors `shouldBe` 1
           head errors `shouldSatisfy` T.isInfixOf "not in enum"
 
@@ -171,8 +170,8 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text))) defaultValidationConfig `shouldBe` []
-          let errors = runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) defaultValidationConfig
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text))) `shouldBe` []
+          let errors = runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int)))
           length errors `shouldBe` 1
 
     it "validates number type" $ do
@@ -185,8 +184,8 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) defaultValidationConfig `shouldBe` []
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (3.14 :: Double))) defaultValidationConfig `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (3.14 :: Double))) `shouldBe` []
 
     it "validates integer type" $ do
       let value = toJSON ("integer" :: Text)
@@ -198,8 +197,8 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) defaultValidationConfig `shouldBe` []
-          let errors = runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (3.14 :: Double))) defaultValidationConfig
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) `shouldBe` []
+          let errors = runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (3.14 :: Double)))
           length errors `shouldBe` 1
 
     it "validates boolean type" $ do
@@ -212,8 +211,8 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON True)) defaultValidationConfig `shouldBe` []
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON False)) defaultValidationConfig `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON True)) `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON False)) `shouldBe` []
 
     it "validates null type" $ do
       let value = toJSON ("null" :: Text)
@@ -225,7 +224,7 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx Null) defaultValidationConfig `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx Null) `shouldBe` []
 
     it "validates object type" $ do
       let value = toJSON ("object" :: Text)
@@ -237,7 +236,7 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (object [])) defaultValidationConfig `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (object [])) `shouldBe` []
 
     it "validates array type" $ do
       let value = toJSON ("array" :: Text)
@@ -249,7 +248,7 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (Array $ fromList [])) defaultValidationConfig `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (Array $ fromList [])) `shouldBe` []
 
     it "compiles type union" $ do
       let value = Array $ fromList [toJSON ("string" :: Text), toJSON ("number" :: Text)]
@@ -261,9 +260,9 @@ spec = describe "Standard Keywords" $ do
         Right compiled -> do
           let recursiveValidator = \_ _ -> ValidationSuccess mempty
               vCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text))) defaultValidationConfig `shouldBe` []
-          runReader (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) defaultValidationConfig `shouldBe` []
-          let errors = runReader (compiledValidate compiled recursiveValidator vCtx (toJSON True)) defaultValidationConfig
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON ("hello" :: Text))) `shouldBe` []
+          runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON (42 :: Int))) `shouldBe` []
+          let errors = runValidationErrors (compiledValidate compiled recursiveValidator vCtx (toJSON True))
           length errors `shouldBe` 1
 
     it "fails compilation for unknown type" $ do

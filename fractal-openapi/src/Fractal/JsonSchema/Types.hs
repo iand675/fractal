@@ -572,6 +572,14 @@ data Schema = Schema
   deriving (Eq, Show, Generic)
   deriving stock Lift
 
+-- __Note on Manual Schema Construction__:
+--
+-- The @schemaRawKeywords@ field must be populated for the pluggable keyword system to work.
+-- The parser automatically populates this field. If you need to construct schemas manually
+-- for testing or other purposes, use @Fractal.JsonSchema.Parser.parseSchema@ instead of
+-- direct construction, or ensure @schemaRawKeywords@ is properly populated from your typed
+-- fields.
+
 -- | Re-export new validation result types from Validator.Result
 type ValidationResult = VR.ValidationResult
 type ValidationError = VR.ValidationError

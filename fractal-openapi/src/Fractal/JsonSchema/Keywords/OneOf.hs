@@ -49,9 +49,7 @@ compileOneOf value schema ctx = case value of
 -- | Validate oneOf using the pluggable keyword system
 validateOneOfKeyword :: ValidateFunc OneOfData
 validateOneOfKeyword recursiveValidator (OneOfData schemas) _ctx value =
-  case validateOneOf recursiveValidator schemas value of
-    ValidationSuccess _ -> pure []
-    ValidationFailure errs -> pure [T.pack $ show errs]  -- TODO: proper error formatting
+  pure $ validateOneOf recursiveValidator schemas value
 
 -- | Validate that a value satisfies EXACTLY ONE schema in oneOf
 --

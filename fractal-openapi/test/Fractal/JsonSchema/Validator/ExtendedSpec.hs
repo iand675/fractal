@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Fractal.JsonSchema.Validator.ExtendedSpec (spec) where
 
 import Test.Hspec
@@ -14,7 +15,11 @@ import Fractal.JsonSchema.Validator.Extended
 import Fractal.JsonSchema.Parser.Extended
 import Fractal.JsonSchema.Keyword
 import Fractal.JsonSchema.Keyword.Types
-import Fractal.JsonSchema.Types (ValidationConfig(..))
+import Fractal.JsonSchema.Types
+  ( ValidationConfig(..)
+  , validationFailure
+  , pattern ValidationSuccess
+  )
 import Fractal.JsonSchema.Validator (defaultValidationConfig)
 
 -- Test keyword: range validation
@@ -40,10 +45,13 @@ validateRange :: ValidateFunc RangeData
 validateRange _recursiveValidator (RangeData minVal maxVal) _ctx (Number n) =
   let val = realToFrac n
   in if val >= minVal && val <= maxVal
-       then pure []
-       else pure ["Value " <> T.pack (show val) <> " is not in range [" <>
-             T.pack (show minVal) <> ", " <> T.pack (show maxVal) <> "]"]
-validateRange _ _ _ _ = pure ["x-range can only validate numbers"]
+       then pure (ValidationSuccess mempty)
+       else pure $
+         validationFailure "x-range" $
+           "Value " <> T.pack (show val)
+           <> " is not in range [" <> T.pack (show minVal) <> ", " <> T.pack (show maxVal) <> "]"
+validateRange _ _ _ _ =
+  pure $ validationFailure "x-range" "x-range can only validate numbers"
 
 -- Test keyword: string prefix
 data PrefixData = PrefixData Text
@@ -56,9 +64,10 @@ compilePrefix _ _schema _ctx = Left "x-prefix must be a string"
 validatePrefix :: ValidateFunc PrefixData
 validatePrefix _recursiveValidator (PrefixData prefix) _ctx (String s) =
   if prefix `T.isPrefixOf` s
-    then pure []
-    else pure ["String does not start with prefix: " <> prefix]
-validatePrefix _ _ _ _ = pure ["x-prefix can only validate strings"]
+    then pure (ValidationSuccess mempty)
+    else pure $ validationFailure "x-prefix" ("String does not start with prefix: " <> prefix)
+validatePrefix _ _ _ _ =
+  pure $ validationFailure "x-prefix" "x-prefix can only validate strings"
 
 spec :: Spec
 spec = describe "Extended Validator" $ do

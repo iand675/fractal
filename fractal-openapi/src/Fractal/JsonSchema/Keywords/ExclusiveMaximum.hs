@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Implementation of the 'exclusiveMaximum' keyword (Draft-06+ standalone numeric)
 --
 -- The exclusiveMaximum keyword requires that a numeric value is strictly
@@ -16,7 +17,7 @@ import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'exclusiveMaximum' keyword (Draft-06+ standalone numeric)
 newtype ExclusiveMaximumData = ExclusiveMaximumData Sci.Scientific
@@ -32,9 +33,10 @@ compileExclusiveMaximum value _schema _ctx = case value of
 validateExclusiveMaximum :: ValidateFunc ExclusiveMaximumData
 validateExclusiveMaximum _recursiveValidator (ExclusiveMaximumData maxVal) _ctx (Number n) =
   if n < maxVal
-    then pure []
-    else pure ["Value " <> T.pack (show n) <> " must be less than exclusiveMaximum " <> T.pack (show maxVal)]
-validateExclusiveMaximum _ _ _ _ = pure []  -- Only applies to numbers
+    then pure (ValidationSuccess mempty)
+    else pure (validationFailure "exclusiveMaximum"
+                ("Value " <> T.pack (show n) <> " must be less than exclusiveMaximum " <> T.pack (show maxVal)))
+validateExclusiveMaximum _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to numbers
 
 -- | The 'exclusiveMaximum' keyword definition (Draft-06+ style)
 exclusiveMaximumKeyword :: KeywordDefinition

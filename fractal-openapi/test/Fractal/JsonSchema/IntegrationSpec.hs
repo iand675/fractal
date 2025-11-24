@@ -2,7 +2,7 @@ module Fractal.JsonSchema.IntegrationSpec (spec) where
 
 import Test.Hspec
 import Fractal.JsonSchema
-import Data.Aeson (Value(..), object, (.=))
+import Data.Aeson (Value(..), object, (.=), toJSON)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -78,7 +78,10 @@ spec = describe "JSON Schema Integration Tests" $ do
                 }
             , schemaVocabulary = Nothing
             , schemaExtensions = Map.empty
-            , schemaRawKeywords = Map.empty
+            , schemaRawKeywords = Map.fromList
+                [ ("type", String "object")
+                , ("required", toJSON ["name" :: T.Text])
+                ]
             }
       
       let validPerson = object ["name" .= ("Alice" :: T.Text)]
@@ -158,7 +161,11 @@ spec = describe "JSON Schema Integration Tests" $ do
                 }
             , schemaVocabulary = Nothing
             , schemaExtensions = Map.empty
-            , schemaRawKeywords = Map.empty
+            , schemaRawKeywords = Map.fromList
+                [ ("type", String "number")
+                , ("minimum", Number 0)
+                , ("maximum", Number 150)
+                ]
             }
       
       -- Valid age
