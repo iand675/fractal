@@ -24,7 +24,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   , combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
@@ -53,7 +53,6 @@ validatePropertyNamesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only 
 propertyNamesKeyword :: KeywordDefinition
 propertyNamesKeyword = KeywordDefinition
   { keywordName = "propertyNames"
-  , keywordScope = AnyScope
   , keywordCompile = compilePropertyNames
   , keywordValidate = validatePropertyNamesKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of

@@ -11,7 +11,6 @@
 -- creditCardKeyword :: KeywordDefinition
 -- creditCardKeyword = mkKeywordDefinition
 --   "x-creditCard"
---   AnyScope
 --   compileCreditCard
 --   validateCreditCard
 --
@@ -31,7 +30,6 @@ module Fractal.JsonSchema.Keyword
   , mkSimpleKeyword
     -- * Re-exports from Types
   , KeywordDefinition(..)
-  , KeywordScope(..)
   , KeywordNavigation(..)
   , CompileFunc
   , ValidateFunc
@@ -58,7 +56,7 @@ emptyKeywordRegistry = KeywordRegistry Map.empty
 -- If a keyword with the same name already exists, it will be replaced
 -- with the new definition (allowing for keyword shadowing).
 registerKeyword :: KeywordDefinition -> KeywordRegistry -> KeywordRegistry
-registerKeyword kw@(KeywordDefinition name _ _ _ _ _) (KeywordRegistry m) =
+registerKeyword kw@(KeywordDefinition name _ _ _ _) (KeywordRegistry m) =
   KeywordRegistry (Map.insert name kw m)
 
 -- | Look up a keyword by name in the registry
@@ -77,16 +75,18 @@ getRegisteredKeywords (KeywordRegistry m) = Map.keys m
 --
 -- This is a convenience function that wraps the KeywordDefinition constructor
 -- with a more ergonomic API. For keywords without subschemas.
+--
+-- Note: Keywords handle their own applicability by pattern matching on Value
+-- types in their validate functions. They should return ValidationSuccess mempty
+-- for non-applicable types.
 mkKeywordDefinition
   :: Typeable a
   => Text                    -- ^ Keyword name
-  -> KeywordScope            -- ^ Scope restriction
   -> CompileFunc a           -- ^ Compile function
-  -> ValidateFunc a          -- ^ Validate function
+  -> ValidateFunc a          -- ^ Validate function (should handle applicability via pattern matching)
   -> KeywordDefinition
-mkKeywordDefinition name scope compile validate = KeywordDefinition
+mkKeywordDefinition name compile validate = KeywordDefinition
   { keywordName = name
-  , keywordScope = scope
   , keywordCompile = compile
   , keywordValidate = validate
   , keywordNavigation = NoNavigation
@@ -96,17 +96,19 @@ mkKeywordDefinition name scope compile validate = KeywordDefinition
 -- | Helper to create a navigable keyword definition
 --
 -- For keywords that contain subschemas (e.g., properties, allOf, not).
+--
+-- Note: Keywords handle their own applicability by pattern matching on Value
+-- types in their validate functions. They should return ValidationSuccess mempty
+-- for non-applicable types.
 mkNavigableKeyword
   :: Typeable a
   => Text                    -- ^ Keyword name
-  -> KeywordScope            -- ^ Scope restriction
   -> CompileFunc a           -- ^ Compile function
-  -> ValidateFunc a          -- ^ Validate function
+  -> ValidateFunc a          -- ^ Validate function (should handle applicability via pattern matching)
   -> KeywordNavigation       -- ^ Navigation support
   -> KeywordDefinition
-mkNavigableKeyword name scope compile validate nav = KeywordDefinition
+mkNavigableKeyword name compile validate nav = KeywordDefinition
   { keywordName = name
-  , keywordScope = scope
   , keywordCompile = compile
   , keywordValidate = validate
   , keywordNavigation = nav
@@ -118,17 +120,19 @@ mkNavigableKeyword name scope compile validate nav = KeywordDefinition
 -- For keywords that just validate the instance directly without needing
 -- a compilation phase, this helper creates a trivial compile function
 -- that just passes through the keyword value.
+--
+-- Note: Keywords handle their own applicability by pattern matching on Value
+-- types in their validate functions. They should return ValidationSuccess mempty
+-- for non-applicable types.
 mkSimpleKeyword
   :: Typeable a
   => Text                    -- ^ Keyword name
-  -> KeywordScope            -- ^ Scope restriction
   -> (Value -> Either Text a)  -- ^ Parse keyword value
   -> (a -> Value -> [Text])    -- ^ Validate function (old signature for backward compat)
   -> KeywordDefinition
-mkSimpleKeyword name scope parseValue validateValue =
+mkSimpleKeyword name parseValue validateValue =
   KeywordDefinition
     { keywordName = name
-    , keywordScope = scope
     , keywordCompile = \val _schema _ctx -> parseValue val
     , keywordValidate = legacyValidate name (\_ compiledData _ val -> pure (validateValue compiledData val))
     , keywordNavigation = NoNavigation

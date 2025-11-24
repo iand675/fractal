@@ -59,7 +59,6 @@ validateMaximumLegacy _ _ _ _ = pure []  -- Only applies to numbers
 maximumKeyword :: KeywordDefinition
 maximumKeyword = KeywordDefinition
   { keywordName = "maximum"
-  , keywordScope = AnyScope
   , keywordCompile = compileMaximum
   , keywordValidate = validateMaximum
   , keywordNavigation = NoNavigation
@@ -89,7 +88,6 @@ validateExclusiveMaximum _ _ _ _ = pure (ValidationSuccess mempty)
 exclusiveMaximumKeyword :: KeywordDefinition
 exclusiveMaximumKeyword = KeywordDefinition
   { keywordName = "exclusiveMaximum"
-  , keywordScope = AnyScope
   , keywordCompile = compileExclusiveMaximum
   , keywordValidate = validateExclusiveMaximum
   , keywordNavigation = NoNavigation

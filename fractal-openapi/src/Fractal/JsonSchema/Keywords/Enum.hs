@@ -19,7 +19,7 @@ import Data.Typeable (Typeable)
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure)
 
 -- | Compiled data for the 'enum' keyword
@@ -44,7 +44,6 @@ validateEnum _recursiveValidator (EnumData allowedValues) _ctx actual =
 enumKeyword :: KeywordDefinition
 enumKeyword = KeywordDefinition
   { keywordName = "enum"
-  , keywordScope = AnyScope
   , keywordCompile = compileEnum
   , keywordValidate = validateEnum
   , keywordNavigation = NoNavigation

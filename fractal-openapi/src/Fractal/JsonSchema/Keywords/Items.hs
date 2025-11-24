@@ -34,7 +34,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   , CompilationContext(..), contextParseSubschema
   , combineValidationResults
   )
@@ -128,7 +128,6 @@ validateItemsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies 
 itemsKeyword :: KeywordDefinition
 itemsKeyword = KeywordDefinition
   { keywordName = "items"
-  , keywordScope = AnyScope
   , keywordCompile = compileItems
   , keywordValidate = validateItemsKeyword
   , keywordNavigation = CustomNavigation $ \schema _seg rest -> case schemaCore schema of

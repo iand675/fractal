@@ -28,7 +28,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 
 -- | Compiled data for ref keywords
@@ -54,7 +54,6 @@ validateRefPlaceholder _recursiveValidator _refData _ctx _val =
 refKeyword :: KeywordDefinition
 refKeyword = KeywordDefinition
   { keywordName = "$ref"
-  , keywordScope = AnyScope
   , keywordCompile = compileRefKeyword
   , keywordValidate = validateRefPlaceholder
   , keywordNavigation = NoNavigation
@@ -65,7 +64,6 @@ refKeyword = KeywordDefinition
 dynamicRefKeyword :: KeywordDefinition
 dynamicRefKeyword = KeywordDefinition
   { keywordName = "$dynamicRef"
-  , keywordScope = AnyScope
   , keywordCompile = compileRefKeyword
   , keywordValidate = validateRefPlaceholder
   , keywordNavigation = NoNavigation
@@ -76,7 +74,6 @@ dynamicRefKeyword = KeywordDefinition
 recursiveRefKeyword :: KeywordDefinition
 recursiveRefKeyword = KeywordDefinition
   { keywordName = "$recursiveRef"
-  , keywordScope = AnyScope
   , keywordCompile = compileRefKeyword
   , keywordValidate = validateRefPlaceholder
   , keywordNavigation = NoNavigation

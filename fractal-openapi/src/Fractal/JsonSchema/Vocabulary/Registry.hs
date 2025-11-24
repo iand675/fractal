@@ -16,18 +16,17 @@ module Fractal.JsonSchema.Vocabulary.Registry
   , ConflictInfo(..)
     -- * Bulk Operations
   , registerVocabularies
-  , toKeywordRegistry
   ) where
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.List (foldl')
 
 import Fractal.JsonSchema.Vocabulary.Types
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..))
-import Fractal.JsonSchema.Keyword (KeywordRegistry, emptyKeywordRegistry, registerKeyword)
 
 -- | Information about a keyword conflict between vocabularies
 data ConflictInfo = ConflictInfo
@@ -45,7 +44,7 @@ data ConflictInfo = ConflictInfo
 registerVocabulary :: Vocabulary -> VocabularyRegistry -> VocabularyRegistry
 registerVocabulary vocab registry =
   let uri = vocabularyURI vocab
-      keywords = Map.keys (vocabularyKeywords vocab)
+      keywords = Set.toList (vocabularyKeywords vocab)
 
       -- Remove old index entries for this vocabulary
       oldKeywordIndex = registryKeywordIndex registry
@@ -82,7 +81,7 @@ lookupKeywordVocabulary keyword registry =
   Map.lookup keyword (registryKeywordIndex registry)
 
 -- | Get all keywords from a vocabulary
-getVocabularyKeywords :: VocabularyURI -> VocabularyRegistry -> Maybe (Map Text KeywordDefinition)
+getVocabularyKeywords :: VocabularyURI -> VocabularyRegistry -> Maybe (Set Text)
 getVocabularyKeywords uri registry = do
   vocab <- lookupVocabulary uri registry
   return $ vocabularyKeywords vocab
@@ -99,7 +98,7 @@ detectKeywordConflicts vocabs =
       addVocabKeywords :: Map Text [VocabularyURI] -> Vocabulary -> Map Text [VocabularyURI]
       addVocabKeywords acc vocab =
         let uri = vocabularyURI vocab
-            keywords = Map.keys (vocabularyKeywords vocab)
+            keywords = Set.toList (vocabularyKeywords vocab)
         in foldl' (\m k -> Map.insertWith (++) k [uri] m) acc keywords
 
       -- Find keywords with multiple vocabularies
@@ -130,13 +129,3 @@ registerVocabularies vocabs registry =
                 conflicts
       in Left $ "Keyword conflicts detected: " <> conflictText
 
--- | Convert a VocabularyRegistry to a KeywordRegistry
---
--- This flattens all vocabularies into a single keyword registry.
--- If there are conflicts, the behavior depends on vocabulary order
--- (last registered wins).
-toKeywordRegistry :: VocabularyRegistry -> KeywordRegistry
-toKeywordRegistry vocabRegistry =
-  let allVocabs = Map.elems (registryVocabularies vocabRegistry)
-      allKeywords = concatMap (Map.elems . vocabularyKeywords) allVocabs
-  in foldl' (flip registerKeyword) emptyKeywordRegistry allKeywords

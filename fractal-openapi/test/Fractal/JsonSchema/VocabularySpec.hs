@@ -12,6 +12,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
@@ -138,8 +140,8 @@ spec = describe "Vocabulary System" $ do
       let customVocab = Vocabulary
             { vocabularyURI = "https://example.com/custom/v1"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.fromList
-                [ ("x-test", KeywordDefinition "x-test" StringSchemaOnly 100)
+            , vocabularyKeywords = Set.fromList
+                [ "x-test"
                 ]
             }
           registry = registerVocabulary customVocab emptyVocabularyRegistry
@@ -170,15 +172,15 @@ spec = describe "Vocabulary System" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.fromList
-                [ ("x-keyword1", KeywordDefinition "x-keyword1" StringSchemaOnly 100)
+            , vocabularyKeywords = Set.fromList
+                [ "x-keyword1"
                 ]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.fromList
-                [ ("x-keyword2", KeywordDefinition "x-keyword2" StringSchemaOnly 100)
+            , vocabularyKeywords = Set.fromList
+                [ "x-keyword2"
                 ]
             }
       detectKeywordConflicts [vocab1, vocab2] `shouldBe` []
@@ -187,15 +189,15 @@ spec = describe "Vocabulary System" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.fromList
-                [ ("type", KeywordDefinition "type" AnySchema 100)
+            , vocabularyKeywords = Set.fromList
+                [ "type"
                 ]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.fromList
-                [ ("type", KeywordDefinition "type" AnySchema 100)
+            , vocabularyKeywords = Set.fromList
+                [ "type"
                 ]
             }
       detectKeywordConflicts [vocab1, vocab2] `shouldBe` ["type"]
@@ -237,8 +239,8 @@ spec = describe "Vocabulary System" $ do
       let conflictingVocab = Vocabulary
             { vocabularyURI = "https://example.com/conflict"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.fromList
-                [ ("type", KeywordDefinition "type" AnySchema 100)
+            , vocabularyKeywords = Set.fromList
+                [ "type"
                 ]
             }
           registry = registerVocabulary conflictingVocab 

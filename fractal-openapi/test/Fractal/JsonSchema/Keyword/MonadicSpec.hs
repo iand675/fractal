@@ -33,10 +33,10 @@ validateDraft04ExclusiveMin _ _ _ _ = pure (ValidationSuccess mempty)  -- Valida
 draft04ExclusiveMinKeyword :: KeywordDefinition
 draft04ExclusiveMinKeyword = KeywordDefinition
   { keywordName = "exclusiveMinimum"
-  , keywordScope = AnyScope
   , keywordCompile = compileDraft04ExclusiveMin
   , keywordValidate = validateDraft04ExclusiveMin
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Test keyword that reads adjacent data using CompileM

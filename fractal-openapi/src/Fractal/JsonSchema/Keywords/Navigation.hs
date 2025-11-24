@@ -34,7 +34,7 @@ import qualified Text.Read as Read
 
 import Fractal.JsonSchema.Keyword (mkNavigableKeyword)
 import Fractal.JsonSchema.Keyword.Types 
-  ( KeywordDefinition, KeywordNavigation(..), KeywordScope(..)
+  ( KeywordDefinition, KeywordNavigation(..)
   , CompilationContext(..), ValidateFunc, CompileFunc
   )
 import Fractal.JsonSchema.Types 
@@ -61,7 +61,6 @@ import Data.Typeable (Typeable)
 propertiesKeyword :: KeywordDefinition
 propertiesKeyword = mkNavigableKeyword
   "properties"
-  AnyScope
   (\_ _ _ -> Right ())  -- No compilation needed for navigation-only
   (\_ _ _ _ -> pure (ValidationSuccess mempty))      -- No validation needed for navigation-only
   (SchemaMap $ \schema -> case schemaCore schema of
@@ -72,7 +71,6 @@ propertiesKeyword = mkNavigableKeyword
 patternPropertiesKeyword :: KeywordDefinition
 patternPropertiesKeyword = mkNavigableKeyword
   "patternProperties"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaMap $ \schema -> case schemaCore schema of
@@ -88,7 +86,6 @@ patternPropertiesKeyword = mkNavigableKeyword
 additionalPropertiesKeyword :: KeywordDefinition
 additionalPropertiesKeyword = mkNavigableKeyword
   "additionalProperties"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -99,7 +96,6 @@ additionalPropertiesKeyword = mkNavigableKeyword
 itemsKeyword :: KeywordDefinition
 itemsKeyword = mkNavigableKeyword
   "items"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (CustomNavigation $ \schema _seg rest -> case schemaCore schema of
@@ -124,7 +120,6 @@ itemsKeyword = mkNavigableKeyword
 prefixItemsKeyword :: KeywordDefinition
 prefixItemsKeyword = mkNavigableKeyword
   "prefixItems"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
@@ -137,7 +132,6 @@ prefixItemsKeyword = mkNavigableKeyword
 containsKeyword :: KeywordDefinition
 containsKeyword = mkNavigableKeyword
   "contains"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -148,7 +142,6 @@ containsKeyword = mkNavigableKeyword
 allOfKeyword :: KeywordDefinition
 allOfKeyword = mkNavigableKeyword
   "allOf"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
@@ -159,7 +152,6 @@ allOfKeyword = mkNavigableKeyword
 anyOfKeyword :: KeywordDefinition
 anyOfKeyword = mkNavigableKeyword
   "anyOf"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
@@ -170,7 +162,6 @@ anyOfKeyword = mkNavigableKeyword
 oneOfKeyword :: KeywordDefinition
 oneOfKeyword = mkNavigableKeyword
   "oneOf"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
@@ -181,7 +172,6 @@ oneOfKeyword = mkNavigableKeyword
 notKeyword :: KeywordDefinition
 notKeyword = mkNavigableKeyword
   "not"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -192,7 +182,6 @@ notKeyword = mkNavigableKeyword
 ifKeyword :: KeywordDefinition
 ifKeyword = mkNavigableKeyword
   "if"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -203,7 +192,6 @@ ifKeyword = mkNavigableKeyword
 thenKeyword :: KeywordDefinition
 thenKeyword = mkNavigableKeyword
   "then"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -214,7 +202,6 @@ thenKeyword = mkNavigableKeyword
 elseKeyword :: KeywordDefinition
 elseKeyword = mkNavigableKeyword
   "else"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -225,7 +212,6 @@ elseKeyword = mkNavigableKeyword
 dependentSchemasKeyword :: KeywordDefinition
 dependentSchemasKeyword = mkNavigableKeyword
   "dependentSchemas"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaMap $ \schema -> case schemaCore schema of
@@ -236,7 +222,6 @@ dependentSchemasKeyword = mkNavigableKeyword
 propertyNamesKeyword :: KeywordDefinition
 propertyNamesKeyword = mkNavigableKeyword
   "propertyNames"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -247,7 +232,6 @@ propertyNamesKeyword = mkNavigableKeyword
 unevaluatedPropertiesKeyword :: KeywordDefinition
 unevaluatedPropertiesKeyword = mkNavigableKeyword
   "unevaluatedProperties"
-  AnyScope
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
@@ -320,7 +304,6 @@ validateDefsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies t
 defsKeyword :: KeywordDefinition
 defsKeyword = mkNavigableKeyword
   "$defs"
-  AnyScope
   compileDefsKeyword
   validateDefsKeyword
   (SchemaMap $ \schema -> case schemaCore schema of

@@ -29,7 +29,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , KeywordNavigation(..), KeywordScope(..)
+  , KeywordNavigation(..)
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 import Fractal.JsonSchema.Validator.Annotations
@@ -134,7 +134,6 @@ validatePrefixItemsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only ap
 prefixItemsKeyword :: KeywordDefinition
 prefixItemsKeyword = KeywordDefinition
   { keywordName = "prefixItems"
-  , keywordScope = AnyScope
   , keywordCompile = compilePrefixItems
   , keywordValidate = validatePrefixItemsKeyword
   , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of

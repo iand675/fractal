@@ -23,7 +23,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 import qualified Fractal.JsonSchema.Keywords.Format as FormatImpl
 
@@ -80,7 +80,6 @@ validateFormatKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies
 formatKeyword :: KeywordDefinition
 formatKeyword = KeywordDefinition
   { keywordName = "format"
-  , keywordScope = AnyScope
   , keywordCompile = compileFormat
   , keywordValidate = validateFormatKeyword
   , keywordNavigation = NoNavigation  -- No subschemas

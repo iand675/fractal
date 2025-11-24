@@ -28,7 +28,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   , combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
@@ -67,7 +67,6 @@ validateDependentSchemasKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- On
 dependentSchemasKeyword :: KeywordDefinition
 dependentSchemasKeyword = KeywordDefinition
   { keywordName = "dependentSchemas"
-  , keywordScope = AnyScope
   , keywordCompile = compileDependentSchemas
   , keywordValidate = validateDependentSchemasKeyword
   , keywordNavigation = SchemaMap $ \schema -> case schemaCore schema of

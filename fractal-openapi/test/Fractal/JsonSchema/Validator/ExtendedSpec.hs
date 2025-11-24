@@ -95,7 +95,7 @@ spec = describe "Extended Validator" $ do
 
   describe "Custom Keyword Validation" $ do
     it "validates with single custom keyword" $ do
-      let def = mkKeywordDefinition "x-prefix" AnyScope compilePrefix validatePrefix
+      let def = mkKeywordDefinition "x-prefix"  compilePrefix validatePrefix
           registry = registerKeyword def emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "type" Aeson..= String "string"
@@ -117,8 +117,8 @@ spec = describe "Extended Validator" $ do
           head (extendedCustomErrors invalidResult) `shouldSatisfy` T.isInfixOf "does not start with prefix"
 
     it "validates with multiple custom keywords" $ do
-      let prefixDef = mkKeywordDefinition "x-prefix" AnyScope compilePrefix validatePrefix
-          rangeDef = mkKeywordDefinition "x-range" AnyScope compileRange validateRange
+      let prefixDef = mkKeywordDefinition "x-prefix"  compilePrefix validatePrefix
+          rangeDef = mkKeywordDefinition "x-range"  compileRange validateRange
           registry = registerKeyword prefixDef $ registerKeyword rangeDef emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "x-prefix" Aeson..= String "val"
@@ -145,7 +145,7 @@ spec = describe "Extended Validator" $ do
 
   describe "Combined Standard and Custom Validation" $ do
     it "requires both standard and custom to pass" $ do
-      let def = mkKeywordDefinition "x-prefix" AnyScope compilePrefix validatePrefix
+      let def = mkKeywordDefinition "x-prefix"  compilePrefix validatePrefix
           registry = registerKeyword def emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "type" Aeson..= String "string"
@@ -191,7 +191,7 @@ spec = describe "Extended Validator" $ do
 
   describe "Validation with Config" $ do
     it "uses custom validation config" $ do
-      let def = mkKeywordDefinition "x-prefix" AnyScope compilePrefix validatePrefix
+      let def = mkKeywordDefinition "x-prefix"  compilePrefix validatePrefix
           registry = registerKeyword def emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "type" Aeson..= String "string"
@@ -207,8 +207,8 @@ spec = describe "Extended Validator" $ do
 
   describe "Error Collection" $ do
     it "collects all custom keyword errors" $ do
-      let prefixDef = mkKeywordDefinition "x-prefix" AnyScope compilePrefix validatePrefix
-          rangeDef = mkKeywordDefinition "x-range" AnyScope compileRange validateRange
+      let prefixDef = mkKeywordDefinition "x-prefix"  compilePrefix validatePrefix
+          rangeDef = mkKeywordDefinition "x-range"  compileRange validateRange
           registry = registerKeyword prefixDef $ registerKeyword rangeDef emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "x-prefix" Aeson..= String "test"

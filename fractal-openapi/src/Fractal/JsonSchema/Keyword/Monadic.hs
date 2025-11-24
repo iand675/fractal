@@ -75,7 +75,7 @@ compileAdjacent keywordName = do
 
           case Map.lookup keywordName (keywordMap registry) of
             Nothing -> pure Nothing  -- Keyword not registered
-            Just (KeywordDefinition _name _scope compile validate _nav _) -> do
+            Just (KeywordDefinition _name compile validate _nav _) -> do
               -- Mark as currently compiling
               modifyCompilationState $ \s ->
                 s { stateCompiling = Set.insert keywordName (stateCompiling s) }

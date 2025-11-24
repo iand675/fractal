@@ -12,7 +12,6 @@
 module Fractal.JsonSchema.Keyword.Types
   (     -- * Keyword Definition
     KeywordDefinition(..)
-  , KeywordScope(..)
   , KeywordNavigation(..)
   , CompileFunc
   , ValidateFunc
@@ -59,22 +58,6 @@ import Fractal.JsonSchema.Types
   , pattern ValidationFailure
   )
 
--- | Scope restriction for keywords - defines which schema types they apply to
-data KeywordScope
-  = AnyScope              -- ^ Keyword applies to any schema type
-  | ObjectOnly            -- ^ Keyword only applies to object schemas
-  | ArrayOnly             -- ^ Keyword only applies to array schemas
-  | StringOnly            -- ^ Keyword only applies to string schemas
-  | NumericOnly           -- ^ Keyword only applies to numeric schemas
-  | CustomScope (Value -> Bool)  -- ^ Custom scope predicate
-
-instance Show KeywordScope where
-  show AnyScope = "AnyScope"
-  show ObjectOnly = "ObjectOnly"
-  show ArrayOnly = "ArrayOnly"
-  show StringOnly = "StringOnly"
-  show NumericOnly = "NumericOnly"
-  show (CustomScope _) = "CustomScope{<function>}"
 
 -- | Compilation context provided to keyword compile functions
 --
@@ -134,6 +117,23 @@ type ValidateFunc a =
   -> Reader ValidationConfig ValidationResult  -- ^ Validation result in Reader monad
 
 -- | Post-validation function signature: validates with access to annotations from other keywords
+--
+-- This mechanism provides dependency-based keyword ordering, which is the correct
+-- approach according to the JSON Schema specification. The spec does not define
+-- keyword evaluation order, but some keywords have semantic dependencies:
+--
+-- * 'unevaluatedProperties' and 'unevaluatedItems' must run after keywords that
+--   evaluate properties/items (like 'properties', 'patternProperties', 'items', etc.)
+--   to see which properties/items were already evaluated.
+--
+-- * These keywords need access to annotations collected from earlier keywords
+--   to determine what remains "unevaluated".
+--
+-- This is superior to priority-based ordering because:
+-- 1. It's spec-compliant: dependencies are explicit and semantic, not arbitrary
+-- 2. It's type-safe: keywords declare their dependencies via the function signature
+-- 3. It's maintainable: no magic numbers or priority conflicts
+-- 4. It matches other implementations: most JSON Schema validators use dependency-based ordering
 --
 -- Used for keywords like unevaluatedProperties/unevaluatedItems that need to know
 -- which properties/items were evaluated by other keywords.
@@ -298,20 +298,24 @@ data KeywordNavigation
 --
 -- This is the main registration point for custom keywords. Users provide:
 -- - A unique name for the keyword
--- - A scope restriction (what schema types it applies to)
 -- - A compile function that processes the keyword value at schema parse time
 -- - A validate function that uses the compiled data to validate instances
 -- - Optional navigation support for subschema resolution
 -- - Optional post-validation function for keywords that need annotation access
+--
+-- Note: Keywords handle their own applicability by pattern matching on the
+-- instance Value type in their validate functions. They should return
+-- ValidationSuccess mempty for non-applicable types (e.g., string keywords
+-- return success for non-string values).
 data KeywordDefinition = forall a. Typeable a => KeywordDefinition
   { keywordName :: Text
     -- ^ Unique identifier for this keyword (e.g., "maxLength", "x-creditCard")
-  , keywordScope :: KeywordScope
-    -- ^ Which schema types this keyword can be used with
   , keywordCompile :: CompileFunc a
     -- ^ Compile phase: process keyword value and schema structure
   , keywordValidate :: ValidateFunc a
     -- ^ Validate phase: check instance against compiled keyword
+    -- Should pattern match on Value type and return ValidationSuccess mempty
+    -- for non-applicable types (e.g., "-- Only applies to strings")
   , keywordNavigation :: KeywordNavigation
     -- ^ How to navigate into subschemas (if any)
   , keywordPostValidate :: Maybe (PostValidateFunc a)

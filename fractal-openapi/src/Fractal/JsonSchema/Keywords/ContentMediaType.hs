@@ -28,7 +28,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 import qualified Fractal.JsonSchema.Validator.Result as VR
 
@@ -112,7 +112,6 @@ validationFailure keyword msg = ValidationFailure $ ValidationErrors $ pure $ VR
 contentMediaTypeKeyword :: KeywordDefinition
 contentMediaTypeKeyword = KeywordDefinition
   { keywordName = "contentMediaType"
-  , keywordScope = AnyScope
   , keywordCompile = compileContentMediaType
   , keywordValidate = validateContentMediaTypeKeyword
   , keywordNavigation = NoNavigation  -- No subschemas

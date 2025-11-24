@@ -20,7 +20,7 @@ import Data.Foldable (toList)
 import qualified Data.Scientific as Sci
 import qualified Data.List.NonEmpty as NE
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, SchemaType(..), SchemaObject(..), OneOrMany(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure)
 
 -- | Compiled data for the 'type' keyword
@@ -76,7 +76,6 @@ validateType _recursiveValidator (TypeData expectedTypes) _ctx actual =
 typeKeyword :: KeywordDefinition
 typeKeyword = KeywordDefinition
   { keywordName = "type"
-  , keywordScope = AnyScope
   , keywordCompile = compileType
   , keywordValidate = validateType
   , keywordNavigation = NoNavigation

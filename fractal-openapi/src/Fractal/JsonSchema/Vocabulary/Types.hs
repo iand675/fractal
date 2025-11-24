@@ -13,9 +13,9 @@ module Fractal.JsonSchema.Vocabulary.Types
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
-
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition)
 
 -- | URI identifying a vocabulary (represented as Text)
 --
@@ -38,14 +38,14 @@ data Vocabulary = Vocabulary
     -- ^ Unique identifier for this vocabulary
   , vocabularyRequired :: Bool
     -- ^ Whether this vocabulary is required for schema processing
-  , vocabularyKeywords :: Map Text KeywordDefinition
-    -- ^ Keywords defined by this vocabulary
+  , vocabularyKeywords :: Set Text
+    -- ^ Set of keyword names defined by this vocabulary
   }
 
 instance Show Vocabulary where
   show v = "Vocabulary{uri=" ++ show (vocabularyURI v) ++
            ", required=" ++ show (vocabularyRequired v) ++
-           ", keywords=" ++ show (Map.keys (vocabularyKeywords v)) ++ "}"
+           ", keywords=" ++ show (Set.toList (vocabularyKeywords v)) ++ "}"
 
 -- | Registry of available vocabularies
 --

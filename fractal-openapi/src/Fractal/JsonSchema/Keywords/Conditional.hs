@@ -30,7 +30,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 
@@ -127,7 +127,6 @@ validateElseKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- No-op, logic i
 ifKeyword :: KeywordDefinition
 ifKeyword = KeywordDefinition
   { keywordName = "if"
-  , keywordScope = AnyScope
   , keywordCompile = compileIf
   , keywordValidate = validateIfKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
@@ -140,7 +139,6 @@ ifKeyword = KeywordDefinition
 thenKeyword :: KeywordDefinition
 thenKeyword = KeywordDefinition
   { keywordName = "then"
-  , keywordScope = AnyScope
   , keywordCompile = compileThen
   , keywordValidate = validateThenKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
@@ -153,7 +151,6 @@ thenKeyword = KeywordDefinition
 elseKeyword :: KeywordDefinition
 elseKeyword = KeywordDefinition
   { keywordName = "else"
-  , keywordScope = AnyScope
   , keywordCompile = compileElse
   , keywordValidate = validateElseKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of

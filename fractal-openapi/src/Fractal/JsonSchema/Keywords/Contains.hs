@@ -31,7 +31,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 import Fractal.JsonSchema.Validator.Annotations
@@ -129,7 +129,6 @@ validateMaxContainsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Behavio
 containsKeyword :: KeywordDefinition
 containsKeyword = KeywordDefinition
   { keywordName = "contains"
-  , keywordScope = AnyScope
   , keywordCompile = compileContains
   , keywordValidate = validateContainsKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
@@ -142,7 +141,6 @@ containsKeyword = KeywordDefinition
 minContainsKeyword :: KeywordDefinition
 minContainsKeyword = KeywordDefinition
   { keywordName = "minContains"
-  , keywordScope = AnyScope
   , keywordCompile = compileMinContains
   , keywordValidate = validateMinContainsKeyword
   , keywordNavigation = NoNavigation
@@ -153,7 +151,6 @@ minContainsKeyword = KeywordDefinition
 maxContainsKeyword :: KeywordDefinition
 maxContainsKeyword = KeywordDefinition
   { keywordName = "maxContains"
-  , keywordScope = AnyScope
   , keywordCompile = compileMaxContains
   , keywordValidate = validateMaxContainsKeyword
   , keywordNavigation = NoNavigation

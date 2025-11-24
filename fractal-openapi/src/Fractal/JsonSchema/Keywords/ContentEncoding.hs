@@ -25,7 +25,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 import qualified Fractal.JsonSchema.Validator.Result as VR
 
@@ -92,7 +92,6 @@ validationFailure keyword msg = ValidationFailure $ ValidationErrors $ pure $ VR
 contentEncodingKeyword :: KeywordDefinition
 contentEncodingKeyword = KeywordDefinition
   { keywordName = "contentEncoding"
-  , keywordScope = AnyScope
   , keywordCompile = compileContentEncoding
   , keywordValidate = validateContentEncodingKeyword
   , keywordNavigation = NoNavigation  -- No subschemas

@@ -71,7 +71,7 @@ spec = describe "Extended Parser" $ do
 
   describe "Custom Keyword Parsing" $ do
     it "parses schema with registered custom keyword" $ do
-      let def = mkKeywordDefinition "x-max-value" AnyScope compileMaxValue validateMaxValue
+      let def = mkKeywordDefinition "x-max-value" compileMaxValue validateMaxValue
           registry = registerKeyword def emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "type" Aeson..= String "number"
@@ -108,8 +108,8 @@ spec = describe "Extended Parser" $ do
           Map.size customValues `shouldBe` 0
 
     it "parses schema with multiple custom keywords" $ do
-      let maxDef = mkKeywordDefinition "x-max" AnyScope compileMaxValue validateMaxValue
-          minDef = mkKeywordDefinition "x-min" AnyScope compileMaxValue validateMaxValue  -- Reuse same implementation
+      let maxDef = mkKeywordDefinition "x-max" compileMaxValue validateMaxValue
+          minDef = mkKeywordDefinition "x-min" compileMaxValue validateMaxValue  -- Reuse same implementation
           registry = registerKeyword maxDef $ registerKeyword minDef emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "x-max" Aeson..= Number 100
@@ -127,7 +127,7 @@ spec = describe "Extended Parser" $ do
 
   describe "Compilation Errors" $ do
     it "fails when custom keyword has invalid value" $ do
-      let def = mkKeywordDefinition "x-max-value" AnyScope compileMaxValue validateMaxValue
+      let def = mkKeywordDefinition "x-max-value" compileMaxValue validateMaxValue
           registry = registerKeyword def emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "x-max-value" Aeson..= String "not a number"  -- Wrong type
@@ -152,7 +152,7 @@ spec = describe "Extended Parser" $ do
 
   describe "Version-Specific Parsing" $ do
     it "parses with explicit version" $ do
-      let def = mkKeywordDefinition "x-test" AnyScope compileMaxValue validateMaxValue
+      let def = mkKeywordDefinition "x-test" compileMaxValue validateMaxValue
           registry = registerKeyword def emptyKeywordRegistry
           schemaJson = Aeson.object
             [ "x-test" Aeson..= Number 42

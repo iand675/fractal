@@ -16,7 +16,7 @@ import Data.Typeable (Typeable)
 import Data.Foldable (toList)
 import qualified Data.Set as Set
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'uniqueItems' keyword
@@ -48,7 +48,6 @@ validateUniqueItems _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies t
 uniqueItemsKeyword :: KeywordDefinition
 uniqueItemsKeyword = KeywordDefinition
   { keywordName = "uniqueItems"
-  , keywordScope = AnyScope
   , keywordCompile = compileUniqueItems
   , keywordValidate = validateUniqueItems
   , keywordNavigation = NoNavigation

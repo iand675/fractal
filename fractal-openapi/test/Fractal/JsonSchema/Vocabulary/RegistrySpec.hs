@@ -3,6 +3,8 @@ module Fractal.JsonSchema.Vocabulary.RegistrySpec (spec) where
 
 import Test.Hspec
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -21,10 +23,10 @@ testValidate _ _ _ _ = pure (ValidationSuccess mempty)
 mkTestKeyword :: Text -> KeywordDefinition
 mkTestKeyword name = KeywordDefinition
   { keywordName = name
-  , keywordScope = AnyScope
   , keywordCompile = testCompile
   , keywordValidate = testValidate
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 spec :: Spec
@@ -35,7 +37,7 @@ spec = describe "Vocabulary Registry" $ do
       let vocab = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test", mkTestKeyword "x-test")]
+            , vocabularyKeywords = Set.fromList ["x-test"]
             }
           registry = registerVocabulary vocab emptyVocabularyRegistry
 
@@ -49,12 +51,12 @@ spec = describe "Vocabulary Registry" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.fromList [("x-old", mkTestKeyword "x-old")]
+            , vocabularyKeywords = Set.fromList ["x-old"]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-new", mkTestKeyword "x-new")]
+            , vocabularyKeywords = Set.fromList ["x-new"]
             }
           registry = registerVocabulary vocab2 $ registerVocabulary vocab1 emptyVocabularyRegistry
 
@@ -62,14 +64,14 @@ spec = describe "Vocabulary Registry" $ do
         Nothing -> expectationFailure "Vocabulary not found"
         Just v -> do
           vocabularyRequired v `shouldBe` True
-          Map.member "x-new" (vocabularyKeywords v) `shouldBe` True
-          Map.member "x-old" (vocabularyKeywords v) `shouldBe` False
+          Set.member "x-new" (vocabularyKeywords v) `shouldBe` True
+          Set.member "x-old" (vocabularyKeywords v) `shouldBe` False
 
     it "unregisters a vocabulary" $ do
       let vocab = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test", mkTestKeyword "x-test")]
+            , vocabularyKeywords = Set.fromList ["x-test"]
             }
           registry = registerVocabulary vocab emptyVocabularyRegistry
           registry' = unregisterVocabulary "https://example.com/vocab/v1" registry
@@ -83,9 +85,9 @@ spec = describe "Vocabulary Registry" $ do
       let vocab = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList
-                [ ("x-test1", mkTestKeyword "x-test1")
-                , ("x-test2", mkTestKeyword "x-test2")
+            , vocabularyKeywords = Set.fromList
+                [ "x-test1"
+                , "x-test2"
                 ]
             }
           registry = registerVocabulary vocab emptyVocabularyRegistry
@@ -100,12 +102,12 @@ spec = describe "Vocabulary Registry" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-old", mkTestKeyword "x-old")]
+            , vocabularyKeywords = Set.fromList ["x-old"]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-new", mkTestKeyword "x-new")]
+            , vocabularyKeywords = Set.fromList ["x-new"]
             }
           registry = registerVocabulary vocab2 $ registerVocabulary vocab1 emptyVocabularyRegistry
 
@@ -117,12 +119,12 @@ spec = describe "Vocabulary Registry" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test1", mkTestKeyword "x-test1")]
+            , vocabularyKeywords = Set.fromList ["x-test1"]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test2", mkTestKeyword "x-test2")]
+            , vocabularyKeywords = Set.fromList ["x-test2"]
             }
 
       detectKeywordConflicts [vocab1, vocab2] `shouldBe` []
@@ -132,12 +134,12 @@ spec = describe "Vocabulary Registry" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-shared", mkTestKeyword "x-shared")]
+            , vocabularyKeywords = Set.fromList ["x-shared"]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-shared", mkTestKeyword "x-shared")]
+            , vocabularyKeywords = Set.fromList ["x-shared"]
             }
 
       let conflicts = detectKeywordConflicts [vocab1, vocab2]
@@ -149,17 +151,17 @@ spec = describe "Vocabulary Registry" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList
-                [ ("x-shared1", mkTestKeyword "x-shared1")
-                , ("x-shared2", mkTestKeyword "x-shared2")
+            , vocabularyKeywords = Set.fromList
+                [ "x-shared1"
+                , "x-shared2"
                 ]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList
-                [ ("x-shared1", mkTestKeyword "x-shared1")
-                , ("x-shared2", mkTestKeyword "x-shared2")
+            , vocabularyKeywords = Set.fromList
+                [ "x-shared1"
+                , "x-shared2"
                 ]
             }
 
@@ -171,12 +173,12 @@ spec = describe "Vocabulary Registry" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test1", mkTestKeyword "x-test1")]
+            , vocabularyKeywords = Set.fromList ["x-test1"]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test2", mkTestKeyword "x-test2")]
+            , vocabularyKeywords = Set.fromList ["x-test2"]
             }
 
       case registerVocabularies [vocab1, vocab2] emptyVocabularyRegistry of
@@ -189,12 +191,12 @@ spec = describe "Vocabulary Registry" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-shared", mkTestKeyword "x-shared")]
+            , vocabularyKeywords = Set.fromList ["x-shared"]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-shared", mkTestKeyword "x-shared")]
+            , vocabularyKeywords = Set.fromList ["x-shared"]
             }
 
       case registerVocabularies [vocab1, vocab2] emptyVocabularyRegistry of
@@ -206,9 +208,9 @@ spec = describe "Vocabulary Registry" $ do
       let vocab = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList
-                [ ("x-test1", mkTestKeyword "x-test1")
-                , ("x-test2", mkTestKeyword "x-test2")
+            , vocabularyKeywords = Set.fromList
+                [ "x-test1"
+                , "x-test2"
                 ]
             }
           registry = registerVocabulary vocab emptyVocabularyRegistry
@@ -216,9 +218,9 @@ spec = describe "Vocabulary Registry" $ do
       case getVocabularyKeywords "https://example.com/vocab/v1" registry of
         Nothing -> expectationFailure "Keywords not found"
         Just keywords -> do
-          Map.size keywords `shouldBe` 2
-          Map.member "x-test1" keywords `shouldBe` True
-          Map.member "x-test2" keywords `shouldBe` True
+          Set.size keywords `shouldBe` 2
+          Set.member "x-test1" keywords `shouldBe` True
+          Set.member "x-test2" keywords `shouldBe` True
 
     it "returns Nothing for unregistered vocabulary" $ do
       case getVocabularyKeywords "https://example.com/nonexistent" emptyVocabularyRegistry of
@@ -230,14 +232,16 @@ spec = describe "Vocabulary Registry" $ do
       let vocab = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList
-                [ ("x-test1", mkTestKeyword "x-test1")
-                , ("x-test2", mkTestKeyword "x-test2")
+            , vocabularyKeywords = Set.fromList
+                [ "x-test1"
+                , "x-test2"
                 ]
             }
           vocabRegistry = registerVocabulary vocab emptyVocabularyRegistry
-          keywordRegistry = toKeywordRegistry vocabRegistry
 
-      -- Should have both keywords from the vocabulary
-      let regStr = show keywordRegistry
-      (T.pack regStr `shouldSatisfy` (\s -> T.isInfixOf "x-test1" s && T.isInfixOf "x-test2" s))
+      -- Should have both keywords in the vocabulary
+      case lookupVocabulary "https://example.com/vocab/v1" vocabRegistry of
+        Nothing -> expectationFailure "Vocabulary not found"
+        Just v -> do
+          Set.member "x-test1" (vocabularyKeywords v) `shouldBe` True
+          Set.member "x-test2" (vocabularyKeywords v) `shouldBe` True

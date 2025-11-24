@@ -19,7 +19,7 @@ import qualified Data.Set as Set
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'required' keyword
@@ -54,7 +54,6 @@ validateRequired _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to o
 requiredKeyword :: KeywordDefinition
 requiredKeyword = KeywordDefinition
   { keywordName = "required"
-  , keywordScope = AnyScope
   , keywordCompile = compileRequired
   , keywordValidate = validateRequired
   , keywordNavigation = NoNavigation

@@ -16,7 +16,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationResult, ValidationAnnotations(..), pattern ValidationSuccess)
 
 -- | Compiled data for the 'multipleOf' keyword
@@ -75,7 +75,6 @@ validateMultipleOf _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to
 multipleOfKeyword :: KeywordDefinition
 multipleOfKeyword = KeywordDefinition
   { keywordName = "multipleOf"
-  , keywordScope = AnyScope
   , keywordCompile = compileMultipleOf
   , keywordValidate = validateMultipleOf
   , keywordNavigation = NoNavigation

@@ -15,7 +15,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 import qualified Fractal.JsonSchema.Regex as Regex
 
@@ -51,7 +51,6 @@ validatePattern _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to st
 patternKeyword :: KeywordDefinition
 patternKeyword = KeywordDefinition
   { keywordName = "pattern"
-  , keywordScope = AnyScope
   , keywordCompile = compilePattern
   , keywordValidate = validatePattern
   , keywordNavigation = NoNavigation

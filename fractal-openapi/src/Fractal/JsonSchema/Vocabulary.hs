@@ -5,9 +5,7 @@
 module Fractal.JsonSchema.Vocabulary
   ( -- * Vocabulary Types
     Vocabulary(..)
-  , KeywordDefinition(..)
   , KeywordValue(..)
-  , KeywordScope(..)
   
     -- * Registry
   , VocabularyRegistry(..)
@@ -42,17 +40,10 @@ import Data.Text (Text)
 import qualified Data.Text
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Typeable (Typeable, eqT, (:~:)(Refl))
 
--- | Which schema types a keyword can appear in
-data KeywordScope
-  = AnySchema
-  | ObjectSchemaOnly
-  | ArraySchemaOnly
-  | StringSchemaOnly
-  | NumericSchemaOnly
-  | BooleanSchemaOnly
-  deriving (Eq, Show, Ord, Enum, Bounded)
 
 -- | Opaque keyword value with type safety via existential
 data KeywordValue where
@@ -67,19 +58,14 @@ instance Eq KeywordValue where
 instance Show KeywordValue where
   show (KeywordValue a) = show a
 
--- | Keyword definition
-data KeywordDefinition = KeywordDefinition
-  { keywordName :: Text
-  , keywordScope :: KeywordScope
-  , keywordPriority :: Int  -- Higher = evaluated first
-  }
-  deriving (Eq, Show)
-
 -- | Vocabulary definition
 data Vocabulary = Vocabulary
   { vocabularyURI :: Text
   , vocabularyRequired :: Bool
-  , vocabularyKeywords :: Map Text KeywordDefinition
+  , vocabularyKeywords :: Set Text
+    -- ^ Set of keyword names defined by this vocabulary
+    -- The keyword name is sufficient since vocabularies only track which keywords exist,
+    -- not their implementation details (which are handled by the actual keyword registry)
   }
   deriving (Eq, Show)
 
@@ -243,7 +229,7 @@ composeDialect name version vocabSpecs formatBehavior unknownMode reg = do
 -- Returns list of conflicting keyword names
 detectKeywordConflicts :: [Vocabulary] -> [Text]
 detectKeywordConflicts vocabs =
-  let allKeywords = concatMap (\v -> Map.keys (vocabularyKeywords v)) vocabs
+  let allKeywords = concatMap (Set.toList . vocabularyKeywords) vocabs
       keywordCounts = Map.fromListWith (+) [(k, 1 :: Int) | k <- allKeywords]
       conflicts = Map.keys $ Map.filter (> 1) keywordCounts
   in conflicts
@@ -261,16 +247,16 @@ coreVocabulary :: Vocabulary
 coreVocabulary = Vocabulary
   { vocabularyURI = "https://json-schema.org/draft/2020-12/vocab/core"
   , vocabularyRequired = True
-  , vocabularyKeywords = Map.fromList
-      [ ("$schema", KeywordDefinition "$schema" AnySchema 200)
-      , ("$id", KeywordDefinition "$id" AnySchema 200)
-      , ("$ref", KeywordDefinition "$ref" AnySchema 150)
-      , ("$anchor", KeywordDefinition "$anchor" AnySchema 200)
-      , ("$dynamicRef", KeywordDefinition "$dynamicRef" AnySchema 150)
-      , ("$dynamicAnchor", KeywordDefinition "$dynamicAnchor" AnySchema 200)
-      , ("$vocabulary", KeywordDefinition "$vocabulary" AnySchema 200)
-      , ("$comment", KeywordDefinition "$comment" AnySchema 10)
-      , ("$defs", KeywordDefinition "$defs" AnySchema 200)
+  , vocabularyKeywords = Set.fromList
+      [ "$schema"
+      , "$id"
+      , "$ref"
+      , "$anchor"
+      , "$dynamicRef"
+      , "$dynamicAnchor"
+      , "$vocabulary"
+      , "$comment"
+      , "$defs"
       ]
   }
 
@@ -279,22 +265,22 @@ applicatorVocabulary :: Vocabulary
 applicatorVocabulary = Vocabulary
   { vocabularyURI = "https://json-schema.org/draft/2020-12/vocab/applicator"
   , vocabularyRequired = True
-  , vocabularyKeywords = Map.fromList
-      [ ("prefixItems", KeywordDefinition "prefixItems" ArraySchemaOnly 100)
-      , ("items", KeywordDefinition "items" ArraySchemaOnly 100)
-      , ("contains", KeywordDefinition "contains" ArraySchemaOnly 100)
-      , ("additionalProperties", KeywordDefinition "additionalProperties" ObjectSchemaOnly 100)
-      , ("properties", KeywordDefinition "properties" ObjectSchemaOnly 100)
-      , ("patternProperties", KeywordDefinition "patternProperties" ObjectSchemaOnly 100)
-      , ("dependentSchemas", KeywordDefinition "dependentSchemas" ObjectSchemaOnly 100)
-      , ("propertyNames", KeywordDefinition "propertyNames" ObjectSchemaOnly 100)
-      , ("if", KeywordDefinition "if" AnySchema 90)
-      , ("then", KeywordDefinition "then" AnySchema 90)
-      , ("else", KeywordDefinition "else" AnySchema 90)
-      , ("allOf", KeywordDefinition "allOf" AnySchema 90)
-      , ("anyOf", KeywordDefinition "anyOf" AnySchema 90)
-      , ("oneOf", KeywordDefinition "oneOf" AnySchema 90)
-      , ("not", KeywordDefinition "not" AnySchema 90)
+  , vocabularyKeywords = Set.fromList
+      [ "prefixItems"
+      , "items"
+      , "contains"
+      , "additionalProperties"
+      , "properties"
+      , "patternProperties"
+      , "dependentSchemas"
+      , "propertyNames"
+      , "if"
+      , "then"
+      , "else"
+      , "allOf"
+      , "anyOf"
+      , "oneOf"
+      , "not"
       ]
   }
 
@@ -303,27 +289,27 @@ validationVocabulary :: Vocabulary
 validationVocabulary = Vocabulary
   { vocabularyURI = "https://json-schema.org/draft/2020-12/vocab/validation"
   , vocabularyRequired = True
-  , vocabularyKeywords = Map.fromList
-      [ ("type", KeywordDefinition "type" AnySchema 110)
-      , ("enum", KeywordDefinition "enum" AnySchema 110)
-      , ("const", KeywordDefinition "const" AnySchema 110)
-      , ("multipleOf", KeywordDefinition "multipleOf" NumericSchemaOnly 100)
-      , ("maximum", KeywordDefinition "maximum" NumericSchemaOnly 100)
-      , ("exclusiveMaximum", KeywordDefinition "exclusiveMaximum" NumericSchemaOnly 100)
-      , ("minimum", KeywordDefinition "minimum" NumericSchemaOnly 100)
-      , ("exclusiveMinimum", KeywordDefinition "exclusiveMinimum" NumericSchemaOnly 100)
-      , ("maxLength", KeywordDefinition "maxLength" StringSchemaOnly 100)
-      , ("minLength", KeywordDefinition "minLength" StringSchemaOnly 100)
-      , ("pattern", KeywordDefinition "pattern" StringSchemaOnly 100)
-      , ("maxItems", KeywordDefinition "maxItems" ArraySchemaOnly 100)
-      , ("minItems", KeywordDefinition "minItems" ArraySchemaOnly 100)
-      , ("uniqueItems", KeywordDefinition "uniqueItems" ArraySchemaOnly 100)
-      , ("maxContains", KeywordDefinition "maxContains" ArraySchemaOnly 100)
-      , ("minContains", KeywordDefinition "minContains" ArraySchemaOnly 100)
-      , ("maxProperties", KeywordDefinition "maxProperties" ObjectSchemaOnly 100)
-      , ("minProperties", KeywordDefinition "minProperties" ObjectSchemaOnly 100)
-      , ("required", KeywordDefinition "required" ObjectSchemaOnly 100)
-      , ("dependentRequired", KeywordDefinition "dependentRequired" ObjectSchemaOnly 100)
+  , vocabularyKeywords = Set.fromList
+      [ "type"
+      , "enum"
+      , "const"
+      , "multipleOf"
+      , "maximum"
+      , "exclusiveMaximum"
+      , "minimum"
+      , "exclusiveMinimum"
+      , "maxLength"
+      , "minLength"
+      , "pattern"
+      , "maxItems"
+      , "minItems"
+      , "uniqueItems"
+      , "maxContains"
+      , "minContains"
+      , "maxProperties"
+      , "minProperties"
+      , "required"
+      , "dependentRequired"
       ]
   }
 
@@ -332,14 +318,14 @@ metadataVocabulary :: Vocabulary
 metadataVocabulary = Vocabulary
   { vocabularyURI = "https://json-schema.org/draft/2020-12/vocab/meta-data"
   , vocabularyRequired = False
-  , vocabularyKeywords = Map.fromList
-      [ ("title", KeywordDefinition "title" AnySchema 10)
-      , ("description", KeywordDefinition "description" AnySchema 10)
-      , ("default", KeywordDefinition "default" AnySchema 10)
-      , ("deprecated", KeywordDefinition "deprecated" AnySchema 10)
-      , ("readOnly", KeywordDefinition "readOnly" AnySchema 10)
-      , ("writeOnly", KeywordDefinition "writeOnly" AnySchema 10)
-      , ("examples", KeywordDefinition "examples" AnySchema 10)
+  , vocabularyKeywords = Set.fromList
+      [ "title"
+      , "description"
+      , "default"
+      , "deprecated"
+      , "readOnly"
+      , "writeOnly"
+      , "examples"
       ]
   }
 
@@ -348,8 +334,8 @@ formatAnnotationVocabulary :: Vocabulary
 formatAnnotationVocabulary = Vocabulary
   { vocabularyURI = "https://json-schema.org/draft/2020-12/vocab/format-annotation"
   , vocabularyRequired = False
-  , vocabularyKeywords = Map.fromList
-      [ ("format", KeywordDefinition "format" StringSchemaOnly 100)
+  , vocabularyKeywords = Set.fromList
+      [ "format"
       ]
   }
 
@@ -358,9 +344,9 @@ unevaluatedVocabulary :: Vocabulary
 unevaluatedVocabulary = Vocabulary
   { vocabularyURI = "https://json-schema.org/draft/2020-12/vocab/unevaluated"
   , vocabularyRequired = False
-  , vocabularyKeywords = Map.fromList
-      [ ("unevaluatedItems", KeywordDefinition "unevaluatedItems" ArraySchemaOnly 50)
-      , ("unevaluatedProperties", KeywordDefinition "unevaluatedProperties" ObjectSchemaOnly 50)
+  , vocabularyKeywords = Set.fromList
+      [ "unevaluatedItems"
+      , "unevaluatedProperties"
       ]
   }
 

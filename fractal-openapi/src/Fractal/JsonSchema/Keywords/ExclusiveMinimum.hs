@@ -16,7 +16,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'exclusiveMinimum' keyword (Draft-06+ standalone numeric)
@@ -42,7 +42,6 @@ validateExclusiveMinimum _ _ _ _ = pure (ValidationSuccess mempty)  -- Only appl
 exclusiveMinimumKeyword :: KeywordDefinition
 exclusiveMinimumKeyword = KeywordDefinition
   { keywordName = "exclusiveMinimum"
-  , keywordScope = AnyScope
   , keywordCompile = compileExclusiveMinimum
   , keywordValidate = validateExclusiveMinimum
   , keywordNavigation = NoNavigation

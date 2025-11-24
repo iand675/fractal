@@ -25,7 +25,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordScope(..), KeywordNavigation(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   , combineValidationResults
   )
 
@@ -70,7 +70,6 @@ validateDependenciesKeyword _ _ _ _ = pure (ValidationSuccess mempty)
 dependenciesKeyword :: KeywordDefinition
 dependenciesKeyword = KeywordDefinition
   { keywordName = "dependencies"
-  , keywordScope = AnyScope
   , keywordCompile = compileDependencies
   , keywordValidate = validateDependenciesKeyword
   , keywordNavigation = NoNavigation

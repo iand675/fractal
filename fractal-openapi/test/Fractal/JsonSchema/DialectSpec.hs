@@ -8,6 +8,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.List (sort)
 
 import Fractal.JsonSchema.Dialect
@@ -15,7 +17,7 @@ import Fractal.JsonSchema.Types (JsonSchemaVersion(..), pattern ValidationSucces
 import Fractal.JsonSchema.Vocabulary.Types
 import Fractal.JsonSchema.Vocabulary.Registry
 import qualified Fractal.JsonSchema.Vocabulary as Vocab
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordScope(..), KeywordNavigation(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..))
 
 spec :: Spec
 spec = describe "Dialect" $ do
@@ -98,20 +100,20 @@ spec = describe "Dialect" $ do
       -- Create two vocabularies with conflicting keywords
       let keyword1 = KeywordDefinition
             { keywordName = "conflicting"
-            , keywordScope = AnyScope
             , keywordCompile = \_ _ _ -> Left "Not implemented" :: Either Text ()
             , keywordValidate = \_ (_ :: ()) _ _ -> pure (ValidationSuccess mempty)
             , keywordNavigation = NoNavigation
+            , keywordPostValidate = Nothing
             }
           vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.singleton "conflicting" keyword1
+            , vocabularyKeywords = Set.singleton "conflicting"
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.singleton "conflicting" keyword1
+            , vocabularyKeywords = Set.singleton "conflicting"
             }
           registry = registerVocabulary vocab2 $ registerVocabulary vocab1 emptyRegistry
           dialect = Dialect
@@ -165,7 +167,7 @@ spec = describe "Dialect" $ do
       let vocab = Vocabulary
             { vocabularyURI = "https://example.com/vocab"
             , vocabularyRequired = False
-            , vocabularyKeywords = Map.empty
+            , vocabularyKeywords = Set.empty
             }
           registry = registerVocabulary vocab emptyVocabularyRegistry
           dialect = Dialect

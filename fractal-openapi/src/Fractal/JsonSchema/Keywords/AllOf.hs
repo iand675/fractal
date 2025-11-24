@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
 import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationErrors, ValidationAnnotations, schemaAllOf)
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), KeywordScope(..), CompilationContext(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), CompilationContext(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser (parseSchema, ParseError)
 
@@ -75,7 +75,6 @@ validateAllOf validateSchema schemas value =
 allOfKeyword :: KeywordDefinition
 allOfKeyword = KeywordDefinition
   { keywordName = "allOf"
-  , keywordScope = AnyScope
   , keywordCompile = compileAllOf
   , keywordValidate = validateAllOfKeyword
   , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of

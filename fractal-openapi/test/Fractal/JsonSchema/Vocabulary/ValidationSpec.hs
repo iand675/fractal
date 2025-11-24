@@ -6,6 +6,8 @@ import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 
@@ -27,10 +29,10 @@ testValidate _ _ _ _ = pure (ValidationSuccess mempty)
 mkTestKeyword :: Text -> KeywordDefinition
 mkTestKeyword name = KeywordDefinition
   { keywordName = name
-  , keywordScope = AnyScope
   , keywordCompile = testCompile
   , keywordValidate = testValidate
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 spec :: Spec
@@ -41,7 +43,7 @@ spec = describe "Vocabulary Validation" $ do
       let vocab = Vocabulary
             { vocabularyURI = "https://example.com/vocab/v1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test", mkTestKeyword "x-test")]
+            , vocabularyKeywords = Set.fromList ["x-test"]
             }
           registry = registerVocabulary vocab emptyVocabularyRegistry
 
@@ -109,12 +111,12 @@ spec = describe "Vocabulary Validation" $ do
       let vocab1 = Vocabulary
             { vocabularyURI = "https://example.com/vocab1"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test1", mkTestKeyword "x-test1")]
+            , vocabularyKeywords = Set.fromList ["x-test1"]
             }
           vocab2 = Vocabulary
             { vocabularyURI = "https://example.com/vocab2"
             , vocabularyRequired = True
-            , vocabularyKeywords = Map.fromList [("x-test2", mkTestKeyword "x-test2")]
+            , vocabularyKeywords = Set.fromList ["x-test2"]
             }
           registry = registerVocabulary vocab2 $ registerVocabulary vocab1 emptyVocabularyRegistry
 

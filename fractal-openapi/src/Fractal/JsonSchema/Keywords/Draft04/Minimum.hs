@@ -59,7 +59,6 @@ validateMinimumLegacy _ _ _ _ = pure []  -- Only applies to numbers
 minimumKeyword :: KeywordDefinition
 minimumKeyword = KeywordDefinition
   { keywordName = "minimum"
-  , keywordScope = AnyScope
   , keywordCompile = compileMinimum
   , keywordValidate = validateMinimum
   , keywordNavigation = NoNavigation
@@ -89,7 +88,6 @@ validateExclusiveMinimum _ _ _ _ = pure (ValidationSuccess mempty)
 exclusiveMinimumKeyword :: KeywordDefinition
 exclusiveMinimumKeyword = KeywordDefinition
   { keywordName = "exclusiveMinimum"
-  , keywordScope = AnyScope
   , keywordCompile = compileExclusiveMinimum
   , keywordValidate = validateExclusiveMinimum
   , keywordNavigation = NoNavigation

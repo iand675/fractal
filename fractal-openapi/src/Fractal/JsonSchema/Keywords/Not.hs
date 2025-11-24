@@ -17,7 +17,7 @@ import qualified Data.Text as T
 
 import Fractal.JsonSchema.Types (Schema, SchemaCore(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaCore, schemaNot)
 import Fractal.JsonSchema.Parser (parseSchema, ParseError)
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordScope(..), CompileFunc, ValidateFunc, KeywordNavigation(..), CompilationContext(..), ValidationContext')
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordNavigation(..), CompilationContext(..), ValidationContext')
 import Fractal.JsonSchema.Keyword (mkKeywordDefinition)
 
 -- | Compiled data for 'not' keyword
@@ -62,7 +62,6 @@ validateNotKeyword recursiveValidator (NotData schema) _ctx value =
 notKeyword :: KeywordDefinition
 notKeyword = KeywordDefinition
   { keywordName = "not"
-  , keywordScope = AnyScope
   , keywordCompile = compileNot
   , keywordValidate = validateNotKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of

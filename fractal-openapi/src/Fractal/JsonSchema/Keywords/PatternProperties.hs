@@ -30,7 +30,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 import qualified Fractal.JsonSchema.Regex as RegexModule
@@ -90,7 +90,6 @@ validatePatternPropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- O
 patternPropertiesKeyword :: KeywordDefinition
 patternPropertiesKeyword = KeywordDefinition
   { keywordName = "patternProperties"
-  , keywordScope = AnyScope
   , keywordCompile = compilePatternProperties
   , keywordValidate = validatePatternPropertiesKeyword
   , keywordNavigation = SchemaMap $ \schema -> case schemaCore schema of

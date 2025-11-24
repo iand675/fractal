@@ -16,7 +16,7 @@ import Data.Typeable (Typeable)
 import Numeric.Natural (Natural)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'minItems' keyword
@@ -44,7 +44,6 @@ validateMinItems _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to a
 minItemsKeyword :: KeywordDefinition
 minItemsKeyword = KeywordDefinition
   { keywordName = "minItems"
-  , keywordScope = AnyScope
   , keywordCompile = compileMinItems
   , keywordValidate = validateMinItems
   , keywordNavigation = NoNavigation

@@ -34,7 +34,7 @@ import Fractal.JsonSchema.Types
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc, PostValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   , LegacyValidateFunc, legacyValidate
   )
 import Fractal.JsonSchema.Validator.Annotations (annotateProperties)
@@ -139,7 +139,6 @@ extractEvaluatedProperties (ValidationAnnotations annMap) =
 unevaluatedPropertiesKeyword :: KeywordDefinition
 unevaluatedPropertiesKeyword = KeywordDefinition
   { keywordName = "unevaluatedProperties"
-  , keywordScope = AnyScope
   , keywordCompile = compileUnevaluatedProperties
   , keywordValidate = legacyValidate "unevaluatedProperties" validateUnevaluatedPropertiesKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of

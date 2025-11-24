@@ -16,7 +16,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
 
 -- | Compiled data for the 'maximum' keyword
@@ -42,7 +42,6 @@ validateMaximum _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to nu
 maximumKeyword :: KeywordDefinition
 maximumKeyword = KeywordDefinition
   { keywordName = "maximum"
-  , keywordScope = AnyScope
   , keywordCompile = compileMaximum
   , keywordValidate = validateMaximum
   , keywordNavigation = NoNavigation

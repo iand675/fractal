@@ -15,7 +15,7 @@ import Data.Typeable (Typeable)
 import Numeric.Natural (Natural)
 import qualified Data.Scientific as Sci
 
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, KeywordScope(..), LegacyValidateFunc, legacyValidate)
+import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc, LegacyValidateFunc, legacyValidate)
 import Fractal.JsonSchema.Types (Schema)
 
 -- | Compiled data for the 'maxItems' keyword
@@ -45,7 +45,6 @@ validateMaxItemsLegacy _ _ _ _ = pure []  -- Only applies to arrays
 maxItemsKeyword :: KeywordDefinition
 maxItemsKeyword = KeywordDefinition
   { keywordName = "maxItems"
-  , keywordScope = AnyScope
   , keywordCompile = compileMaxItems
   , keywordValidate = validateMaxItems
   , keywordNavigation = NoNavigation

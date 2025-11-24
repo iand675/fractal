@@ -52,7 +52,6 @@ validateExclusiveMinimum _ _ _ _ = pure (ValidationSuccess mempty)  -- No valida
 exclusiveMinimumKeyword :: KeywordDefinition
 exclusiveMinimumKeyword = KeywordDefinition
   { keywordName = "exclusiveMinimum"
-  , keywordScope = AnyScope
   , keywordCompile = compileExclusiveMinimum
   , keywordValidate = validateExclusiveMinimum
   , keywordNavigation = NoNavigation

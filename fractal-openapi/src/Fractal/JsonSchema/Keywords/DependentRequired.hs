@@ -33,7 +33,7 @@ import Fractal.JsonSchema.Types
 import qualified Fractal.JsonSchema.Validator.Result as VR
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
-  , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
+  , ValidationContext'(..), KeywordNavigation(..)
   )
 
 -- | Compiled data for dependentRequired keyword
@@ -86,7 +86,6 @@ validateDependentRequiredKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- O
 dependentRequiredKeyword :: KeywordDefinition
 dependentRequiredKeyword = KeywordDefinition
   { keywordName = "dependentRequired"
-  , keywordScope = AnyScope
   , keywordCompile = compileDependentRequired
   , keywordValidate = validateDependentRequiredKeyword
   , keywordNavigation = NoNavigation  -- No subschemas

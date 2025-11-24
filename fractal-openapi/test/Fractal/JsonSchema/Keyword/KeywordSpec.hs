@@ -62,7 +62,7 @@ spec = describe "Keyword System" $ do
   describe "Keyword Registration" $ do
     it "registers and looks up keywords" $ do
       let registry = registerKeyword
-                       (mkKeywordDefinition "x-test" AnyScope compileMinValue validateMinValue)
+                       (mkKeywordDefinition "x-test"  compileMinValue validateMinValue)
                        emptyKeywordRegistry
 
       case lookupKeyword "x-test" registry of
@@ -76,9 +76,9 @@ spec = describe "Keyword System" $ do
 
     it "can register multiple keywords" $ do
       let registry = registerKeyword
-                       (mkKeywordDefinition "x-min" AnyScope compileMinValue validateMinValue)
+                       (mkKeywordDefinition "x-min"  compileMinValue validateMinValue)
                      $ registerKeyword
-                       (mkKeywordDefinition "x-pattern" AnyScope compilePattern validatePattern)
+                       (mkKeywordDefinition "x-pattern"  compilePattern validatePattern)
                        emptyKeywordRegistry
 
       case lookupKeyword "x-min" registry of
@@ -90,9 +90,9 @@ spec = describe "Keyword System" $ do
 
     it "gets list of registered keyword names" $ do
       let registry = registerKeyword
-                       (mkKeywordDefinition "x-first" AnyScope compileMinValue validateMinValue)
+                       (mkKeywordDefinition "x-first"  compileMinValue validateMinValue)
                      $ registerKeyword
-                       (mkKeywordDefinition "x-second" AnyScope compilePattern validatePattern)
+                       (mkKeywordDefinition "x-second"  compilePattern validatePattern)
                        emptyKeywordRegistry
 
       let names = getRegisteredKeywords registry
@@ -102,7 +102,7 @@ spec = describe "Keyword System" $ do
 
   describe "Keyword Compilation" $ do
     it "compiles a keyword with valid value" $ do
-      let def = mkKeywordDefinition "x-min-value" AnyScope compileMinValue validateMinValue
+      let def = mkKeywordDefinition "x-min-value"  compileMinValue validateMinValue
           value = Number 10
           schema = either (error . show) id $ parseSchema (Aeson.object [])
           ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
@@ -112,7 +112,7 @@ spec = describe "Keyword System" $ do
         Right compiled -> compiledKeywordName compiled `shouldBe` "x-min-value"
 
     it "fails compilation with invalid value type" $ do
-      let def = mkKeywordDefinition "x-min-value" AnyScope compileMinValue validateMinValue
+      let def = mkKeywordDefinition "x-min-value"  compileMinValue validateMinValue
           value = String "not a number"
           schema = either (error . show) id $ parseSchema (Aeson.object [])
           ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
@@ -122,8 +122,8 @@ spec = describe "Keyword System" $ do
         Right _ -> expectationFailure "Should have failed with wrong value type"
 
     it "compiles multiple keywords" $ do
-      let minDef = mkKeywordDefinition "x-min" AnyScope compileMinValue validateMinValue
-          patternDef = mkKeywordDefinition "x-pattern" AnyScope compilePattern validatePattern
+      let minDef = mkKeywordDefinition "x-min"  compileMinValue validateMinValue
+          patternDef = mkKeywordDefinition "x-pattern"  compilePattern validatePattern
           definitions = Map.fromList
             [ ("x-min", minDef)
             , ("x-pattern", patternDef)
@@ -147,7 +147,7 @@ spec = describe "Keyword System" $ do
 
   describe "Keyword Validation" $ do
     it "validates instance with compiled keyword" $ do
-      let def = mkKeywordDefinition "x-min-value" AnyScope compileMinValue validateMinValue
+      let def = mkKeywordDefinition "x-min-value"  compileMinValue validateMinValue
           value = Number 10
           schema = either (error . show) id $ parseSchema (Aeson.object [])
           ctx = buildCompilationContext Map.empty emptyKeywordRegistry schema []
@@ -169,8 +169,8 @@ spec = describe "Keyword System" $ do
       head minErrs `shouldSatisfy` T.isInfixOf "less than minimum"
 
     it "validates with multiple keywords" $ do
-      let minDef = mkKeywordDefinition "x-min" AnyScope compileMinValue validateMinValue
-          patternDef = mkKeywordDefinition "x-pattern" AnyScope compilePattern validatePattern
+      let minDef = mkKeywordDefinition "x-min"  compileMinValue validateMinValue
+          patternDef = mkKeywordDefinition "x-pattern"  compilePattern validatePattern
           definitions = Map.fromList
             [ ("x-min", minDef)
             , ("x-pattern", patternDef)
@@ -198,7 +198,7 @@ spec = describe "Keyword System" $ do
       head strErrs `shouldSatisfy` T.isInfixOf "can only validate numbers"
 
     it "collects all errors from all keywords" $ do
-      let minDef = mkKeywordDefinition "x-min" AnyScope compileMinValue validateMinValue
+      let minDef = mkKeywordDefinition "x-min"  compileMinValue validateMinValue
           definitions = Map.fromList [("x-min", minDef)]
           keywordValues = Map.fromList [("x-min", Number 100)]
           schema = either (error . show) id $ parseSchema (Aeson.object [])
@@ -213,14 +213,14 @@ spec = describe "Keyword System" $ do
       length belowErrs `shouldBe` 1
       head belowErrs `shouldSatisfy` T.isInfixOf "less than minimum"
 
-  describe "Keyword Scope" $ do
-    it "creates keywords with different scopes" $ do
-      let appliesAnywhere = mkKeywordDefinition "x-anywhere" AnyScope compileMinValue validateMinValue
-          appliesToStrings = mkKeywordDefinition "x-string" StringOnly compileMinValue validateMinValue
+  describe "Keyword Definition" $ do
+    it "creates keywords with correct names" $ do
+      let appliesAnywhere = mkKeywordDefinition "x-anywhere" compileMinValue validateMinValue
+          appliesToStrings = mkKeywordDefinition "x-string" compileMinValue validateMinValue
 
       keywordName appliesAnywhere `shouldBe` "x-anywhere"
       keywordName appliesToStrings `shouldBe` "x-string"
 
-    it "shows keyword scope in Show instance" $ do
-      show AnyScope `shouldBe` "AnyScope"
-      show StringOnly `shouldBe` "StringOnly"
+    it "shows keyword name in Show instance" $ do
+      let kw = mkKeywordDefinition "x-test" compileMinValue validateMinValue
+      show (keywordName kw) `shouldBe` "\"x-test\""
