@@ -50,5 +50,6 @@ minPropertiesKeyword = KeywordDefinition
   , keywordCompile = compileMinProperties
   , keywordValidate = validateMinProperties
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

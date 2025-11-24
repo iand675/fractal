@@ -46,11 +46,19 @@ module Fractal.JsonSchema.Keywords.Standard
   , thenKeyword
   , elseKeyword
     -- * Registry
-  , standardKeywordRegistry
+  , draft202012Registry
+  , draft201909Registry
+  , draft07Registry
+  , draft06Registry
   , draft04Registry
+  , standardKeywordRegistry
   ) where
 
-import Fractal.JsonSchema.Keyword (KeywordRegistry, emptyKeywordRegistry, registerKeyword)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Text (Text)
+
+import Fractal.JsonSchema.Keyword (KeywordRegistry(..), emptyKeywordRegistry, registerKeyword)
 -- Basic keywords
 import Fractal.JsonSchema.Keywords.Const (constKeyword)
 import Fractal.JsonSchema.Keywords.Enum (enumKeyword)
@@ -80,11 +88,14 @@ import Fractal.JsonSchema.Keywords.Properties (propertiesKeyword)
 import Fractal.JsonSchema.Keywords.PatternProperties (patternPropertiesKeyword)
 import Fractal.JsonSchema.Keywords.AdditionalProperties (additionalPropertiesKeyword)
 import Fractal.JsonSchema.Keywords.PropertyNames (propertyNamesKeyword)
+import Fractal.JsonSchema.Keywords.Dependencies (dependenciesKeyword)
 import Fractal.JsonSchema.Keywords.DependentRequired (dependentRequiredKeyword)
 import Fractal.JsonSchema.Keywords.DependentSchemas (dependentSchemasKeyword)
 import Fractal.JsonSchema.Keywords.UnevaluatedProperties (unevaluatedPropertiesKeyword)
 import Fractal.JsonSchema.Keywords.UnevaluatedItems (unevaluatedItemsKeyword)
 import Fractal.JsonSchema.Keywords.FormatKeyword (formatKeyword)
+import Fractal.JsonSchema.Keywords.ContentMediaType (contentMediaTypeKeyword)
+import Fractal.JsonSchema.Keywords.ContentEncoding (contentEncodingKeyword)
 
 -- Conditional keywords
 import Fractal.JsonSchema.Keywords.Conditional (ifKeyword, thenKeyword, elseKeyword)
@@ -98,12 +109,9 @@ import qualified Fractal.JsonSchema.Keywords.Not as Not
 import qualified Fractal.JsonSchema.Keywords.Draft04.Minimum as D04
 import qualified Fractal.JsonSchema.Keywords.Draft04.Maximum as D04
 
--- | Registry containing all standard keywords (Draft-06+)
---
--- This registry can be extended with custom keywords or used as-is
--- for standard JSON Schema validation.
-standardKeywordRegistry :: KeywordRegistry
-standardKeywordRegistry =
+-- | Registry containing all keywords defined in Draft 2020-12
+draft202012Registry :: KeywordRegistry
+draft202012Registry =
   -- Basic validation
   registerKeyword constKeyword $
   registerKeyword enumKeyword $
@@ -113,6 +121,8 @@ standardKeywordRegistry =
   registerKeyword maxLengthKeyword $
   registerKeyword patternKeyword $
   registerKeyword formatKeyword $
+  registerKeyword contentMediaTypeKeyword $
+  registerKeyword contentEncodingKeyword $
   -- Numeric validation
   registerKeyword minimumKeyword $
   registerKeyword maximumKeyword $
@@ -135,6 +145,7 @@ standardKeywordRegistry =
   registerKeyword propertiesKeyword $
   registerKeyword patternPropertiesKeyword $
   registerKeyword additionalPropertiesKeyword $
+  registerKeyword dependenciesKeyword $
   registerKeyword propertyNamesKeyword $
   registerKeyword dependentRequiredKeyword $
   registerKeyword dependentSchemasKeyword $
@@ -151,6 +162,182 @@ standardKeywordRegistry =
   registerKeyword Not.notKeyword $
   registerKeyword Nav.defsKeyword $
   emptyKeywordRegistry
+
+-- | Registry for Draft 2019-09
+-- 
+-- Draft 2019-09 adds:
+-- - dependentSchemas/dependentRequired (replaces dependencies)
+-- - unevaluatedProperties/unevaluatedItems
+-- - minContains/maxContains
+-- - $recursiveRef/$recursiveAnchor
+-- 
+-- Does NOT include prefixItems (added in 2020-12)
+draft201909Registry :: KeywordRegistry
+draft201909Registry =
+  -- Basic validation
+  registerKeyword constKeyword $
+  registerKeyword enumKeyword $
+  registerKeyword typeKeyword $
+  -- String validation
+  registerKeyword minLengthKeyword $
+  registerKeyword maxLengthKeyword $
+  registerKeyword patternKeyword $
+  registerKeyword formatKeyword $
+  registerKeyword contentMediaTypeKeyword $
+  registerKeyword contentEncodingKeyword $
+  -- Numeric validation
+  registerKeyword minimumKeyword $
+  registerKeyword maximumKeyword $
+  registerKeyword multipleOfKeyword $
+  registerKeyword exclusiveMinimumKeyword $
+  registerKeyword exclusiveMaximumKeyword $
+  -- Array validation
+  registerKeyword minItemsKeyword $
+  registerKeyword maxItemsKeyword $
+  registerKeyword uniqueItemsKeyword $
+  registerKeyword itemsKeyword $
+  registerKeyword containsKeyword $
+  registerKeyword minContainsKeyword $
+  registerKeyword maxContainsKeyword $
+  -- Object validation
+  registerKeyword requiredKeyword $
+  registerKeyword minPropertiesKeyword $
+  registerKeyword maxPropertiesKeyword $
+  registerKeyword propertiesKeyword $
+  registerKeyword patternPropertiesKeyword $
+  registerKeyword additionalPropertiesKeyword $
+  registerKeyword dependenciesKeyword $
+  registerKeyword propertyNamesKeyword $
+  registerKeyword dependentRequiredKeyword $
+  registerKeyword dependentSchemasKeyword $
+  registerKeyword unevaluatedPropertiesKeyword $
+  registerKeyword unevaluatedItemsKeyword $
+  -- Conditional keywords (if/then/else, Draft-07+)
+  registerKeyword ifKeyword $
+  registerKeyword thenKeyword $
+  registerKeyword elseKeyword $
+  -- Navigable keywords (for $ref resolution)
+  registerKeyword AllOf.allOfKeyword $
+  registerKeyword AnyOf.anyOfKeyword $
+  registerKeyword OneOf.oneOfKeyword $
+  registerKeyword Not.notKeyword $
+  registerKeyword Nav.defsKeyword $
+  emptyKeywordRegistry
+
+-- | Registry for Draft-07
+--
+-- Draft-07 adds:
+-- - if/then/else conditional keywords
+-- - contentMediaType/contentEncoding
+--
+-- Does NOT include:
+-- - dependentSchemas/dependentRequired (added in 2019-09)
+-- - unevaluatedProperties/unevaluatedItems (added in 2019-09)
+-- - minContains/maxContains (added in 2019-09)
+-- - prefixItems (added in 2020-12)
+draft07Registry :: KeywordRegistry
+draft07Registry =
+  -- Basic validation
+  registerKeyword constKeyword $
+  registerKeyword enumKeyword $
+  registerKeyword typeKeyword $
+  -- String validation
+  registerKeyword minLengthKeyword $
+  registerKeyword maxLengthKeyword $
+  registerKeyword patternKeyword $
+  registerKeyword formatKeyword $
+  registerKeyword contentMediaTypeKeyword $
+  registerKeyword contentEncodingKeyword $
+  -- Numeric validation
+  registerKeyword minimumKeyword $
+  registerKeyword maximumKeyword $
+  registerKeyword multipleOfKeyword $
+  registerKeyword exclusiveMinimumKeyword $
+  registerKeyword exclusiveMaximumKeyword $
+  -- Array validation
+  registerKeyword minItemsKeyword $
+  registerKeyword maxItemsKeyword $
+  registerKeyword uniqueItemsKeyword $
+  registerKeyword itemsKeyword $
+  registerKeyword containsKeyword $
+  -- Object validation
+  registerKeyword requiredKeyword $
+  registerKeyword minPropertiesKeyword $
+  registerKeyword maxPropertiesKeyword $
+  registerKeyword propertiesKeyword $
+  registerKeyword patternPropertiesKeyword $
+  registerKeyword additionalPropertiesKeyword $
+  registerKeyword dependenciesKeyword $
+  registerKeyword propertyNamesKeyword $
+  -- Conditional keywords (if/then/else, Draft-07+)
+  registerKeyword ifKeyword $
+  registerKeyword thenKeyword $
+  registerKeyword elseKeyword $
+  -- Navigable keywords (for $ref resolution)
+  registerKeyword AllOf.allOfKeyword $
+  registerKeyword AnyOf.anyOfKeyword $
+  registerKeyword OneOf.oneOfKeyword $
+  registerKeyword Not.notKeyword $
+  registerKeyword Nav.defsKeyword $
+  emptyKeywordRegistry
+
+-- | Registry for Draft-06
+--
+-- Draft-06 adds:
+-- - const keyword
+-- - contains keyword
+-- - propertyNames keyword
+--
+-- Does NOT include:
+-- - if/then/else (added in Draft-07)
+-- - contentMediaType/contentEncoding (added in Draft-07)
+-- - dependentSchemas/dependentRequired (added in 2019-09)
+-- - unevaluatedProperties/unevaluatedItems (added in 2019-09)
+-- - minContains/maxContains (added in 2019-09)
+-- - prefixItems (added in 2020-12)
+draft06Registry :: KeywordRegistry
+draft06Registry =
+  -- Basic validation
+  registerKeyword constKeyword $
+  registerKeyword enumKeyword $
+  registerKeyword typeKeyword $
+  -- String validation
+  registerKeyword minLengthKeyword $
+  registerKeyword maxLengthKeyword $
+  registerKeyword patternKeyword $
+  registerKeyword formatKeyword $
+  -- Numeric validation
+  registerKeyword minimumKeyword $
+  registerKeyword maximumKeyword $
+  registerKeyword multipleOfKeyword $
+  registerKeyword exclusiveMinimumKeyword $
+  registerKeyword exclusiveMaximumKeyword $
+  -- Array validation
+  registerKeyword minItemsKeyword $
+  registerKeyword maxItemsKeyword $
+  registerKeyword uniqueItemsKeyword $
+  registerKeyword itemsKeyword $
+  registerKeyword containsKeyword $
+  -- Object validation
+  registerKeyword requiredKeyword $
+  registerKeyword minPropertiesKeyword $
+  registerKeyword maxPropertiesKeyword $
+  registerKeyword propertiesKeyword $
+  registerKeyword patternPropertiesKeyword $
+  registerKeyword additionalPropertiesKeyword $
+  registerKeyword dependenciesKeyword $
+  registerKeyword propertyNamesKeyword $
+  -- Navigable keywords (for $ref resolution)
+  registerKeyword AllOf.allOfKeyword $
+  registerKeyword AnyOf.anyOfKeyword $
+  registerKeyword OneOf.oneOfKeyword $
+  registerKeyword Not.notKeyword $
+  registerKeyword Nav.defsKeyword $
+  emptyKeywordRegistry
+
+-- | Backwards-compatible alias for the latest registry
+standardKeywordRegistry :: KeywordRegistry
+standardKeywordRegistry = draft202012Registry
 
 -- | Registry for Draft-04 schemas
 --
@@ -185,6 +372,7 @@ draft04Registry =
   registerKeyword propertiesKeyword $
   registerKeyword patternPropertiesKeyword $
   registerKeyword additionalPropertiesKeyword $
+  registerKeyword dependenciesKeyword $
   -- Navigable keywords (for $ref resolution)
   registerKeyword AllOf.allOfKeyword $
   registerKeyword AnyOf.anyOfKeyword $

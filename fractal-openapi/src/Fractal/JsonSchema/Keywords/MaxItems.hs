@@ -49,5 +49,6 @@ maxItemsKeyword = KeywordDefinition
   , keywordCompile = compileMaxItems
   , keywordValidate = validateMaxItems
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

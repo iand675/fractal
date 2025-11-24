@@ -133,6 +133,7 @@ ifKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> schemaIf obj
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 
 -- | Keyword definition for 'then'
@@ -145,6 +146,7 @@ thenKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> schemaThen obj
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 
 -- | Keyword definition for 'else'
@@ -157,4 +159,5 @@ elseKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> schemaElse obj
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }

@@ -21,21 +21,34 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Data.Foldable (toList)
+import Control.Monad.Reader (ask)
+import Data.Set (Set)
+import qualified Data.Set as Set
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
+  , JsonSchemaVersion(..), ValidationConfig(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
-  , ArrayItemsValidation(..), validationItems, schemaValidation, schemaCore
+  , ArrayItemsValidation(..), validationItems, validationPrefixItems, schemaValidation, schemaCore
   , ValidationAnnotations(..)
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
-  , CompilationContext(..), contextParseSubschema, combineValidationResults
+  , CompilationContext(..), contextParseSubschema
+  , combineValidationResults
+  )
+import Fractal.JsonSchema.Validator.Annotations
+  ( annotateItems
+  , arrayIndexPointer
+  , shiftAnnotations
   )
 
 -- | Compiled data for items keyword
-data ItemsData = ItemsData ArrayItemsValidation
+data ItemsData = ItemsData
+  { itemsValidationData :: ArrayItemsValidation
+  , itemsHasPrefix :: Bool
+  }
   deriving (Typeable)
 
 -- | Compile the items keyword
@@ -49,28 +62,65 @@ compileItems _value schema _ctx =
     ObjectSchema obj ->
       case validationItems (schemaValidation obj) of
         Nothing -> Left "items keyword present but no parsed items found in schema"
-        Just itemsValidation -> Right $ ItemsData itemsValidation
+        Just itemsValidation ->
+          let hasPrefix = validationPrefixItems (schemaValidation obj) /= Nothing
+          in Right $ ItemsData itemsValidation hasPrefix
 
 -- | Validate items using the pluggable keyword system
 validateItemsKeyword :: ValidateFunc ItemsData
-validateItemsKeyword recursiveValidator (ItemsData itemsValidation) _ctx (Array arr) =
-  case itemsValidation of
-    ItemsSchema itemSchema ->
-      -- All items must validate against the schema
-      let results = map (recursiveValidator itemSchema) (toList arr)
-      in pure $ combineValidationResults results
-    
-    ItemsTuple tupleSchemas maybeAdditional ->
-      -- Positional validation + optional additional items
-      let tupleResults = zipWith (recursiveValidator) (NE.toList tupleSchemas) (toList arr)
-          -- Handle additional items beyond tuple length
-          additionalItems = drop (length tupleSchemas) (toList arr)
-          
-          -- Validate additional items if schema provided
-          additionalResults = case maybeAdditional of
-            Just addlSchema -> map (recursiveValidator addlSchema) additionalItems
-            Nothing -> []  -- additionalItems not specified - allow them
-      in pure $ combineValidationResults (tupleResults <> additionalResults)
+validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix) _ctx (Array arr) = do
+  config <- ask
+  let version = validationVersion config
+  if hasPrefix && version >= Draft202012
+    then pure (ValidationSuccess mempty)
+    else case itemsValidation of
+      ItemsSchema itemSchema ->
+        let evaluations =
+              [ (idx, recursiveValidator itemSchema item)
+              | (idx, item) <- zip [0..] (toList arr)
+              ]
+            indices = Set.fromList [idx | (idx, _) <- evaluations]
+            failures =
+              [ errs
+              | (_, ValidationFailure errs) <- evaluations
+              ]
+            shiftedAnnotations =
+              [ shiftAnnotations (arrayIndexPointer idx) anns
+              | (idx, ValidationSuccess anns) <- evaluations
+              ]
+        in pure $
+             case failures of
+               [] -> ValidationSuccess (annotateItems indices <> mconcat shiftedAnnotations)
+               (e:es) -> ValidationFailure (foldl (<>) e es)
+      ItemsTuple tupleSchemas maybeAdditional ->
+        let tupleEvaluations =
+              [ (idx, recursiveValidator schema item)
+              | (idx, (schema, item)) <-
+                  zip [0..] (zip (NE.toList tupleSchemas) (toList arr))
+              ]
+            tupleIndices = Set.fromList [idx | (idx, _) <- tupleEvaluations]
+            additionalItems = drop (length tupleSchemas) (toList arr)
+            additionalEvaluations = case maybeAdditional of
+              Just addlSchema ->
+                [ (idx, recursiveValidator addlSchema item)
+                | (idx, item) <- zip [length tupleSchemas ..] additionalItems
+                ]
+              Nothing -> []
+            additionalIndices = Set.fromList [idx | (idx, _) <- additionalEvaluations]
+            failures =
+              [ errs
+              | (_, ValidationFailure errs) <- tupleEvaluations ++ additionalEvaluations
+              ]
+            shiftedAnnotations =
+              [ shiftAnnotations (arrayIndexPointer idx) anns
+              | (idx, ValidationSuccess anns) <- tupleEvaluations ++ additionalEvaluations
+              ]
+            allIndices = tupleIndices <> additionalIndices
+        in pure $
+             case failures of
+               [] -> ValidationSuccess (annotateItems allIndices <> mconcat shiftedAnnotations)
+               (e:es) -> ValidationFailure (foldl (<>) e es)
+
 
 validateItemsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to arrays
 
@@ -98,5 +148,6 @@ itemsKeyword = KeywordDefinition
               [] -> Nothing  -- Need an index for tuple items
           Nothing -> Nothing
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 

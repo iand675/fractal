@@ -10,12 +10,13 @@
 -- and used in JSON Schema validation, following the hyperjump architecture
 -- pattern of compile-then-validate.
 module Fractal.JsonSchema.Keyword.Types
-  ( -- * Keyword Definition
+  (     -- * Keyword Definition
     KeywordDefinition(..)
   , KeywordScope(..)
   , KeywordNavigation(..)
   , CompileFunc
   , ValidateFunc
+  , PostValidateFunc
   , LegacyValidateFunc
   , legacyValidate
     -- * Keyword Registry
@@ -132,6 +133,27 @@ type ValidateFunc a =
   -> Value                               -- ^ Instance value
   -> Reader ValidationConfig ValidationResult  -- ^ Validation result in Reader monad
 
+-- | Post-validation function signature: validates with access to annotations from other keywords
+--
+-- Used for keywords like unevaluatedProperties/unevaluatedItems that need to know
+-- which properties/items were evaluated by other keywords.
+--
+-- The function receives:
+-- 1. A recursive validator for subschemas
+-- 2. The compiled data from the compile phase
+-- 3. A validation context (instance and schema paths)
+-- 4. The instance value being validated
+-- 5. Annotations collected from other keywords validated before this one
+--
+-- Returns validation result in a Reader monad with ValidationConfig as the environment.
+type PostValidateFunc a =
+  (Schema -> Value -> ValidationResult)  -- ^ Recursive validator for subschemas
+  -> a                                   -- ^ Compiled data
+  -> ValidationContext'                  -- ^ Validation context (paths)
+  -> Value                               -- ^ Instance value
+  -> ValidationAnnotations               -- ^ Annotations from previously validated keywords
+  -> Reader ValidationConfig ValidationResult  -- ^ Validation result in Reader monad
+
 -- | Legacy validate function signature returning error messages.
 type LegacyValidateFunc a =
   (Schema -> Value -> ValidationResult)
@@ -188,15 +210,18 @@ data CompiledKeyword = CompiledKeyword
     -- ^ Type-erased validate function (closed over compiled data)
     -- Takes: recursive validator, validation context, value
     -- Returns validation result in Reader monad with ValidationConfig
+  , compiledPostValidate :: Maybe ((Schema -> Value -> ValidationResult) -> ValidationContext' -> Value -> ValidationAnnotations -> Reader ValidationConfig ValidationResult)
+    -- ^ Optional post-validation function that receives annotations from other keywords
+    -- If present, this keyword will be validated after regular keywords
   , compiledAdjacentData :: Map Text Value
     -- ^ Values from adjacent keywords accessed during compilation
   }
 
 instance Show CompiledKeyword where
-  show (CompiledKeyword name _ _ _) = "CompiledKeyword{" ++ show name ++ "}"
+  show (CompiledKeyword name _ _ _ _) = "CompiledKeyword{" ++ show name ++ "}"
 
 instance Eq CompiledKeyword where
-  (CompiledKeyword name1 _ _ _) == (CompiledKeyword name2 _ _ _) = name1 == name2
+  (CompiledKeyword name1 _ _ _ _) == (CompiledKeyword name2 _ _ _ _) = name1 == name2
 
 -- ============================================================================
 -- Monadic Compilation
@@ -277,6 +302,7 @@ data KeywordNavigation
 -- - A compile function that processes the keyword value at schema parse time
 -- - A validate function that uses the compiled data to validate instances
 -- - Optional navigation support for subschema resolution
+-- - Optional post-validation function for keywords that need annotation access
 data KeywordDefinition = forall a. Typeable a => KeywordDefinition
   { keywordName :: Text
     -- ^ Unique identifier for this keyword (e.g., "maxLength", "x-creditCard")
@@ -288,6 +314,10 @@ data KeywordDefinition = forall a. Typeable a => KeywordDefinition
     -- ^ Validate phase: check instance against compiled keyword
   , keywordNavigation :: KeywordNavigation
     -- ^ How to navigate into subschemas (if any)
+  , keywordPostValidate :: Maybe (PostValidateFunc a)
+    -- ^ Optional post-validation function that receives annotations from other keywords
+    -- If provided, this keyword will be validated after regular keywords and will
+    -- receive annotations collected from them. Used for unevaluatedProperties/Items.
   }
 
 -- | Registry of custom keywords

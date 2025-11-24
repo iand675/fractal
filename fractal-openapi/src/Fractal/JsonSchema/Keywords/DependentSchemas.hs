@@ -73,5 +73,6 @@ dependentSchemasKeyword = KeywordDefinition
   , keywordNavigation = SchemaMap $ \schema -> case schemaCore schema of
       ObjectSchema obj -> validationDependentSchemas (schemaValidation obj)
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 

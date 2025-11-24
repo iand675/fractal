@@ -90,5 +90,6 @@ dependentRequiredKeyword = KeywordDefinition
   , keywordCompile = compileDependentRequired
   , keywordValidate = validateDependentRequiredKeyword
   , keywordNavigation = NoNavigation  -- No subschemas
+  , keywordPostValidate = Nothing
   }
 

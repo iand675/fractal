@@ -5,34 +5,40 @@
 -- The unevaluatedItems keyword applies to array items that were not evaluated
 -- by other keywords (items, prefixItems, contains, or applicator keywords).
 -- This is a complex keyword that requires annotation tracking across the validation process.
---
--- NOTE: Full validation for this keyword requires the architectural changes in fractal-b8g.
--- For now, this provides the keyword definition and navigation support.
 module Fractal.JsonSchema.Keywords.UnevaluatedItems
   ( unevaluatedItemsKeyword
   , compileUnevaluatedItems
   , UnevaluatedItemsData(..)
+  , validateUnevaluatedItemsWithAnnotations
   ) where
 
 import Data.Aeson (Value(..))
+import qualified Data.Aeson as Aeson
 import Control.Monad.Reader (Reader)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
+import qualified Data.Vector as V
+import Data.Foldable (toList)
+import qualified Data.Map.Strict as Map
+import qualified Data.Scientific as Sci
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
+  , ValidationAnnotations(..), ValidationErrors(..)
   , validationUnevaluatedItems, schemaValidation
+  , emptyPointer
   )
 import Fractal.JsonSchema.Keyword.Types 
-  ( KeywordDefinition(..), CompileFunc, ValidateFunc
+  ( KeywordDefinition(..), CompileFunc, ValidateFunc, PostValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
   , LegacyValidateFunc, legacyValidate
   )
-import Fractal.JsonSchema.Parser (parseSchema)
+import Fractal.JsonSchema.Validator.Annotations (annotateItems)
+import Fractal.JsonSchema.Keyword.Types (CompilationContext(..), contextParseSubschema)
 
 -- | Compiled data for unevaluatedItems keyword
 newtype UnevaluatedItemsData = UnevaluatedItemsData Schema
@@ -40,22 +46,95 @@ newtype UnevaluatedItemsData = UnevaluatedItemsData Schema
 
 -- | Compile the unevaluatedItems keyword
 compileUnevaluatedItems :: CompileFunc UnevaluatedItemsData
-compileUnevaluatedItems value _schema _ctx = case parseSchema value of
-  Left err -> Left $ "Invalid schema in unevaluatedItems: " <> T.pack (show err)
+compileUnevaluatedItems value _schema ctx = case contextParseSubschema ctx value of
+  Left err -> Left $ "Invalid schema in unevaluatedItems: " <> err
   Right schema -> Right $ UnevaluatedItemsData schema
 
 -- | Validate unevaluatedItems using the pluggable keyword system
 --
 -- NOTE: This is a placeholder implementation. Full validation requires annotation
--- tracking from all other keywords, which will be implemented in fractal-b8g when
--- the hardcoded validation dispatch is replaced with keyword registry dispatch.
---
--- For now, validation continues to use the hardcoded functions in Validator.hs.
+-- tracking from all other keywords. The actual validation is done via
+-- validateUnevaluatedItemsPost which is called after other keywords.
 validateUnevaluatedItemsKeyword :: LegacyValidateFunc UnevaluatedItemsData
 validateUnevaluatedItemsKeyword _recursiveValidator (UnevaluatedItemsData _schema) _ctx _val =
-  -- TODO (fractal-b8g): Implement full validation with annotation tracking
-  -- For now, this is handled by the hardcoded validateUnevaluatedItems function
+  -- This keyword is validated separately after other keywords have been validated
+  -- and their annotations collected. See validateUnevaluatedItemsPost.
   pure []
+
+-- | Post-validation function for unevaluatedItems
+-- This receives annotations from other keywords and validates unevaluated items
+validateUnevaluatedItemsPost :: PostValidateFunc UnevaluatedItemsData
+validateUnevaluatedItemsPost recursiveValidator (UnevaluatedItemsData unevalSchema) _ctx (Array arr) collectedAnnotations =
+  -- Extract evaluated item indices from annotations
+  let evaluatedIndices = extractEvaluatedItems collectedAnnotations
+      -- All item indices
+      allIndices = Set.fromList [0 .. V.length arr - 1]
+      -- Unevaluated items are those not in the evaluated set
+      unevaluatedIndices = Set.difference allIndices evaluatedIndices
+  in if Set.null unevaluatedIndices
+     -- No unevaluated items - always succeed (even if schema is false)
+     then pure $ ValidationSuccess mempty
+     else
+       -- Validate unevaluated items against the schema
+       let results =
+             [ recursiveValidator unevalSchema (arr V.! idx)
+             | idx <- Set.toList unevaluatedIndices
+             , idx < V.length arr  -- Safety check
+             ]
+           failures = [errs | ValidationFailure errs <- results]
+           annotations = [anns | ValidationSuccess anns <- results]
+       in case failures of
+         [] -> pure $ ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
+         (e:es) -> pure $ ValidationFailure $ foldl (<>) e es
+validateUnevaluatedItemsPost _ _ _ _ _ = pure $ ValidationSuccess mempty  -- Only applies to arrays
+
+-- | Validate unevaluatedItems with access to collected annotations
+--
+-- This function is called after other keywords have been validated and their
+-- annotations collected. It extracts evaluated item indices from annotations
+-- and validates unevaluated ones against the schema.
+validateUnevaluatedItemsWithAnnotations
+  :: (Schema -> Value -> ValidationResult)  -- ^ Recursive validator
+  -> SchemaObject                            -- ^ Schema object containing unevaluatedItems
+  -> V.Vector Value                          -- ^ Array items to validate
+  -> ValidationAnnotations                   -- ^ Annotations collected from other keywords
+  -> ValidationResult
+validateUnevaluatedItemsWithAnnotations recursiveValidator obj arr collectedAnnotations =
+  case validationUnevaluatedItems (schemaValidation obj) of
+    Nothing -> ValidationSuccess mempty
+    Just unevalSchema ->
+      let -- Extract evaluated item indices from annotations
+          evaluatedIndices = extractEvaluatedItems collectedAnnotations
+          -- All item indices
+          allIndices = Set.fromList [0 .. V.length arr - 1]
+          -- Unevaluated items are those not in the evaluated set
+          unevaluatedIndices = Set.difference allIndices evaluatedIndices
+          -- Validate unevaluated items against the schema
+          results =
+            [ recursiveValidator unevalSchema (arr V.! idx)
+            | idx <- Set.toList unevaluatedIndices
+            , idx < V.length arr  -- Safety check
+            ]
+          failures = [errs | ValidationFailure errs <- results]
+          annotations = [anns | ValidationSuccess anns <- results]
+      in case failures of
+        [] -> ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
+        (e:es) -> ValidationFailure $ foldl (<>) e es
+
+-- | Extract evaluated items indices from collected annotations
+-- Only considers annotations at the current instance location (empty pointer)
+extractEvaluatedItems :: ValidationAnnotations -> Set Int
+extractEvaluatedItems (ValidationAnnotations annMap) =
+  -- Only look at annotations at the current location (empty pointer)
+  case Map.lookup emptyPointer annMap of
+    Nothing -> Set.empty
+    Just innerMap -> case Map.lookup "items" innerMap of
+      Just (Aeson.Array arr) -> Set.fromList
+        [ idx
+        | Aeson.Number n <- toList arr
+        , Just idx <- [Sci.toBoundedInteger n]
+        ]
+      _ -> Set.empty
 
 -- | Keyword definition for unevaluatedItems
 unevaluatedItemsKeyword :: KeywordDefinition
@@ -67,5 +146,6 @@ unevaluatedItemsKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> validationUnevaluatedItems (schemaValidation obj)
       _ -> Nothing
+  , keywordPostValidate = Just validateUnevaluatedItemsPost
   }
 

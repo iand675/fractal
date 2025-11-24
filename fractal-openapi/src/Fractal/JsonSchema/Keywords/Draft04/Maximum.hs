@@ -63,6 +63,7 @@ maximumKeyword = KeywordDefinition
   , keywordCompile = compileMaximum
   , keywordValidate = validateMaximum
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Compiled data for Draft-04 'exclusiveMaximum' keyword
@@ -92,5 +93,6 @@ exclusiveMaximumKeyword = KeywordDefinition
   , keywordCompile = compileExclusiveMaximum
   , keywordValidate = validateExclusiveMaximum
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

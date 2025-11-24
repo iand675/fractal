@@ -48,6 +48,7 @@ enumKeyword = KeywordDefinition
   , keywordCompile = compileEnum
   , keywordValidate = validateEnum
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Backward compatibility: validate enum constraint from SchemaObject

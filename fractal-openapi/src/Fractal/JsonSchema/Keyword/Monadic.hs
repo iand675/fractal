@@ -75,7 +75,7 @@ compileAdjacent keywordName = do
 
           case Map.lookup keywordName (keywordMap registry) of
             Nothing -> pure Nothing  -- Keyword not registered
-            Just (KeywordDefinition _name _scope compile validate _nav) -> do
+            Just (KeywordDefinition _name _scope compile validate _nav _) -> do
               -- Mark as currently compiling
               modifyCompilationState $ \s ->
                 s { stateCompiling = Set.insert keywordName (stateCompiling s) }
@@ -91,6 +91,7 @@ compileAdjacent keywordName = do
                     { compiledKeywordName = keywordName
                     , compiledData = someData
                     , compiledValidate = validateErased
+                    , compiledPostValidate = Nothing  -- Monadic compilation doesn't support post-validation yet
                     , compiledAdjacentData = Map.empty
                     }
 
@@ -115,7 +116,7 @@ getAdjacentData keywordName = do
   pure $ mCompiled >>= extractTypedData
   where
     extractTypedData :: CompiledKeyword -> Maybe a
-    extractTypedData (CompiledKeyword _ (SomeCompiledData dat) _ _) = cast dat
+    extractTypedData (CompiledKeyword _ (SomeCompiledData dat) _ _ _) = cast dat
 
 -- | Get the raw Value of an adjacent keyword from the schema
 --

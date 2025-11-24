@@ -59,5 +59,6 @@ propertyNamesKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> validationPropertyNames (schemaValidation obj)
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 

@@ -57,6 +57,7 @@ library
                     , Fractal.JsonSchema.Parser.Extended
                     , Fractal.JsonSchema.Renderer
                     , Fractal.JsonSchema.Validator
+                    , Fractal.JsonSchema.Validator.Annotations
                     , Fractal.JsonSchema.Metadata
                     , Fractal.JsonSchema.Dialect
                     , Fractal.JsonSchema.Vocabulary
@@ -71,6 +72,8 @@ library
                     , Fractal.JsonSchema.Keywords.MinLength
                     , Fractal.JsonSchema.Keywords.MaxLength
                     , Fractal.JsonSchema.Keywords.Pattern
+                    , Fractal.JsonSchema.Keywords.ContentMediaType
+                    , Fractal.JsonSchema.Keywords.ContentEncoding
                     -- Numeric Keywords
                     , Fractal.JsonSchema.Keywords.Minimum
                     , Fractal.JsonSchema.Keywords.Maximum
@@ -91,6 +94,7 @@ library
                     , Fractal.JsonSchema.Keywords.Properties
                     , Fractal.JsonSchema.Keywords.PatternProperties
                     , Fractal.JsonSchema.Keywords.AdditionalProperties
+                    , Fractal.JsonSchema.Keywords.Dependencies
                     , Fractal.JsonSchema.Keywords.PropertyNames
                     , Fractal.JsonSchema.Keywords.DependentRequired
                     , Fractal.JsonSchema.Keywords.DependentSchemas

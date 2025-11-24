@@ -58,7 +58,7 @@ emptyKeywordRegistry = KeywordRegistry Map.empty
 -- If a keyword with the same name already exists, it will be replaced
 -- with the new definition (allowing for keyword shadowing).
 registerKeyword :: KeywordDefinition -> KeywordRegistry -> KeywordRegistry
-registerKeyword kw@(KeywordDefinition name _ _ _ _) (KeywordRegistry m) =
+registerKeyword kw@(KeywordDefinition name _ _ _ _ _) (KeywordRegistry m) =
   KeywordRegistry (Map.insert name kw m)
 
 -- | Look up a keyword by name in the registry
@@ -90,6 +90,7 @@ mkKeywordDefinition name scope compile validate = KeywordDefinition
   , keywordCompile = compile
   , keywordValidate = validate
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Helper to create a navigable keyword definition
@@ -109,6 +110,7 @@ mkNavigableKeyword name scope compile validate nav = KeywordDefinition
   , keywordCompile = compile
   , keywordValidate = validate
   , keywordNavigation = nav
+  , keywordPostValidate = Nothing
   }
 
 -- | Create a simple keyword that doesn't need compilation
@@ -130,4 +132,5 @@ mkSimpleKeyword name scope parseValue validateValue =
     , keywordCompile = \val _schema _ctx -> parseValue val
     , keywordValidate = legacyValidate name (\_ compiledData _ val -> pure (validateValue compiledData val))
     , keywordNavigation = NoNavigation
+    , keywordPostValidate = Nothing
     }

@@ -158,12 +158,12 @@ spec = describe "Keyword System" $ do
           recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Valid: 15 >= 10
-      case validateKeywords recursiveValidator compiledKeywords (Number 15) validationCtx defaultValidationConfig of
+      case validateKeywords recursiveValidator compiledKeywords (Number 15) validationCtx defaultValidationConfig mempty of
         ValidationSuccess _ -> pure ()
         _ -> expectationFailure "Expected validation success"
 
       -- Invalid: 5 < 10
-      let result = validateKeywords recursiveValidator compiledKeywords (Number 5) validationCtx defaultValidationConfig
+      let result = validateKeywords recursiveValidator compiledKeywords (Number 5) validationCtx defaultValidationConfig mempty
       let minErrs = validationErrors result
       length minErrs `shouldBe` 1
       head minErrs `shouldSatisfy` T.isInfixOf "less than minimum"
@@ -186,13 +186,13 @@ spec = describe "Keyword System" $ do
           recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Test number validation
-      let numResult = validateKeywords recursiveValidator compiled (Number 10) validationCtx defaultValidationConfig
+      let numResult = validateKeywords recursiveValidator compiled (Number 10) validationCtx defaultValidationConfig mempty
       let numErrs = validationErrors numResult
       length numErrs `shouldBe` 1
       head numErrs `shouldSatisfy` T.isInfixOf "can only validate strings"
 
       -- Test string validation
-      let strResult = validateKeywords recursiveValidator compiled (String "hello world") validationCtx defaultValidationConfig
+      let strResult = validateKeywords recursiveValidator compiled (String "hello world") validationCtx defaultValidationConfig mempty
       let strErrs = validationErrors strResult
       length strErrs `shouldBe` 1
       head strErrs `shouldSatisfy` T.isInfixOf "can only validate numbers"
@@ -208,7 +208,7 @@ spec = describe "Keyword System" $ do
           recursiveValidator = \_ _ -> ValidationSuccess mempty
 
       -- Value way below minimum
-      let result = validateKeywords recursiveValidator compiled (Number 1) validationCtx defaultValidationConfig
+      let result = validateKeywords recursiveValidator compiled (Number 1) validationCtx defaultValidationConfig mempty
       let belowErrs = validationErrors result
       length belowErrs `shouldBe` 1
       head belowErrs `shouldSatisfy` T.isInfixOf "less than minimum"

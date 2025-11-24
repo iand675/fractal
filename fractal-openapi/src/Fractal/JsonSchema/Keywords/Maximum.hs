@@ -46,5 +46,6 @@ maximumKeyword = KeywordDefinition
   , keywordCompile = compileMaximum
   , keywordValidate = validateMaximum
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

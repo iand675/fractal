@@ -17,6 +17,8 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -29,10 +31,14 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
-  , combineValidationResults
   )
 import Fractal.JsonSchema.Parser (parseSchema)
 import qualified Fractal.JsonSchema.Regex as RegexModule
+import Fractal.JsonSchema.Validator.Annotations
+  ( annotateProperties
+  , propertyPointer
+  , shiftAnnotations
+  )
 
 -- | Compiled data for patternProperties keyword
 newtype PatternPropertiesData = PatternPropertiesData (Map Regex Schema)
@@ -55,18 +61,28 @@ compilePatternProperties _ _ _ = Left "patternProperties must be an object"
 -- | Validate patternProperties using the pluggable keyword system
 validatePatternPropertiesKeyword :: ValidateFunc PatternPropertiesData
 validatePatternPropertiesKeyword recursiveValidator (PatternPropertiesData patternSchemas) _ctx (Object objMap) =
-  -- For each property in the object, check if it matches any patterns
-  let results = 
-        [ recursiveValidator patternSchema propValue
+  let matches =
+        [ (propName, recursiveValidator patternSchema propValue)
         | (k, propValue) <- KeyMap.toList objMap
         , let propName = Key.toText k
         , (Regex patternText, patternSchema) <- Map.toList patternSchemas
         , case RegexModule.compileRegex patternText of
             Right regex -> RegexModule.matchRegex regex propName
-            Left _ -> False  -- Invalid regex, skip
+            Left _ -> False
         ]
-      failures = [errs | ValidationFailure errs <- results]
-  in pure $ combineValidationResults results
+      matchedProps = Set.fromList [propName | (propName, _) <- matches]
+      failures =
+        [ errs
+        | (_, ValidationFailure errs) <- matches
+        ]
+      shiftedAnnotations =
+        [ shiftAnnotations (propertyPointer propName) anns
+        | (propName, ValidationSuccess anns) <- matches
+        ]
+  in pure $
+       case failures of
+         [] -> ValidationSuccess (annotateProperties matchedProps <> mconcat shiftedAnnotations)
+         (e:es) -> ValidationFailure (foldl (<>) e es)
 
 validatePatternPropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
@@ -85,5 +101,6 @@ patternPropertiesKeyword = KeywordDefinition
             Just $ Map.fromList [(pat, schema') | (Regex pat, schema') <- Map.toList patterns]
           Nothing -> Nothing
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 

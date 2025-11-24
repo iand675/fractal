@@ -31,9 +31,14 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
-  , CompilationContext(..), combineValidationResults
+  , CompilationContext(..)
   )
 import qualified Fractal.JsonSchema.Regex as RegexModule
+import Fractal.JsonSchema.Validator.Annotations
+  ( annotateProperties
+  , propertyPointer
+  , shiftAnnotations
+  )
 
 -- | Compiled data for additionalProperties keyword
 data AdditionalPropertiesData = AdditionalPropertiesData 
@@ -72,18 +77,30 @@ matchesAnyPattern propName patterns = any matchesPattern patterns
 -- | Validate additionalProperties using the pluggable keyword system
 validateAdditionalPropertiesKeyword :: ValidateFunc AdditionalPropertiesData
 validateAdditionalPropertiesKeyword recursiveValidator (AdditionalPropertiesData addlSchema definedProps patterns) _ctx (Object objMap) =
-  -- Find properties not covered by 'properties' or 'patternProperties'
-  let additionalProps = 
+  let additionalProps =
         [ (Key.toText k, v)
         | (k, v) <- KeyMap.toList objMap
         , let propName = Key.toText k
         , not (Set.member propName definedProps)
         , not (matchesAnyPattern propName patterns)
         ]
-      
-      -- Validate each additional property
-      results = [recursiveValidator addlSchema propValue | (_, propValue) <- additionalProps]
-  in pure $ combineValidationResults results
+      evaluations =
+        [ (propName, recursiveValidator addlSchema propValue)
+        | (propName, propValue) <- additionalProps
+        ]
+      additionalPropNames = Set.fromList [propName | (propName, _) <- evaluations]
+      failures =
+        [ errs
+        | (_, ValidationFailure errs) <- evaluations
+        ]
+      shiftedAnnotations =
+        [ shiftAnnotations (propertyPointer propName) anns
+        | (propName, ValidationSuccess anns) <- evaluations
+        ]
+  in pure $
+       case failures of
+         [] -> ValidationSuccess (annotateProperties additionalPropNames <> mconcat shiftedAnnotations)
+         (e:es) -> ValidationFailure (foldl (<>) e es)
 
 validateAdditionalPropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
@@ -97,5 +114,6 @@ additionalPropertiesKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> validationAdditionalProperties (schemaValidation obj)
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 

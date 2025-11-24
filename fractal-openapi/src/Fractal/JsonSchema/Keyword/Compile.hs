@@ -24,8 +24,9 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable, cast)
 
 import Fractal.JsonSchema.Keyword.Types
-import Fractal.JsonSchema.Types (Schema)
+import Fractal.JsonSchema.Types (Schema, schemaVersion, JsonSchemaVersion(..))
 import qualified Fractal.JsonSchema.Parser as Parser
+import Data.Maybe (fromMaybe)
 
 -- | Collection of compiled keywords
 --
@@ -46,7 +47,7 @@ emptyCompiledKeywords = CompiledKeywords Map.empty
 
 -- | Add a compiled keyword to the collection
 addCompiledKeyword :: CompiledKeyword -> CompiledKeywords -> CompiledKeywords
-addCompiledKeyword ck@(CompiledKeyword name _ _ _) (CompiledKeywords m) =
+addCompiledKeyword ck@(CompiledKeyword name _ _ _ _) (CompiledKeywords m) =
   CompiledKeywords (Map.insert name ck m)
 
 -- | Look up compiled keyword data by name
@@ -81,12 +82,12 @@ buildCompilationContext registry keywordRegistry schema parentPath =
         Just s -> Right s
         Nothing -> Left $ "Reference not found: " <> uri
     
-    -- Parse a subschema value with the parent schema's base URI context
+    -- Parse a subschema value with the parent schema's version and base URI context
     parseSubschemaWithContext :: Schema -> Value -> Either Text Schema
-    parseSubschemaWithContext _parentSchema value =
-      -- For now, just use the standard parseSchema
-      -- TODO: This should preserve base URI context from parent
-      case Parser.parseSchema value of
+    parseSubschemaWithContext parentSchema value =
+      -- Inherit parent version unless subschema declares its own $schema
+      let parentVersion = fromMaybe Draft202012 (schemaVersion parentSchema)
+      in case Parser.parseSubschema parentVersion value of
         Left err -> Left $ T.pack (show err)
         Right s -> Right s
 
@@ -100,7 +101,7 @@ compileKeyword
   -> Schema                  -- ^ Schema containing the keyword
   -> CompilationContext      -- ^ Compilation context
   -> Either Text CompiledKeyword
-compileKeyword (KeywordDefinition name _scope compile validate _nav) value schema ctx = do
+compileKeyword (KeywordDefinition name _scope compile validate _nav postValidate) value schema ctx = do
   -- Execute the compile function
   compiledData <- compile value schema ctx
 
@@ -111,11 +112,17 @@ compileKeyword (KeywordDefinition name _scope compile validate _nav) value schem
   -- The recursive validator will be provided at validation time
   let validateErased recursiveValidator valCtx val = validate recursiveValidator compiledData valCtx val
 
+  -- Create type-erased post-validation function if provided
+  let postValidateErased = case postValidate of
+        Just postVal -> Just $ \recursiveValidator valCtx val anns -> postVal recursiveValidator compiledData valCtx val anns
+        Nothing -> Nothing
+
   -- Create compiled keyword (no adjacent data collection yet)
   return $ CompiledKeyword
     { compiledKeywordName = name
     , compiledData = someData
     , compiledValidate = validateErased
+    , compiledPostValidate = postValidateErased
     , compiledAdjacentData = Map.empty  -- TODO: Extract adjacent keywords
     }
 

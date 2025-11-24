@@ -11,11 +11,14 @@ module Fractal.JsonSchema.Keywords.FormatKeyword
   ) where
 
 import Data.Aeson (Value(..))
+import Control.Monad.Reader (ask)
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 
 import Fractal.JsonSchema.Types 
   ( Format(..)
+  , FormatBehavior(..)
+  , ValidationConfig(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   )
 import Fractal.JsonSchema.Keyword.Types 
@@ -57,26 +60,20 @@ compileFormat (String formatName) _schema _ctx =
 
 compileFormat _ _ _ = Left "format must be a string"
 
--- | Validate format using the pluggable keyword system
---
--- NOTE: This is a placeholder implementation. Full format validation requires
--- access to ValidationConfig (for format assertion vs annotation mode), which
--- is not available in the pluggable keyword system's ValidateFunc. For now,
--- format is treated as annotation-only (non-asserting).
---
--- TODO (fractal-b8g): When the hardcoded validation dispatch is replaced with
--- keyword registry dispatch, add ValidationConfig to ValidationContext' so that
--- format can properly support both assertion and annotation modes based on the
--- dialect configuration or global formatAssertion setting.
 validateFormatKeyword :: ValidateFunc FormatData
-validateFormatKeyword _recursiveValidator (FormatData format) _ctx (String txt) =
-  -- For now, format is always annotation-only (spec-compliant for 2019-09+)
-  -- Full assertion mode will be implemented in fractal-b8g
+validateFormatKeyword _recursiveValidator (FormatData format) _ctx (String txt) = do
+  config <- ask
   let result = FormatImpl.validateFormatValue format txt
-  in case result of
-    ValidationSuccess anns -> pure (ValidationSuccess anns)  -- Format valid (annotations preserved)
-    ValidationFailure _ -> pure (ValidationSuccess mempty)    -- Format invalid but annotation mode only
-
+      assertionMode = case validationDialectFormatBehavior config of
+        Just FormatAssertion -> True
+        Just FormatAnnotation -> False
+        Nothing -> validationFormatAssertion config
+  pure $
+    if assertionMode
+      then result
+      else case result of
+             ValidationSuccess anns -> ValidationSuccess anns
+             ValidationFailure _ -> ValidationSuccess mempty
 validateFormatKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to strings
 
 -- | Keyword definition for format
@@ -87,5 +84,6 @@ formatKeyword = KeywordDefinition
   , keywordCompile = compileFormat
   , keywordValidate = validateFormatKeyword
   , keywordNavigation = NoNavigation  -- No subschemas
+  , keywordPostValidate = Nothing
   }
 

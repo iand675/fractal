@@ -32,7 +32,7 @@ import Fractal.JsonSchema.Validator (validateValue, defaultValidationConfig, val
 import Fractal.JsonSchema.Parser.Extended (ExtendedSchema(..), fromExtendedSchema)
 import Fractal.JsonSchema.Keyword.Validate (validateKeywords)
 import Fractal.JsonSchema.Keyword.Types (ValidationContext'(..))
-import Fractal.JsonSchema.Validator.Result (ValidationError(..))
+import Fractal.JsonSchema.Validator.Result (ValidationError(..), errorMessage)
 
 -- | Extended validation result
 --
@@ -87,7 +87,7 @@ validateExtendedWithConfig config extSchema value =
       
       -- Validate with custom keywords
       kwCtx = ValidationContext' { kwContextInstancePath = [], kwContextSchemaPath = [] }
-      customResult = validateKeywords recursiveValidator (extendedCompiledKeywords extSchema) value kwCtx config
+      customResult = validateKeywords recursiveValidator (extendedCompiledKeywords extSchema) value kwCtx config mempty
       customErrors = case customResult of
         ValidationSuccess _ -> []
         ValidationFailure (ValidationErrors errs) ->

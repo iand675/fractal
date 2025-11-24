@@ -42,6 +42,7 @@ constKeyword = KeywordDefinition
   , keywordCompile = compileConst
   , keywordValidate = validateConst
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Backward compatibility: validate const constraint from SchemaObject

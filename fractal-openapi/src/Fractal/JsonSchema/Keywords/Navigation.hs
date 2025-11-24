@@ -33,15 +33,29 @@ import qualified Data.List.NonEmpty as NE
 import qualified Text.Read as Read
 
 import Fractal.JsonSchema.Keyword (mkNavigableKeyword)
-import Fractal.JsonSchema.Keyword.Types (KeywordDefinition, KeywordNavigation(..), KeywordScope(..))
+import Fractal.JsonSchema.Keyword.Types 
+  ( KeywordDefinition, KeywordNavigation(..), KeywordScope(..)
+  , CompilationContext(..), ValidateFunc, CompileFunc
+  )
 import Fractal.JsonSchema.Types 
   ( Schema, SchemaCore(..), SchemaObject(..), ArrayItemsValidation(..), Regex(..)
   , schemaCore, schemaValidation, schemaDefs, SchemaValidation(..)
   , validationProperties, validationPatternProperties, validationAdditionalProperties
   , validationItems, validationPrefixItems, validationContains
   , validationDependentSchemas, validationPropertyNames, validationUnevaluatedProperties
-  , ValidationAnnotations(..), pattern ValidationSuccess
+  , ValidationAnnotations(..), pattern ValidationSuccess, pattern ValidationFailure
+  , ValidationResult, ValidationErrors(..), emptyPointer
+  , JsonSchemaVersion(..), schemaVersion
   )
+import qualified Fractal.JsonSchema.Validator.Result as VR
+import Fractal.JsonSchema.Parser (parseSchemaWithVersion)
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson (Value(..), object)
+import Control.Monad.Reader (ask)
+import qualified Data.Text as T
+import Data.Maybe (fromMaybe)
+import Data.Typeable (Typeable)
 
 -- | Navigate into 'properties' keyword (SchemaMap)
 propertiesKeyword :: KeywordDefinition
@@ -240,13 +254,75 @@ unevaluatedPropertiesKeyword = mkNavigableKeyword
     ObjectSchema obj -> validationUnevaluatedProperties (schemaValidation obj)
     _ -> Nothing)
 
+-- | Compiled data for $defs keyword
+-- Stores the schema that validates each definition value (from metaschema's additionalProperties)
+newtype DefsData = DefsData Schema
+  deriving (Typeable)
+
+-- | Compile $defs keyword
+-- The metaschema defines $defs with additionalProperties: { "$recursiveRef": "#" }
+-- So we need to compile that schema to validate each definition value.
+compileDefsKeyword :: CompileFunc DefsData
+compileDefsKeyword (Object _defsObj) schema ctx = do
+  -- The metaschema defines $defs with additionalProperties: { "$recursiveRef": "#" }
+  -- We need to create a schema that validates each value in $defs against the metaschema.
+  -- Since we're compiling $defs from the schema, we need to get the metaschema's definition.
+  -- For now, we'll create a schema with $recursiveRef: "#" which will resolve to the metaschema.
+  -- But we need the current schema version to parse the $recursiveRef correctly.
+  let version = fromMaybe Draft202012 (schemaVersion schema)
+      -- Create a schema that validates each definition value against the metaschema
+      -- For 2019-09: additionalProperties: { "$recursiveRef": "#" }
+      -- For 2020-12: additionalProperties: { "$dynamicRef": "#meta" }
+      refValue = case version of
+        Draft201909 -> object [("$recursiveRef", String "#")]
+        _ -> object [("$dynamicRef", String "#meta")]  -- 2020-12+
+  case parseSchemaWithVersion version refValue of
+    Left err -> Left $ "Failed to compile $defs validation schema: " <> T.pack (show err)
+    Right defsValidationSchema -> Right $ DefsData defsValidationSchema
+compileDefsKeyword _ _ _ = Left "$defs must be an object"
+
+-- | Validate $defs keyword
+-- When validating instance data against a schema that references the metaschema,
+-- each value in the instance's $defs must be a valid schema (validated against the metaschema).
+validateDefsKeyword :: ValidateFunc DefsData
+validateDefsKeyword recursiveValidator (DefsData defsValidationSchema) _ctx (Object objMap) = do
+  -- Check for $defs or definitions in the instance
+  let defsValue = KeyMap.lookup (Key.fromText "$defs") objMap
+      defsValue' = case defsValue of
+        Just v -> Just v
+        Nothing -> KeyMap.lookup (Key.fromText "definitions") objMap
+  case defsValue' of
+    Just (Object defsObj) ->
+      -- Validate each value in $defs against the validation schema
+      -- The validation schema has $recursiveRef: "#" which resolves to the metaschema
+      let results = 
+            [ recursiveValidator defsValidationSchema defValue
+            | (defName, defValue) <- KeyMap.toList defsObj
+            ]
+          failures = [errs | ValidationFailure errs <- results]
+      in pure $ case failures of
+        [] -> ValidationSuccess mempty
+        (e:es) -> ValidationFailure $ foldl (<>) e es
+    Just _ -> 
+      -- $defs is not an object
+      pure $ ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
+        { VR.errorKeyword = "$defs"
+        , VR.errorSchemaPath = emptyPointer
+        , VR.errorInstancePath = emptyPointer
+        , VR.errorMessage = "$defs must be an object"
+        }
+    Nothing -> 
+      -- No $defs in instance, that's fine
+      pure $ ValidationSuccess mempty
+validateDefsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
+
 -- | Navigate into '$defs' or 'definitions' keyword (SchemaMap)
 defsKeyword :: KeywordDefinition
 defsKeyword = mkNavigableKeyword
   "$defs"
   AnyScope
-  (\_ _ _ -> Right ())
-  (\_ _ _ _ -> pure (ValidationSuccess mempty))
+  compileDefsKeyword
+  validateDefsKeyword
   (SchemaMap $ \schema -> case schemaCore schema of
     ObjectSchema obj ->
       let defs = schemaDefs obj

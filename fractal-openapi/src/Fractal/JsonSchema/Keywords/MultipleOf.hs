@@ -79,5 +79,6 @@ multipleOfKeyword = KeywordDefinition
   , keywordCompile = compileMultipleOf
   , keywordValidate = validateMultipleOf
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

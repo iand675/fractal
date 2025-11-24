@@ -48,5 +48,6 @@ minItemsKeyword = KeywordDefinition
   , keywordCompile = compileMinItems
   , keywordValidate = validateMinItems
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

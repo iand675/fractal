@@ -63,6 +63,7 @@ minimumKeyword = KeywordDefinition
   , keywordCompile = compileMinimum
   , keywordValidate = validateMinimum
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Compiled data for Draft-04 'exclusiveMinimum' keyword
@@ -92,4 +93,5 @@ exclusiveMinimumKeyword = KeywordDefinition
   , keywordCompile = compileExclusiveMinimum
   , keywordValidate = validateExclusiveMinimum
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }

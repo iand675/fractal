@@ -16,6 +16,8 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -28,9 +30,14 @@ import Fractal.JsonSchema.Types
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
-  , CompilationContext(..), combineValidationResults
+  , CompilationContext(..)
   )
 import Fractal.JsonSchema.Parser (parseSchema)
+import Fractal.JsonSchema.Validator.Annotations
+  ( annotateProperties
+  , propertyPointer
+  , shiftAnnotations
+  )
 
 -- | Compiled data for properties keyword
 newtype PropertiesData = PropertiesData (Map Text Schema)
@@ -53,13 +60,24 @@ compileProperties _ _ _ = Left "properties must be an object"
 -- | Validate properties using the pluggable keyword system
 validatePropertiesKeyword :: ValidateFunc PropertiesData
 validatePropertiesKeyword recursiveValidator (PropertiesData propSchemas) _ctx (Object objMap) =
-  -- Validate each property that exists in the instance
-  let results = 
-        [ recursiveValidator propSchema propValue
+  let evaluations =
+        [ (propName, recursiveValidator propSchema propValue)
         | (propName, propSchema) <- Map.toList propSchemas
         , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
         ]
-  in pure $ combineValidationResults results
+      evaluatedProps = Set.fromList [propName | (propName, _) <- evaluations]
+      failures =
+        [ errs
+        | (_, ValidationFailure errs) <- evaluations
+        ]
+      shiftedAnnotations =
+        [ shiftAnnotations (propertyPointer propName) anns
+        | (propName, ValidationSuccess anns) <- evaluations
+        ]
+  in pure $
+       case failures of
+         [] -> ValidationSuccess (annotateProperties evaluatedProps <> mconcat shiftedAnnotations)
+         (e:es) -> ValidationFailure (foldl (<>) e es)
 
 validatePropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
@@ -73,5 +91,6 @@ propertiesKeyword = KeywordDefinition
   , keywordNavigation = SchemaMap $ \schema -> case schemaCore schema of
       ObjectSchema obj -> validationProperties (schemaValidation obj)
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 

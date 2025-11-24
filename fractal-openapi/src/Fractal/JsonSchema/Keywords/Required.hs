@@ -58,5 +58,6 @@ requiredKeyword = KeywordDefinition
   , keywordCompile = compileRequired
   , keywordValidate = validateRequired
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

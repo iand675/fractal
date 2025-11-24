@@ -906,7 +906,12 @@ registerSchemaInRegistry baseURI schema registry =
          in registerObjectSubSchemas currentBase obj registryWithExplicitAnchors
   where
     insertSchemaKey key reg =
-      reg { registrySchemas = Map.insert key schema (registrySchemas reg) }
+      reg { registrySchemas = Map.insertWith preferSchema key schema (registrySchemas reg) }
+      where
+        preferSchema new existing
+          | Map.null (schemaRawKeywords existing)
+            , not (Map.null (schemaRawKeywords new)) = new
+          | otherwise = existing
 
     insertAnchorPair (baseKey, anchorName) reg =
       reg { registryAnchors = Map.insert (baseKey, anchorName) schema (registryAnchors reg) }

@@ -46,5 +46,6 @@ exclusiveMinimumKeyword = KeywordDefinition
   , keywordCompile = compileExclusiveMinimum
   , keywordValidate = validateExclusiveMinimum
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

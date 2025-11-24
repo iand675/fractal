@@ -80,6 +80,7 @@ typeKeyword = KeywordDefinition
   , keywordCompile = compileType
   , keywordValidate = validateType
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Backward compatibility: validate type constraint from SchemaObject

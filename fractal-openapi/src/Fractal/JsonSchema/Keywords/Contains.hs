@@ -34,6 +34,11 @@ import Fractal.JsonSchema.Keyword.Types
   , ValidationContext'(..), KeywordNavigation(..), KeywordScope(..)
   )
 import Fractal.JsonSchema.Parser (parseSchema)
+import Fractal.JsonSchema.Validator.Annotations
+  ( annotateItems
+  , arrayIndexPointer
+  , shiftAnnotations
+  )
 
 -- | Compiled data for contains keyword
 data ContainsData = ContainsData 
@@ -85,11 +90,18 @@ compileMaxContains value _schema _ctx = case value of
 -- the schema, and at most maxContains items match (if maxContains is specified).
 validateContainsKeyword :: ValidateFunc ContainsData
 validateContainsKeyword recursiveValidator (ContainsData schema' minCount maxCount) _ctx (Array arr) =
-  let results = [recursiveValidator schema' item | item <- toList arr]
-      matchCount = fromIntegral (length [() | ValidationSuccess _ <- results]) :: Natural
-      
+  let evaluations =
+        [ (idx, recursiveValidator schema' item)
+        | (idx, item) <- zip [0..] (toList arr)
+        ]
+      matchingIndices = Set.fromList [idx | (idx, ValidationSuccess _) <- evaluations]
+      matchCount = fromIntegral (Set.size matchingIndices) :: Natural
       minCheck = matchCount >= minCount
       maxCheck = maybe True (matchCount <=) maxCount
+      shiftedAnnotations =
+        [ shiftAnnotations (arrayIndexPointer idx) anns
+        | (idx, ValidationSuccess anns) <- evaluations
+        ]
   in pure $
     if not minCheck
       then validationFailure "contains" $
@@ -101,7 +113,7 @@ validateContainsKeyword recursiveValidator (ContainsData schema' minCount maxCou
         "Array has " <> T.pack (show matchCount)
         <> " items matching contains, but maxContains allows at most "
         <> maybe "0" (T.pack . show) maxCount
-    else ValidationSuccess mempty
+    else ValidationSuccess (annotateItems matchingIndices <> mconcat shiftedAnnotations)
 
 validateContainsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to arrays
 
@@ -123,6 +135,7 @@ containsKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> validationContains (schemaValidation obj)
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 
 -- | Keyword definition for minContains
@@ -133,6 +146,7 @@ minContainsKeyword = KeywordDefinition
   , keywordCompile = compileMinContains
   , keywordValidate = validateMinContainsKeyword
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
 -- | Keyword definition for maxContains
@@ -143,5 +157,6 @@ maxContainsKeyword = KeywordDefinition
   , keywordCompile = compileMaxContains
   , keywordValidate = validateMaxContainsKeyword
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

@@ -50,5 +50,6 @@ maxPropertiesKeyword = KeywordDefinition
   , keywordCompile = compileMaxProperties
   , keywordValidate = validateMaxProperties
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

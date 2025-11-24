@@ -55,5 +55,6 @@ patternKeyword = KeywordDefinition
   , keywordCompile = compilePattern
   , keywordValidate = validatePattern
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 

@@ -24,26 +24,37 @@ module Fractal.JsonSchema.Validator
 import Fractal.JsonSchema.Types
 import qualified Fractal.JsonSchema.Validator.Result as VR
 import qualified Fractal.JsonSchema.Parser as Parser
-import qualified Fractal.JsonSchema.Keywords.Type as KW
-import qualified Fractal.JsonSchema.Keywords.Enum as KW
-import qualified Fractal.JsonSchema.Keywords.Const as KW
-import qualified Fractal.JsonSchema.Keywords.Numeric as KW
-import qualified Fractal.JsonSchema.Keywords.String as KW
-import qualified Fractal.JsonSchema.Keywords.Format as KW
 -- Pluggable keyword system
-import Fractal.JsonSchema.Keywords.Standard (standardKeywordRegistry, draft04Registry)
+import Fractal.JsonSchema.Keywords.Standard
+  ( standardKeywordRegistry
+  , draft04Registry
+  , draft06Registry
+  , draft07Registry
+  , draft201909Registry
+  , draft202012Registry
+  )
 import Fractal.JsonSchema.Keyword (KeywordRegistry(..), keywordMap, lookupKeyword)
 import qualified Fractal.JsonSchema.Keyword as Keyword
 import qualified Fractal.JsonSchema.Keyword.Types as Keyword.Types
 import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeywords, buildCompilationContext, CompiledKeywords(..))
 import qualified Fractal.JsonSchema.Keyword.Validate as KeywordValidate
+import Fractal.JsonSchema.Validator.Annotations
+  ( annotateItems
+  , annotateProperties
+  , arrayIndexPointer
+  , propertyPointer
+  , shiftAnnotations
+  )
 -- Applicator keywords (composition and conditional)
 import qualified Fractal.JsonSchema.Keywords.AllOf as AllOf
 import qualified Fractal.JsonSchema.Keywords.AnyOf as AnyOf
 import qualified Fractal.JsonSchema.Keywords.OneOf as OneOf
 import qualified Fractal.JsonSchema.Keywords.Not as Not
 import qualified Fractal.JsonSchema.Keywords.Conditional as Cond
+-- Unevaluated keywords
+import qualified Fractal.JsonSchema.Keywords.UnevaluatedProperties as UnevaluatedProperties
+import qualified Fractal.JsonSchema.Keywords.UnevaluatedItems as UnevaluatedItems
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -257,7 +268,9 @@ applySchemaContext ctx schema =
   in ctx
       { contextBaseURI = newBase
       , contextRootSchema =
-          if baseChanged
+          let hasOwnId = isJust (schemaId schema)
+              shouldSetRoot = (baseChanged || hasOwnId) && not (Map.null (schemaRawKeywords schema))
+          in if shouldSetRoot
             then Just schema
             else case contextRootSchema ctx of
                    Just existing -> Just existing
@@ -268,36 +281,6 @@ applySchemaContext ctx schema =
 compileValidator :: ValidationConfig -> Schema -> Either CompileError Validator
 compileValidator config schema =
   Right $ Validator $ \val -> validateValue config schema val
-
--- | Create annotation for evaluated properties at current location
-annotateProperties :: Set Text -> ValidationAnnotations
-annotateProperties props =
-  if Set.null props
-    then mempty
-    else ValidationAnnotations $ Map.singleton emptyPointer $ 
-           Map.singleton "properties" (Aeson.Array $ fromList $ map Aeson.String $ Set.toList props)
-
--- | Create annotation for evaluated array items at current location
-annotateItems :: Set Int -> ValidationAnnotations
-annotateItems indices =
-  if Set.null indices
-    then mempty
-    else ValidationAnnotations $ Map.singleton emptyPointer $
-           Map.singleton "items" (Aeson.Array $ fromList $ map (Aeson.Number . fromIntegral) $ Set.toList indices)
-
--- | Shift all annotation pointers by prepending a prefix
--- Used when collecting annotations from child validations
-shiftAnnotations :: JSONPointer -> ValidationAnnotations -> ValidationAnnotations
-shiftAnnotations prefix (ValidationAnnotations annMap) =
-  ValidationAnnotations $ Map.mapKeys (prefix <>) annMap
-
--- | Create a JSON Pointer for an array index
-arrayIndexPointer :: Int -> JSONPointer
-arrayIndexPointer idx = JSONPointer [T.pack (show idx)]
-
--- | Create a JSON Pointer for an object property
-propertyPointer :: Text -> JSONPointer
-propertyPointer prop = JSONPointer [prop]
 
 -- | Collect metadata annotations from schema (title, description, default, etc.)
 collectMetadataAnnotations :: SchemaObject -> ValidationAnnotations
@@ -321,8 +304,6 @@ collectMetadataAnnotations obj =
 -- | Validate against object schema
 validateAgainstObject :: ValidationContext -> ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
 validateAgainstObject parentCtx ctx schema obj val =
-  -- In 2019-09+, $ref and $dynamicRef are applicators alongside other keywords
-  -- In earlier drafts, $ref short-circuits (only validates against ref, ignores siblings)
   let version = validationVersion (contextConfig ctx)
       refIsApplicator = version >= Draft201909
       -- Update context with dynamic scope BEFORE processing refs
@@ -335,15 +316,10 @@ validateAgainstObject parentCtx ctx schema obj val =
       ctxWithDynamicScope =
         if shouldPushToScope
           then
-            let schema' = Schema
-                  { schemaVersion = Just version
-                  , schemaMetaschemaURI = Nothing
-                  , schemaId = contextBaseURI ctx
-                  , schemaCore = ObjectSchema obj
-                  , schemaVocabulary = Nothing
-                  , schemaExtensions = Map.empty
-                  , schemaRawKeywords = Map.empty  -- No raw keywords for dynamically constructed schema
-                  }
+            let effectiveId = case contextBaseURI ctx of
+                  Just base -> Just base
+                  Nothing -> schemaId schema
+                schema' = schema { schemaId = effectiveId }
             in ctx { contextDynamicScope = schema' : contextDynamicScope ctx }
           else ctx
   in if refIsApplicator
@@ -356,7 +332,7 @@ validateAgainstObject parentCtx ctx schema obj val =
           refAnnotations = case refResult of
             ValidationSuccess anns -> anns
             ValidationFailure _ -> mempty
-          contentResult = validateObjectSchemaContentWithRefAnnotations ctxWithDynamicScope obj val refAnnotations
+          contentResult = validateObjectSchemaContentWithRefAnnotations ctxWithDynamicScope schema obj val refAnnotations
       in combineResults [refResult, contentResult]
     else
       -- Pre-2019-09: $ref short-circuits, ignores sibling keywords
@@ -399,14 +375,17 @@ validateAgainstObject parentCtx ctx schema obj val =
                     , VR.errorInstancePath = emptyPointer
                     , VR.errorMessage = "Unable to resolve reference: " <> showReference ref
                     }
-        Nothing -> validateObjectSchemaContent ctx obj val
+        Nothing -> validateObjectSchemaContent ctx schema obj val
   where
     refCtx =
       let inheritedBase = contextBaseURI parentCtx
           currentRoot =
             case contextRootSchema ctx of
               Just root -> Just root
-              Nothing -> contextRootSchema parentCtx
+              Nothing ->
+                case contextRootSchema parentCtx of
+                  Just root -> Just root
+                  Nothing -> Just schema
       in ctx
            { contextBaseURI = inheritedBase
            , contextRootSchema = currentRoot
@@ -451,7 +430,25 @@ validateAgainstObject parentCtx ctx schema obj val =
                                                 }
                       -- Update context if crossing draft boundaries
                       ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
-                  in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
+                      -- Push resolved schema onto dynamic scope if it has $recursiveAnchor: true (2019-09)
+                      -- or $dynamicAnchor (2020-12+)
+                      version = validationVersion (contextConfig ctxForRefWithVersion)
+                      shouldPushResolved = case version of
+                        Draft201909 -> case schemaCore resolvedSchema of
+                          ObjectSchema obj -> schemaRecursiveAnchor obj == Just True || isJust (schemaId resolvedSchema)
+                          _ -> False
+                        _ -> case schemaCore resolvedSchema of
+                          ObjectSchema obj -> isJust (schemaDynamicAnchor obj) || isJust (schemaId resolvedSchema)
+                          _ -> False
+                      ctxWithResolvedScope = if shouldPushResolved
+                        then
+                          let effectiveId = case contextBaseURI ctxForRefWithVersion of
+                                Just base -> Just base
+                                Nothing -> schemaId resolvedSchema
+                              schema' = resolvedSchema { schemaId = effectiveId }
+                          in ctxForRefWithVersion { contextDynamicScope = schema' : contextDynamicScope ctxForRefWithVersion }
+                        else ctxForRefWithVersion
+                  in validateValueWithContext ctxWithResolvedScope resolvedSchema val'
                 Nothing ->
                   ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
                     { VR.errorKeyword = "$ref"
@@ -470,7 +467,20 @@ validateAgainstObject parentCtx ctx schema obj val =
                   let ctxWithDepth = ctx' { contextRecursionDepth = contextRecursionDepth ctx' + 1 }
                   in case resolveDynamicRef dynRef ctxWithDepth of
                     Just resolvedSchema ->
-                      validateValueWithContext ctxWithDepth resolvedSchema val'
+                      -- Push resolved schema onto dynamic scope if it has $dynamicAnchor
+                      let version = validationVersion (contextConfig ctxWithDepth)
+                          shouldPushResolved = case schemaCore resolvedSchema of
+                            ObjectSchema obj -> isJust (schemaDynamicAnchor obj) || isJust (schemaId resolvedSchema)
+                            _ -> False
+                          ctxWithResolvedScope = if shouldPushResolved
+                            then
+                              let effectiveId = case contextBaseURI ctxWithDepth of
+                                    Just base -> Just base
+                                    Nothing -> schemaId resolvedSchema
+                                  resolvedSchemaWithId = resolvedSchema { schemaId = effectiveId }
+                              in ctxWithDepth { contextDynamicScope = resolvedSchemaWithId : contextDynamicScope ctxWithDepth }
+                            else ctxWithDepth
+                      in validateValueWithContext ctxWithResolvedScope resolvedSchema val'
                     Nothing ->
                       -- Fallback: treat as regular $ref (resolve statically)
                       case resolveReference dynRef refCtx of
@@ -502,7 +512,20 @@ validateAgainstObject parentCtx ctx schema obj val =
                                                       }
                               -- Update context if crossing draft boundaries
                               ctxForRefWithVersion = updateContextForCrossDraftRef ctxForRef resolvedSchema
-                          in validateValueWithContext ctxForRefWithVersion resolvedSchema val'
+                              -- Push resolved schema onto dynamic scope if it has $dynamicAnchor (2020-12+)
+                              version = validationVersion (contextConfig ctxForRefWithVersion)
+                              shouldPushResolved = case schemaCore resolvedSchema of
+                                ObjectSchema obj -> isJust (schemaDynamicAnchor obj) || isJust (schemaId resolvedSchema)
+                                _ -> False
+                              ctxWithResolvedScope = if shouldPushResolved
+                                then
+                                  let effectiveId = case contextBaseURI ctxForRefWithVersion of
+                                        Just base -> Just base
+                                        Nothing -> schemaId resolvedSchema
+                                      resolvedSchemaWithId = resolvedSchema { schemaId = effectiveId }
+                                  in ctxForRefWithVersion { contextDynamicScope = resolvedSchemaWithId : contextDynamicScope ctxForRefWithVersion }
+                                else ctxForRefWithVersion
+                          in validateValueWithContext ctxWithResolvedScope resolvedSchema val'
                         Nothing ->
                           ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
                             { VR.errorKeyword = "$dynamicRef"
@@ -574,150 +597,60 @@ validateAgainstObject parentCtx ctx schema obj val =
     -- Falls back to old validation functions for:
     -- - Draft-04 schemas (different exclusiveMinimum/exclusiveMaximum semantics)
     -- - Manually constructed schemas (empty schemaRawKeywords)
-    validateBasicKeywords :: ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
-    validateBasicKeywords ctx schema obj val =
-      let rawKeywords = schemaRawKeywords schema
-          -- Filter to only basic validation keywords (exclude array/object/composition keywords)
-          basicKeywordNames = 
-            [ "type", "enum", "const"
-            , "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum"
-            , "maxLength", "minLength", "pattern"
-            ]
-          basicKeywords = Map.filterWithKey (\k _ -> k `elem` basicKeywordNames) rawKeywords
-          legacyResult =
-            combineResults
-              [ KW.validateTypeConstraint obj val
-              , KW.validateEnumConstraint obj val
-              , KW.validateConstConstraint obj val
-              , KW.validateNumericConstraints obj val
-              , KW.validateStringConstraints ctx obj val
-              ]
-      in
-        -- Fall back to old validation functions for manually constructed schemas (empty schemaRawKeywords)
-        if Map.null rawKeywords
-        then legacyResult
-        else if Map.null basicKeywords
-        then ValidationSuccess mempty
-        else
-          validateKeywordMap ctx schema val basicKeywords
-
     -- Validate object schema content without ref annotations (for pre-2019-09 or when no ref)
-    validateObjectSchemaContent ctx' obj' val' =
-      validateObjectSchemaContentWithRefAnnotations ctx' obj' val' mempty
+    validateObjectSchemaContent ctx' schema' obj' val' =
+      validateObjectSchemaContentWithRefAnnotations ctx' schema' obj' val' mempty
 
     -- Validate object schema content with additional annotations from refs
     -- Note: Dynamic scope has already been updated in validateAgainstObject
-    validateObjectSchemaContentWithRefAnnotations ctx' obj' val' refAnns =
-      let ctx'' = ctx'  -- Dynamic scope already set up
-          -- Check if validation vocabulary is active
-          validationActive = isValidationVocabularyActive ctx'' schema
-          -- Validate all keywords EXCEPT unevaluated ones
-          -- Only apply validation keywords if validation vocabulary is active
-          results =
-            (if validationActive
-             then [ validateBasicKeywords ctx'' schema obj' val'
-                  , KW.validateStringConstraints ctx'' obj' val'  -- Content encoding/media type validation
-                  ]
-             else [])
-            ++
-            [ validateComposition ctx'' schema obj' val'
-            , validateConditional ctx'' obj' val'
-            , KW.validateFormatConstraints ctx'' obj' val'
-            , validateArrayConstraintsWithoutUnevaluated ctx'' obj' val'
-            , validateObjectConstraintsWithoutUnevaluated ctx'' obj' val'
-            ]
-          -- Combine results to get accumulated annotations (including ref annotations)
-          combinedResult = combineResults results
-          -- Collect metadata annotations from schema
+    -- Unevaluated keywords are now handled through the normal keyword registry flow
+    validateObjectSchemaContentWithRefAnnotations ctx' schema' obj' val' refAnns =
+      let keywordResult =
+            compileAndValidateKeywords ctx' schema' val'
+              (filterKeywordValues ctx' schema' (schemaRawKeywords schema'))
+              refAnns  -- Pass ref annotations so post-validation keywords can see them
           metadataAnns = collectMetadataAnnotations obj'
-          combinedWithRefs = case combinedResult of
-            ValidationSuccess anns -> ValidationSuccess (refAnns <> anns <> metadataAnns)
-            ValidationFailure errs -> ValidationFailure errs
-      in case combinedWithRefs of
+      in case keywordResult of
+           ValidationFailure errs ->
+             ValidationFailure errs
            ValidationSuccess anns ->
-             -- Now validate unevaluated keywords with accumulated annotations (including from refs)
-             let unevalResults =
-                   [ validateUnevaluatedForArray ctx'' obj' val' anns
-                   , validateUnevaluatedForObject ctx'' obj' val' anns
-                   ]
-                 unevalCombined = combineResults unevalResults
-             in case unevalCombined of
-                  ValidationSuccess unevalAnns -> ValidationSuccess (anns <> unevalAnns)
-                  ValidationFailure errs -> ValidationFailure errs
-           ValidationFailure errs -> ValidationFailure errs
-      where
-        validateUnevaluatedForArray ctx''' schemaObj (Array arr) accAnns =
-          validateUnevaluatedItems ctx''' schemaObj arr accAnns
-        validateUnevaluatedForArray _ _ _ _ = ValidationSuccess mempty
-
-        validateUnevaluatedForObject ctx''' schemaObj (Object objMap) accAnns =
-          validateUnevaluatedProperties ctx''' schemaObj objMap accAnns
-        validateUnevaluatedForObject _ _ _ _ = ValidationSuccess mempty
-
-validateComposition :: ValidationContext -> Schema -> SchemaObject -> Value -> ValidationResult
-validateComposition ctx schema obj val =
-  combineResults
-    [ validateKeywordWithFallback ctx schema val "allOf" allOfFallback
-    , validateKeywordWithFallback ctx schema val "anyOf" anyOfFallback
-    , oneOfFallback
-    , notFallback
-    ]
-  where
-    -- Validator function that captures the context
-    validator schema' value' = validateValueWithContext ctx schema' value'
-
-    allOfFallback =
-      maybe (ValidationSuccess mempty) (\schemas -> AllOf.validateAllOf validator schemas val) (schemaAllOf obj)
-    anyOfFallback =
-      maybe (ValidationSuccess mempty) (\schemas -> AnyOf.validateAnyOf validator schemas val) (schemaAnyOf obj)
-    oneOfFallback =
-      maybe (ValidationSuccess mempty) (\schemas -> OneOf.validateOneOf validator schemas val) (schemaOneOf obj)
-    notFallback =
-      maybe (ValidationSuccess mempty) (\schema' -> Not.validateNot validator schema' val) (schemaNot obj)
-
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
+             -- Combine keyword annotations (which already include ref annotations) and metadata annotations
+             ValidationSuccess (anns <> metadataAnns)
 
 -- | Attempt to validate a specific keyword via the registry, falling back to the legacy path.
-validateKeywordWithFallback
-  :: ValidationContext
-  -> Schema
-  -> Value
-  -> Text
-  -> ValidationResult
-  -> ValidationResult
-validateKeywordWithFallback ctx schema value keywordName fallback =
-  let rawKeywords = schemaRawKeywords schema
-  in if Map.null rawKeywords
-     then fallback
-     else
-       case Map.lookup keywordName rawKeywords of
-         Nothing -> fallback
-         Just keywordValue ->
-           validateKeywordMap ctx schema value (Map.singleton keywordName keywordValue)
-
 -- | Validate conditional keywords (if/then/else, draft-07+)
-validateConditional :: ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateConditional ctx obj val = case schemaIf obj of
-  Nothing -> ValidationSuccess mempty  -- No conditional
-  Just ifSchema ->
-    Cond.validateConditional validator ifSchema (schemaThen obj) (schemaElse obj) val
-  where
-    -- Validator function that captures the context
-    validator schema value = validateValueWithContext ctx schema value
-
 -- | Compile and validate a subset of keywords via the registry.
-validateKeywordMap
+-- | Select the appropriate keyword registry for the schema version.
+keywordRegistryForSchemaVersion :: Maybe JsonSchemaVersion -> KeywordRegistry
+keywordRegistryForSchemaVersion version =
+  case version of
+    Just Draft04 -> draft04Registry
+    Just Draft06 -> draft06Registry
+    Just Draft07 -> draft07Registry
+    Just Draft201909 -> draft201909Registry
+    Just Draft202012 -> draft202012Registry
+    Nothing -> standardKeywordRegistry
+
+validationKeywordNames :: Set Text
+validationKeywordNames = Set.fromList
+  [ "type", "enum", "const"
+  , "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum"
+  , "maxLength", "minLength", "pattern"
+  ]
+
+filterKeywordValues :: ValidationContext -> Schema -> Map Text Value -> Map Text Value
+filterKeywordValues ctx schema rawValues
+  | isValidationVocabularyActive ctx schema = rawValues
+  | otherwise = Map.withoutKeys rawValues validationKeywordNames
+
+compileAndValidateKeywords
   :: ValidationContext
   -> Schema
   -> Value
   -> Map Text Value
+  -> ValidationAnnotations  -- ^ Additional annotations to include (e.g., from $ref)
   -> ValidationResult
-validateKeywordMap ctx schema value keywordValues
+compileAndValidateKeywords ctx schema value keywordValues additionalAnns
   | Map.null keywordValues = ValidationSuccess mempty
   | otherwise =
       let keywordRegistry = keywordRegistryForSchemaVersion (schemaVersion schema)
@@ -734,686 +667,20 @@ validateKeywordMap ctx schema value keywordValues
                    { Keyword.Types.kwContextInstancePath = []
                    , Keyword.Types.kwContextSchemaPath = []
                    }
-             in KeywordValidate.validateKeywords recursiveValidator compiledKeywords value keywordCtx (contextConfig ctx)
+             in KeywordValidate.validateKeywords recursiveValidator compiledKeywords value keywordCtx (contextConfig ctx) additionalAnns
 
--- | Select the appropriate keyword registry for the schema version.
-keywordRegistryForSchemaVersion :: Maybe JsonSchemaVersion -> KeywordRegistry
-keywordRegistryForSchemaVersion version =
-  case version of
-    Just Draft04 -> draft04Registry
-    _ -> standardKeywordRegistry
-
--- | Validate array constraints WITHOUT unevaluatedItems (for use when collecting annotations)
-validateArrayConstraintsWithoutUnevaluated :: ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateArrayConstraintsWithoutUnevaluated ctx obj (Array arr) =
-  let validation = schemaValidation obj
-      arrLength = length arr
-      itemValidations =
-        [ maybe (ValidationSuccess mempty) (\max' ->
-            if fromIntegral arrLength <= max'
-              then ValidationSuccess mempty
-              else validationFailure "maxItems" "Array length exceeds maxItems"
-          ) (validationMaxItems validation)
-        , maybe (ValidationSuccess mempty) (\min' ->
-            if fromIntegral arrLength >= min'
-              then ValidationSuccess mempty
-              else validationFailure "minItems" "Array length below minItems"
-          ) (validationMinItems validation)
-        , validateItems ctx obj arr
-        , validateContains ctx obj arr
-        , validateUniqueItems obj arr
-        ]
-  in combineResults itemValidations
-  where
-    combineResults results =
+combineValidationResults :: [ValidationResult] -> ValidationResult
+combineValidationResults results =
       let failures = [errs | ValidationFailure errs <- results]
           annotations = [anns | ValidationSuccess anns <- results]
       in case failures of
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
+       [] -> ValidationSuccess (mconcat annotations)
+       (e:es) -> ValidationFailure (foldl (<>) e es)
 
-    validateItems ctx' schemaObj array =
-      -- In 2020-12+, prefixItems takes precedence for tuple validation
-      -- But only apply prefixItems if we're validating against 2020-12 or later
-      let currentVersion = validationVersion (contextConfig ctx')
-          isPrefixItemsSupported = currentVersion >= Draft202012
-      in case validationPrefixItems (schemaValidation schemaObj) of
-        Just prefixSchemas | isPrefixItemsSupported ->
-          -- 2020-12+ mode: prefixItems validates positional items
-          let prefixResults = zipWith (validateValueWithContext ctx') (NE.toList prefixSchemas) (toList array)
-              prefixFailures = [errs | ValidationFailure errs <- prefixResults]
-              prefixIndices = Set.fromList [0 .. length prefixSchemas - 1]
-              -- Shift annotations from prefixItems validations to correct instance locations
-              prefixAnnotations =
-                [ shiftAnnotations (arrayIndexPointer idx) anns
-                | (idx, ValidationSuccess anns) <- zip [0..] prefixResults
-                ]
-              -- In 2020-12, "items" applies to items beyond prefixItems
-              additionalItemsFromPrefix = drop (length prefixSchemas) (toList array)
-              additionalStartIdx = length prefixSchemas
-              (additionalResults, additionalIndices, additionalAnnotations) = case validationItems (schemaValidation schemaObj) of
-                Just (ItemsSchema itemSchema) ->
-                  let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' itemSchema item))
-                                  [additionalStartIdx..] additionalItemsFromPrefix
-                      indices = if null additionalItemsFromPrefix
-                                then Set.empty
-                                else Set.fromList [additionalStartIdx .. length array - 1]
-                      -- Shift annotations from items validations
-                      anns = [ shiftAnnotations (arrayIndexPointer idx) ann
-                             | (idx, ValidationSuccess ann) <- results
-                             ]
-                  in (map snd results, indices, anns)
-                _ -> ([], Set.empty, [])  -- No items schema, don't annotate additional items
-              additionalFailures = [errs | ValidationFailure errs <- additionalResults]
-              allFailures = prefixFailures <> additionalFailures
-              allIndices = prefixIndices <> additionalIndices
-              allAnnotations = prefixAnnotations <> additionalAnnotations
-          in case allFailures of
-            [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
-            (e:es) -> ValidationFailure $ foldl (<>) e es
-        Nothing ->
-          -- Pre-2020-12 mode: use old items behavior
-          case validationItems (schemaValidation schemaObj) of
-            Nothing -> ValidationSuccess mempty
-            Just (ItemsSchema itemSchema) ->
-              -- All items must validate against the schema
-              let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' itemSchema item))
-                              [0..] (toList array)
-                  failures = [errs | (_, ValidationFailure errs) <- results]
-                  allIndices = Set.fromList [0 .. length array - 1]
-                  -- Shift annotations from each item validation
-                  annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
-                                | (idx, ValidationSuccess anns) <- results
-                                ]
-              in case failures of
-                [] -> ValidationSuccess $ annotateItems allIndices <> mconcat annotations
-                (e:es) -> ValidationFailure $ foldl (<>) e es
-            Just (ItemsTuple tupleSchemas maybeAdditional) ->
-              -- Positional validation + optional additional items
-              let tupleResults = zipWith (validateValueWithContext ctx') (NE.toList tupleSchemas) (toList array)
-                  tupleFailures = [errs | ValidationFailure errs <- tupleResults]
-                  tupleIndices = Set.fromList [0 .. length tupleSchemas - 1]
-                  -- Shift annotations from tuple validations
-                  tupleAnnotations =
-                    [ shiftAnnotations (arrayIndexPointer idx) anns
-                    | (idx, ValidationSuccess anns) <- zip [0..] tupleResults
-                    ]
-                  -- Handle additional items beyond tuple length
-                  additionalItems = drop (length tupleSchemas) (toList array)
-                  additionalStartIdx = length tupleSchemas
-                  -- In draft 2019-09/2020-12, additional items are allowed by default when items is an array
-                  -- They are only rejected if additionalItems is explicitly false
-                  (additionalResults, additionalIndices, additionalAnnotations) = case maybeAdditional of
-                    Just addlSchema ->
-                      -- additionalItems is explicitly set, validate against it
-                      let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' addlSchema item))
-                                      [additionalStartIdx..] additionalItems
-                          indices = Set.fromList [additionalStartIdx .. length array - 1]
-                          anns = [ shiftAnnotations (arrayIndexPointer idx) ann
-                                 | (idx, ValidationSuccess ann) <- results
-                                 ]
-                      in (map snd results, if null additionalItems then Set.empty else indices, anns)
-                    Nothing ->
-                      -- additionalItems not specified - don't validate or annotate (let unevaluatedItems handle it)
-                      ([], Set.empty, [])
-                  additionalFailures = [errs | ValidationFailure errs <- additionalResults]
-                  allFailures = tupleFailures <> additionalFailures
-                  allIndices = tupleIndices <> additionalIndices
-                  allAnnotations = tupleAnnotations <> additionalAnnotations
-              in case allFailures of
-                [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
-                (e:es) -> ValidationFailure $ foldl (<>) e es
-
-    validateContains ctx' schemaObj array =
-      let validation = schemaValidation schemaObj
-          maybeContains = validationContains validation
-          maybeMinContains = validationMinContains validation
-          maybeMaxContains = validationMaxContains validation
-      in case maybeContains of
-        Nothing ->
-          -- No contains constraint: minContains and maxContains are ignored per spec
-          ValidationSuccess mempty
-        Just containsSchema ->
-          let results = [(idx, validateValueWithContext ctx' containsSchema item) | (idx, item) <- zip [0..] (toList array)]
-              matchingIndices = Set.fromList [idx | (idx, result) <- results, isSuccess result]
-              matchCount = Set.size matchingIndices
-              -- When contains is present, minContains defaults to 1 (not 0)
-              minRequired = maybe 1 fromIntegral maybeMinContains
-              maxAllowed = fmap fromIntegral maybeMaxContains
-              minCheck = matchCount >= minRequired
-              maxCheck = maybe True (matchCount <=) maxAllowed
-          in if not minCheck
-            then validationFailure "contains" $
-              "Array has " <> T.pack (show matchCount) <> " items matching contains, but minContains requires " <> T.pack (show minRequired)
-            else if not maxCheck
-              then validationFailure "maxContains" $
-                "Array has " <> T.pack (show matchCount) <> " items matching contains, but maxContains allows at most " <> T.pack (show (fromJust maxAllowed))
-              else ValidationSuccess $ annotateItems matchingIndices
-
-    validateUniqueItems schemaObj array = case validationUniqueItems (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just True ->
-        let items = toList array
-            uniqueItems = length items == length (nubOrd items)
-        in if uniqueItems
-          then ValidationSuccess mempty
-          else validationFailure "uniqueItems" "Array contains duplicate items"
-      Just False -> ValidationSuccess mempty
-
-    -- Simple deduplication using Ord (works for most JSON values)
-    nubOrd :: Ord a => [a] -> [a]
-    nubOrd = Set.toList . Set.fromList
-validateArrayConstraintsWithoutUnevaluated _ _ _ = ValidationSuccess mempty
-
--- | Validate array constraints
-validateArrayConstraints :: ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateArrayConstraints ctx obj (Array arr) =
-  let validation = schemaValidation obj
-      arrLength = length arr
-      -- First run item validators to collect annotations
-      itemValidations =
-        [ maybe (ValidationSuccess mempty) (\max' ->
-            if fromIntegral arrLength <= max'
-              then ValidationSuccess mempty
-              else validationFailure "maxItems" "Array length exceeds maxItems"
-          ) (validationMaxItems validation)
-        , maybe (ValidationSuccess mempty) (\min' ->
-            if fromIntegral arrLength >= min'
-              then ValidationSuccess mempty
-              else validationFailure "minItems" "Array length below minItems"
-          ) (validationMinItems validation)
-        , validateItems ctx obj arr
-        , validateContains ctx obj arr
-        , validateUniqueItems obj arr
-        ]
-      -- Combine results to get annotations from item validators
-      itemResult = combineResults itemValidations
-      -- Then run unevaluatedItems with those annotations
-      unevaluatedResult = case itemResult of
-        ValidationSuccess anns ->
-          validateUnevaluatedItems ctx obj arr anns
-        ValidationFailure _ -> ValidationSuccess mempty  -- If items failed, skip unevaluated check
-  in case (itemResult, unevaluatedResult) of
-    (ValidationFailure errs, _) -> ValidationFailure errs
-    (ValidationSuccess anns, ValidationSuccess unevalAnns) -> 
-      ValidationSuccess (anns <> unevalAnns)
-    (ValidationSuccess _, ValidationFailure errs) -> ValidationFailure errs
-  where
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateItems ctx' schemaObj array =
-      -- In 2020-12+, prefixItems takes precedence for tuple validation
-      -- But only apply prefixItems if we're validating against 2020-12 or later
-      let currentVersion = validationVersion (contextConfig ctx')
-          isPrefixItemsSupported = currentVersion >= Draft202012
-      in case validationPrefixItems (schemaValidation schemaObj) of
-        Just prefixSchemas | isPrefixItemsSupported ->
-          -- 2020-12+ mode: prefixItems validates positional items
-          let prefixResults = zipWith (validateValueWithContext ctx') (NE.toList prefixSchemas) (toList array)
-              prefixFailures = [errs | ValidationFailure errs <- prefixResults]
-              prefixIndices = Set.fromList [0 .. length prefixSchemas - 1]
-              -- In 2020-12, "items" applies to items beyond prefixItems
-              additionalItemsFromPrefix = drop (length prefixSchemas) (toList array)
-              additionalStartIdx = length prefixSchemas
-              (additionalResults, additionalIndices) = case validationItems (schemaValidation schemaObj) of
-                Just (ItemsSchema itemSchema) ->
-                  let results = [validateValueWithContext ctx' itemSchema item | item <- additionalItemsFromPrefix]
-                      indices = if null additionalItemsFromPrefix 
-                                then Set.empty 
-                                else Set.fromList [additionalStartIdx .. length array - 1]
-                  in (results, indices)
-                _ -> ([], Set.empty)  -- No items schema, don't annotate additional items
-              additionalFailures = [errs | ValidationFailure errs <- additionalResults]
-              allFailures = prefixFailures <> additionalFailures
-              allIndices = prefixIndices <> additionalIndices
-              allAnnotations = [anns | ValidationSuccess anns <- prefixResults <> additionalResults]
-          in case allFailures of
-            [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
-            (e:es) -> ValidationFailure $ foldl (<>) e es
-        Nothing ->
-          -- Pre-2020-12 mode: use old items behavior
-          case validationItems (schemaValidation schemaObj) of
-            Nothing -> ValidationSuccess mempty
-            Just (ItemsSchema itemSchema) ->
-              -- All items must validate against the schema
-              let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' itemSchema item))
-                              [0..] (toList array)
-                  failures = [errs | (_, ValidationFailure errs) <- results]
-                  allIndices = Set.fromList [0 .. length array - 1]
-                  -- Shift annotations from each item validation
-                  annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
-                                | (idx, ValidationSuccess anns) <- results
-                                ]
-              in case failures of
-                [] -> ValidationSuccess $ annotateItems allIndices <> mconcat annotations
-                (e:es) -> ValidationFailure $ foldl (<>) e es
-            Just (ItemsTuple tupleSchemas maybeAdditional) ->
-              -- Positional validation + optional additional items
-              let tupleResults = zipWith (validateValueWithContext ctx') (NE.toList tupleSchemas) (toList array)
-                  tupleFailures = [errs | ValidationFailure errs <- tupleResults]
-                  tupleIndices = Set.fromList [0 .. length tupleSchemas - 1]
-                  -- Shift annotations from tuple validations
-                  tupleAnnotations =
-                    [ shiftAnnotations (arrayIndexPointer idx) anns
-                    | (idx, ValidationSuccess anns) <- zip [0..] tupleResults
-                    ]
-                  -- Handle additional items beyond tuple length
-                  additionalItems = drop (length tupleSchemas) (toList array)
-                  additionalStartIdx = length tupleSchemas
-                  -- In draft 2019-09/2020-12, additional items are allowed by default when items is an array
-                  -- They are only rejected if additionalItems is explicitly false
-                  (additionalResults, additionalIndices, additionalAnnotations) = case maybeAdditional of
-                    Just addlSchema ->
-                      -- additionalItems is explicitly set, validate against it
-                      let results = zipWith (\idx item -> (idx, validateValueWithContext ctx' addlSchema item))
-                                      [additionalStartIdx..] additionalItems
-                          indices = Set.fromList [additionalStartIdx .. length array - 1]
-                          anns = [ shiftAnnotations (arrayIndexPointer idx) ann
-                                 | (idx, ValidationSuccess ann) <- results
-                                 ]
-                      in (map snd results, if null additionalItems then Set.empty else indices, anns)
-                    Nothing ->
-                      -- additionalItems not specified - don't validate or annotate (let unevaluatedItems handle it)
-                      ([], Set.empty, [])
-                  additionalFailures = [errs | ValidationFailure errs <- additionalResults]
-                  allFailures = tupleFailures <> additionalFailures
-                  allIndices = tupleIndices <> additionalIndices
-                  allAnnotations = tupleAnnotations <> additionalAnnotations
-              in case allFailures of
-                [] -> ValidationSuccess $ annotateItems allIndices <> mconcat allAnnotations
-                (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateContains ctx' schemaObj array =
-      let validation = schemaValidation schemaObj
-          maybeContains = validationContains validation
-          maybeMinContains = validationMinContains validation
-          maybeMaxContains = validationMaxContains validation
-      in case maybeContains of
-        Nothing ->
-          -- No contains constraint: minContains and maxContains are ignored per spec
-          ValidationSuccess mempty
-        Just containsSchema ->
-          let results = [(idx, validateValueWithContext ctx' containsSchema item) | (idx, item) <- zip [0..] (toList array)]
-              matchingIndices = Set.fromList [idx | (idx, result) <- results, isSuccess result]
-              matchCount = Set.size matchingIndices
-              -- When contains is present, minContains defaults to 1 (not 0)
-              minRequired = maybe 1 fromIntegral maybeMinContains
-              maxAllowed = fmap fromIntegral maybeMaxContains
-              minCheck = matchCount >= minRequired
-              maxCheck = maybe True (matchCount <=) maxAllowed
-          in if not minCheck
-            then validationFailure "contains" $
-              "Array has " <> T.pack (show matchCount) <> " items matching contains, but minContains requires " <> T.pack (show minRequired)
-            else if not maxCheck
-              then validationFailure "maxContains" $
-                "Array has " <> T.pack (show matchCount) <> " items matching contains, but maxContains allows at most " <> T.pack (show (fromJust maxAllowed))
-              else ValidationSuccess $ annotateItems matchingIndices
-    
-    validateUniqueItems schemaObj array = case validationUniqueItems (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just True ->
-        let items = toList array
-            uniqueItems = length items == length (nubOrd items)
-        in if uniqueItems
-          then ValidationSuccess mempty
-          else validationFailure "uniqueItems" "Array contains duplicate items"
-      Just False -> ValidationSuccess mempty
-    
-    -- Simple deduplication using Ord (works for most JSON values)
-    nubOrd :: Ord a => [a] -> [a]
-    nubOrd = Set.toList . Set.fromList
-validateArrayConstraints _ _ _ = ValidationSuccess mempty
-
--- | Shared helper to validate object property constraints (without unevaluatedProperties)
--- This extracts the common logic used by both validateObjectConstraints and validateObjectConstraintsWithoutUnevaluated
-validateObjectPropertyConstraints :: ValidationContext -> SchemaObject -> KeyMap.KeyMap Value -> ValidationResult
-validateObjectPropertyConstraints ctx obj objMap =
-  let validation = schemaValidation obj
-      objSize = KeyMap.size objMap
-      -- Run all property validators to collect annotations (NOT including unevaluatedProperties)
-      propertyValidations =
-        [ maybe (ValidationSuccess mempty) (\max' ->
-            if fromIntegral objSize <= max'
-              then ValidationSuccess mempty
-              else validationFailure "maxProperties" "Object has too many properties"
-          ) (validationMaxProperties validation)
-        , maybe (ValidationSuccess mempty) (\min' ->
-            if fromIntegral objSize >= min'
-              then ValidationSuccess mempty
-              else validationFailure "minProperties" "Object has too few properties"
-          ) (validationMinProperties validation)
-        , validateRequired obj objMap
-        , validatePropertyNames ctx obj objMap
-        , validateProperties ctx obj objMap
-        , validateAdditionalProperties ctx obj objMap
-        , validateDependencies ctx validation objMap
-        , validateDependentRequired ctx validation objMap
-        , validateDependentSchemas ctx validation objMap
-        ]
-  in combineResults propertyValidations
-  where
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateRequired schemaObj om = case validationRequired (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just requiredProps ->
-        let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys om]
-            missingProps = Set.difference requiredProps presentProps
-        in if Set.null missingProps
-          then ValidationSuccess mempty
-          else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
-            { VR.errorKeyword = "required"
-            , VR.errorSchemaPath = emptyPointer
-            , VR.errorInstancePath = emptyPointer
-            , VR.errorMessage = "Missing required properties: " <> T.intercalate ", " (Set.toList missingProps)
-            }
-    
-    validatePropertyNames ctx' schemaObj om = case validationPropertyNames (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just nameSchema ->
-        -- Validate each property name (as a string) against the schema
-        let propNames = [Key.toText k | k <- KeyMap.keys om]
-            results = [validateValueWithContext ctx' nameSchema (Aeson.String propName) | propName <- propNames]
-            failures = [errs | ValidationFailure errs <- results]
-        in case failures of
-          [] -> ValidationSuccess mempty
-          (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateProperties ctx' schemaObj om =
-      let -- Get properties from 'properties' keyword
-          maybePropSchemas = validationProperties (schemaValidation schemaObj)
-          evaluatedProps = case maybePropSchemas of
-            Nothing -> Set.empty
-            Just propSchemas -> Set.fromList
-              [ propName
-              | propName <- Map.keys propSchemas
-              , KeyMap.member (Key.fromText propName) om
-              ]
-          propertyResults = case maybePropSchemas of
-            Nothing -> []
-            Just propSchemas ->
-              [ (propName, validateValueWithContext ctx' propSchema propValue)
-              | (propName, propSchema) <- Map.toList propSchemas
-              , Just propValue <- [KeyMap.lookup (Key.fromText propName) om]
-              ]
-          -- Shift annotations from property validations to correct locations
-          propertyAnnotations =
-            [ shiftAnnotations (propertyPointer propName) anns
-            | (propName, ValidationSuccess anns) <- propertyResults
-            ]
-
-          -- Also check pattern properties (independent of 'properties' keyword)
-          patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
-            Nothing -> Set.empty
-            Just patternSchemas -> Set.fromList
-              [ Key.toText k
-              | k <- KeyMap.keys om
-              , let propName = Key.toText k
-              , (Regex pattern, _) <- Map.toList patternSchemas
-              , case Regex.compileRegex pattern of
-                  Right regex -> Regex.matchRegex regex propName
-                  Left _ -> False
-              ]
-          patternResultsList = case validationPatternProperties (schemaValidation schemaObj) of
-            Nothing -> []
-            Just patternSchemas ->
-              [ (Key.toText k, validateValueWithContext ctx' patternSchema propValue)
-              | (k, propValue) <- KeyMap.toList om
-              , let propName = Key.toText k
-              , (Regex pattern, patternSchema) <- Map.toList patternSchemas
-              , case Regex.compileRegex pattern of
-                  Right regex -> Regex.matchRegex regex propName
-                  Left _ -> False
-              ]
-          -- Shift annotations from pattern property validations
-          patternAnnotations =
-            [ shiftAnnotations (propertyPointer propName) anns
-            | (propName, ValidationSuccess anns) <- patternResultsList
-            ]
-
-          allResults = map snd propertyResults <> map snd patternResultsList
-          allEvaluatedProps = evaluatedProps <> patternCoveredProps
-          allAnnotations = propertyAnnotations <> patternAnnotations
-          failures = [errs | ValidationFailure errs <- allResults]
-      in case failures of
-        [] -> ValidationSuccess $ annotateProperties allEvaluatedProps <> mconcat allAnnotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-    
-    validateAdditionalProperties ctx' schemaObj om = case validationAdditionalProperties (schemaValidation schemaObj) of
-      Nothing -> ValidationSuccess mempty
-      Just addlSchema ->
-        -- Properties covered by 'properties' keyword
-        let definedProps = maybe Set.empty Map.keysSet (validationProperties $ schemaValidation schemaObj)
-
-            -- Properties covered by 'patternProperties' keyword
-            patternCoveredProps = case validationPatternProperties (schemaValidation schemaObj) of
-              Nothing -> Set.empty
-              Just patternSchemas -> Set.fromList
-                [ Key.toText k
-                | k <- KeyMap.keys om
-                , let propName = Key.toText k
-                , (Regex pattern, _) <- Map.toList patternSchemas
-                , case Regex.compileRegex pattern of
-                    Right regex -> Regex.matchRegex regex propName
-                    Left _ -> False
-                ]
-
-            -- Additional properties are those not covered by either
-            allCoveredProps = definedProps <> patternCoveredProps
-            additionalPropsList = [(k, v) | (k, v) <- KeyMap.toList om
-                              , not $ Set.member (Key.toText k) allCoveredProps]
-            additionalPropNames = Set.fromList [Key.toText k | (k, _) <- additionalPropsList]
-            results = [(Key.toText k, validateValueWithContext ctx' addlSchema v) | (k, v) <- additionalPropsList]
-            -- Shift annotations from additional property validations
-            annotations = [ shiftAnnotations (propertyPointer propName) anns
-                          | (propName, ValidationSuccess anns) <- results
-                          ]
-            failures = [errs | (_, ValidationFailure errs) <- results]
-        in case failures of
-          [] -> ValidationSuccess $ annotateProperties additionalPropNames <> mconcat annotations
-          (e:es) -> ValidationFailure $ foldl (<>) e es
-
--- | Validate object constraints WITHOUT unevaluatedProperties (for use when collecting annotations)
-validateObjectConstraintsWithoutUnevaluated :: ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateObjectConstraintsWithoutUnevaluated ctx obj (Object objMap) =
-  validateObjectPropertyConstraints ctx obj objMap
-validateObjectConstraintsWithoutUnevaluated _ _ _ = ValidationSuccess mempty
-
--- | Validate object constraints (with unevaluatedProperties)
-validateObjectConstraints :: ValidationContext -> SchemaObject -> Value -> ValidationResult
-validateObjectConstraints ctx obj (Object objMap) =
-  -- First validate property constraints
-  let propertyResult = validateObjectPropertyConstraints ctx obj objMap
-      -- Then run unevaluatedProperties with collected annotations
-      unevaluatedResult = case propertyResult of
-        ValidationSuccess anns ->
-          validateUnevaluatedProperties ctx obj objMap anns
-        ValidationFailure _ -> ValidationSuccess mempty  -- If properties failed, skip unevaluated check
-  in case (propertyResult, unevaluatedResult) of
-    (ValidationFailure errs, _) -> ValidationFailure errs
-    (ValidationSuccess anns, ValidationSuccess unevalAnns) ->
-      ValidationSuccess (anns <> unevalAnns)
-    (ValidationSuccess _, ValidationFailure errs) -> ValidationFailure errs
-validateObjectConstraints _ _ _ = ValidationSuccess mempty
-
--- | Validate unevaluatedProperties (2019-09+)
--- Properties that weren't evaluated by properties, patternProperties, additionalProperties,
--- or any applicator keywords must validate against this schema
-validateUnevaluatedProperties :: ValidationContext -> SchemaObject -> KeyMap.KeyMap Value -> ValidationAnnotations -> ValidationResult
-validateUnevaluatedProperties ctx obj objMap collectedAnnotations = 
-  case validationUnevaluatedProperties (schemaValidation obj) of
-    Nothing -> ValidationSuccess mempty
-    Just unevalSchema ->
-      let -- Extract evaluated properties from annotations
-          evaluatedProps = extractEvaluatedProperties collectedAnnotations
-          -- All properties in the object
-          allProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
-          -- Unevaluated properties are those not in the evaluated set
-          unevaluatedProps = Set.difference allProps evaluatedProps
-          -- Validate unevaluated properties against the schema
-          results = 
-            [ validateValueWithContext ctx unevalSchema propValue
-            | propName <- Set.toList unevaluatedProps
-            , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
-            ]
-          failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ annotateProperties unevaluatedProps <> mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
--- | Extract evaluated properties from collected annotations
--- Only considers annotations at the current instance location (empty pointer)
-extractEvaluatedProperties :: ValidationAnnotations -> Set Text
-extractEvaluatedProperties (ValidationAnnotations annMap) =
-  -- Only look at annotations at the current location (empty pointer)
-  case Map.lookup emptyPointer annMap of
-    Nothing -> Set.empty
-    Just innerMap -> case Map.lookup "properties" innerMap of
-      Just (Aeson.Array arr) -> Set.fromList
-        [ txt
-        | Aeson.String txt <- toList arr
-        ]
-      _ -> Set.empty
-
--- | Validate unevaluatedItems (2019-09+)
--- Array items that weren't evaluated by items, prefixItems, or contains
--- must validate against this schema
-validateUnevaluatedItems :: ValidationContext -> SchemaObject -> Vector Value -> ValidationAnnotations -> ValidationResult
-validateUnevaluatedItems ctx obj arr collectedAnnotations =
-  case validationUnevaluatedItems (schemaValidation obj) of
-    Nothing -> ValidationSuccess mempty
-    Just unevalSchema ->
-      let -- Extract evaluated item indices from annotations
-          evaluatedIndices = extractEvaluatedItems collectedAnnotations
-          -- All item indices
-          allIndices = Set.fromList [0 .. length arr - 1]
-          -- Unevaluated items are those not in the evaluated set
-          unevaluatedIndices = Set.difference allIndices evaluatedIndices
-          -- Validate unevaluated items against the schema
-          results =
-            [ validateValueWithContext ctx unevalSchema (arr ! idx)
-            | idx <- Set.toList unevaluatedIndices
-            , idx < length arr  -- Safety check
-            ]
-          failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
--- | Extract evaluated items indices from collected annotations
--- Only considers annotations at the current instance location (empty pointer)
-extractEvaluatedItems :: ValidationAnnotations -> Set Int
-extractEvaluatedItems (ValidationAnnotations annMap) =
-  -- Only look at annotations at the current location (empty pointer)
-  case Map.lookup emptyPointer annMap of
-    Nothing -> Set.empty
-    Just innerMap -> case Map.lookup "items" innerMap of
-      Just (Aeson.Array arr) -> Set.fromList
-        [ idx
-        | Aeson.Number n <- toList arr
-        , Just idx <- [Sci.toBoundedInteger n]
-        ]
-      _ -> Set.empty
-
--- | Validate dependentRequired (2019-09+)
--- If a property exists, then the properties in the value set must also exist
-validateDependentRequired :: ValidationContext -> SchemaValidation -> KeyMap.KeyMap Value -> ValidationResult
-validateDependentRequired ctx validation objMap =
-  let currentVersion = validationVersion (contextConfig ctx)
-      isDependentRequiredSupported = currentVersion >= Draft201909
-  in case validationDependentRequired validation of
-    Nothing -> ValidationSuccess mempty
-    Just depReqMap | not isDependentRequiredSupported -> ValidationSuccess mempty  -- Ignore if not supported
-    Just depReqMap ->
-      let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
-          results =
-            [ case KeyMap.lookup (Key.fromText propName) objMap of
-                Nothing -> ValidationSuccess mempty  -- Property not present, rule doesn't apply
-                Just _ ->
-                  -- Property is present, check if all required dependencies are present
-                  let missingDeps = Set.difference requiredDeps presentProps
-                  in if Set.null missingDeps
-                    then ValidationSuccess mempty
-                    else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
-                      { VR.errorKeyword = "dependentRequired"
-                      , VR.errorSchemaPath = emptyPointer
-                      , VR.errorInstancePath = emptyPointer
-                      , VR.errorMessage = "Property '" <> propName <> "' requires these properties: " <>
-                                          T.intercalate ", " (Set.toList missingDeps)
-                      }
-            | (propName, requiredDeps) <- Map.toList depReqMap
-            ]
-          failures = [errs | ValidationFailure errs <- results]
-      in case failures of
-        [] -> ValidationSuccess mempty
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
--- | Validate dependentSchemas (2019-09+)
--- If a property exists, then the instance must validate against the dependent schema
-validateDependentSchemas :: ValidationContext -> SchemaValidation -> KeyMap.KeyMap Value -> ValidationResult
-validateDependentSchemas ctx validation objMap = case validationDependentSchemas validation of
-  Nothing -> ValidationSuccess mempty
-  Just depSchemaMap ->
-    let results =
-          [ case KeyMap.lookup (Key.fromText propName) objMap of
-              Nothing -> ValidationSuccess mempty  -- Property not present, rule doesn't apply
-              Just _ ->
-                -- Property is present, validate entire object against dependent schema
-                validateValueWithContext ctx depSchema (Object objMap)
-          | (propName, depSchema) <- Map.toList depSchemaMap
-          ]
-        failures = [errs | ValidationFailure errs <- results]
-        annotations = [anns | ValidationSuccess anns <- results]
-    in case failures of
-      [] -> ValidationSuccess $ mconcat annotations
-      (e:es) -> ValidationFailure $ foldl (<>) e es
-
--- | Validate dependencies (draft-04 through draft-07)
--- Combines property dependencies and schema dependencies in one keyword
-validateDependencies :: ValidationContext -> SchemaValidation -> KeyMap.KeyMap Value -> ValidationResult
-validateDependencies ctx validation objMap = case validationDependencies validation of
-  Nothing -> ValidationSuccess mempty
-  Just depsMap ->
-    let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
-        results =
-          [ case KeyMap.lookup (Key.fromText propName) objMap of
-              Nothing -> ValidationSuccess mempty  -- Property not present, rule doesn't apply
-              Just _ ->
-                case dep of
-                  -- Property dependency: check if required properties are present
-                  DependencyProperties requiredDeps ->
-                    let missingDeps = Set.difference requiredDeps presentProps
-                    in if Set.null missingDeps
-                      then ValidationSuccess mempty
-                      else ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError
-                        { VR.errorKeyword = "dependencies"
-                        , VR.errorSchemaPath = emptyPointer
-                        , VR.errorInstancePath = emptyPointer
-                        , VR.errorMessage = "Property '" <> propName <> "' requires these properties: " <>
-                                            T.intercalate ", " (Set.toList missingDeps)
-                        }
-                  -- Schema dependency: validate entire object against the schema
-                  DependencySchema depSchema ->
-                    validateValueWithContext ctx depSchema (Object objMap)
-          | (propName, dep) <- Map.toList depsMap
-          ]
-        failures = [errs | ValidationFailure errs <- results]
-        annotations = [anns | ValidationSuccess anns <- results]
-    in case failures of
-      [] -> ValidationSuccess $ mconcat annotations
-      (e:es) -> ValidationFailure $ foldl (<>) e es
+-- Legacy validation helpers removed - now using keyword modules
+-- See Fractal.JsonSchema.Keywords.UnevaluatedProperties and UnevaluatedItems
+-- See Fractal.JsonSchema.Keywords.DependentRequired and DependentSchemas
+-- See Fractal.JsonSchema.Keywords.Dependencies
 
 -- | Update validation context when crossing draft boundaries
 -- When a schema references another schema with a different $schema version,
@@ -1449,17 +716,23 @@ resolveReference (Reference refText) ctx
       -- JSON Pointer reference within current document
       -- parsePointer handles URL decoding internally
       let pointer = T.drop 1 refText  -- Remove #
-          rootSchema = contextRootSchema ctx
+          rootSchema =
+            case contextRootSchema ctx of
+              Just root -> Just root
+              Nothing -> lookupBaseSchema ctx
       -- IMPORTANT: Use resolvePointerInSchemaWithBase to track base URI changes
       -- from $id fields encountered while navigating the pointer
       in case rootSchema of
            Nothing -> Nothing
-           Just root -> resolvePointerInSchemaWithBase pointer root (contextBaseURI ctx) >>= \(schema, effectiveBase) ->
-             -- If the resolved schema has $id, it becomes the new root for subsequent references
-             let newRoot = case schemaId schema of
-                             Just _ -> Just schema  -- Schema has $id, it's a new schema resource
-                             Nothing -> rootSchema  -- No $id, keep the old root
-             in Just (schema, effectiveBase, newRoot)
+           Just root ->
+             case resolvePointerInSchemaWithBase pointer root (contextBaseURI ctx) of
+               Nothing -> Nothing
+               Just (schema, effectiveBase) ->
+                 -- If the resolved schema has $id, it becomes the new root for subsequent references
+                 let newRoot = case schemaId schema of
+                                 Just _ -> Just schema  -- Schema has $id, it's a new schema resource
+                                 Nothing -> rootSchema  -- No $id, keep the old root
+                 in Just (schema, effectiveBase, newRoot)
   | T.isPrefixOf "#" refText =
       -- Anchor reference (#foo) or JSON Pointer in compact form
       let anchorName = T.drop 1 refText
@@ -1552,6 +825,11 @@ resolveReference (Reference refText) ctx
       in Map.lookup resolved (registrySchemas registry) >>= \schema ->
            Just (schema, baseForContext, Just schema)
   where
+    lookupBaseSchema :: ValidationContext -> Maybe Schema
+    lookupBaseSchema ctx' = do
+      baseUri <- contextBaseURI ctx'
+      Map.lookup baseUri (registrySchemas $ contextSchemaRegistry ctx')
+
     lookupAnyAnchor :: Text -> SchemaRegistry -> Maybe (Schema, Maybe Text, Maybe Schema)
     lookupAnyAnchor anchorName registry =
       -- Try regular anchors first
@@ -1742,6 +1020,7 @@ resolveDynamicRef (Reference refText) ctx
                Just targetSchema | checkBookending targetSchema ->
                  -- Target has $dynamicAnchor, search dynamic scope
                  -- Search from outermost (oldest/root) to innermost (most recent) for $dynamicRef
+                 -- Reverse the scope list to search outermost first
                  case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
                    Just schema -> Just schema
                    Nothing -> Just targetSchema  -- Use the target itself
@@ -1755,7 +1034,9 @@ resolveDynamicRef (Reference refText) ctx
                Just (resolvedSchema, maybeBase, _) | checkBookending resolvedSchema ->
                  -- Target has $dynamicAnchor, search dynamic scope
                  -- Search from outermost (oldest/root) to innermost (most recent) for $dynamicRef
-                 case findSchemaWithDynamicAnchor anchorName (reverse (contextDynamicScope ctx)) of
+                 -- Reverse the scope list to search outermost first
+                 let scope = reverse (contextDynamicScope ctx)
+                 in case findSchemaWithDynamicAnchor anchorName scope of
                    Just schema -> Just schema
                    Nothing ->
                      -- If not in dynamic scope, check the registry
@@ -1875,6 +1156,7 @@ resolveRecursiveRef (Reference refText) ctx
          then
            -- Target has $recursiveAnchor: true, search dynamic scope
            -- Search from OUTERMOST to INNERMOST
+           -- The dynamic scope list has innermost (most recent) at the head, so reverse to search outermost first
            case findSchemaWithRecursiveAnchor (reverse (contextDynamicScope ctx)) of
              Just schema -> Just schema
              Nothing ->

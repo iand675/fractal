@@ -68,5 +68,6 @@ notKeyword = KeywordDefinition
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
       ObjectSchema obj -> schemaNot obj
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }
 

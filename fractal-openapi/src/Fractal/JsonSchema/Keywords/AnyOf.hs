@@ -91,4 +91,5 @@ anyOfKeyword = KeywordDefinition
   , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of
       ObjectSchema obj -> fmap NE.toList (schemaAnyOf obj)
       _ -> Nothing
+  , keywordPostValidate = Nothing
   }

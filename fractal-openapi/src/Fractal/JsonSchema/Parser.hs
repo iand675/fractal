@@ -144,7 +144,7 @@ parseSchemaWithVersion version val = case val of
     --   4. Truly unknown keywords stay in schemaExtensions
     let knownKeywords = Set.fromList
           [ "$schema", "$id", "id", "$ref", "$vocabulary", "$defs", "definitions"
-          , "$comment", "$anchor", "$dynamicRef", "$dynamicAnchor"
+          , "$comment", "$anchor", "$dynamicRef", "$dynamicAnchor", "$recursiveRef", "$recursiveAnchor"
           , "type", "enum", "const"
           , "allOf", "anyOf", "oneOf", "not"
           , "if", "then", "else"
@@ -292,13 +292,18 @@ parseSchemaObject version obj = do
         , annotationCodegen = Nothing  -- TODO: Parse x-codegen annotations
         }
   
-  -- Parse $defs or definitions
-  let defsKey = if version >= Draft201909 then "$defs" else "definitions"
-  let schemaDefs' = case KeyMap.lookup defsKey obj of
+  -- Parse $defs and legacy definitions (both forms may appear)
+  let parseDefsFor key = case KeyMap.lookup key obj of
         Just (Object defsObj) -> Map.fromList
-          [(Key.toText k, schema) | (k, v) <- KeyMap.toList defsObj
-          , Right schema <- [parseSubschema version v]]
+          [ (Key.toText k, schema)
+          | (k, v) <- KeyMap.toList defsObj
+          , Right schema <- [parseSubschema version v]
+          ]
         _ -> Map.empty
+  let schemaDefs' =
+        let newDefs = parseDefsFor (Key.fromText "$defs")
+            legacyDefs = parseDefsFor (Key.fromText "definitions")
+        in Map.union newDefs legacyDefs
   
   -- Parse $dynamicRef (2020-12+)
   let dynamicRef' = if version >= Draft202012

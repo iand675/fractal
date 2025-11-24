@@ -32,8 +32,18 @@ spec = describe "Applicator Keywords" $ do
         ValidationSuccess _ -> pure ()
         ValidationFailure errs -> expectationFailure $ "Expected success but got: " ++ show errs
 
-    it "fails when ANY schema fails" $
-      pendingWith "Need to investigate why standalone schema validation doesn't fail as expected"
+    it "fails when ANY schema fails" $ do
+      let schemaJson1 = Aeson.object [("type", toJSON ("number" :: Text))]
+          schemaJson2 = Aeson.object [("minimum", toJSON (10 :: Int))]
+          Right schema1 = parseSchema schemaJson1
+          Right schema2 = parseSchema schemaJson2
+          schemas = NE.fromList [schema1, schema2]
+          value = toJSON (5 :: Int)  -- Fails schema2 (minimum 10)
+          recursiveValidator schema val = validateValueWithRegistry defaultValidationConfig emptyRegistry schema val
+
+      case validateAllOf recursiveValidator schemas value of
+        ValidationFailure _ -> pure ()
+        ValidationSuccess _ -> expectationFailure "Expected failure but validation passed"
 
     it "merges annotations from ALL passing schemas" $ do
       let schemaJson1 = Aeson.object [("type", toJSON ("number" :: Text))]
@@ -62,8 +72,18 @@ spec = describe "Applicator Keywords" $ do
         ValidationSuccess _ -> pure ()
         ValidationFailure errs -> expectationFailure $ "Expected success but got: " ++ show errs
 
-    it "fails when NO schemas pass" $ 
-      pendingWith "Need to investigate why standalone schema validation doesn't fail as expected"
+    it "fails when NO schemas pass" $ do
+      let schemaJson1 = Aeson.object [("type", toJSON ("string" :: Text))]
+          schemaJson2 = Aeson.object [("type", toJSON ("boolean" :: Text))]
+          Right schema1 = parseSchema schemaJson1
+          Right schema2 = parseSchema schemaJson2
+          schemas = NE.fromList [schema1, schema2]
+          value = toJSON (15 :: Int)  -- Fails both (not string, not boolean)
+          recursiveValidator schema val = validateValueWithRegistry defaultValidationConfig emptyRegistry schema val
+
+      case validateAnyOf recursiveValidator schemas value of
+        ValidationFailure _ -> pure ()
+        ValidationSuccess _ -> expectationFailure "Expected failure but validation passed"
 
     it "merges annotations from ALL passing schemas" $ do
       let schemaJson1 = Aeson.object [("type", toJSON ("number" :: Text))]
@@ -79,8 +99,18 @@ spec = describe "Applicator Keywords" $ do
         ValidationFailure errs -> expectationFailure $ "Expected success: " ++ show errs
 
   describe "oneOf" $ do
-    it "validates when EXACTLY ONE schema passes" $ 
-      pendingWith "Need to investigate why both schemas pass validation"
+    it "validates when EXACTLY ONE schema passes" $ do
+      let schemaJson1 = Aeson.object [("type", toJSON ("string" :: Text))]
+          schemaJson2 = Aeson.object [("type", toJSON ("number" :: Text))]
+          Right schema1 = parseSchema schemaJson1
+          Right schema2 = parseSchema schemaJson2
+          schemas = NE.fromList [schema1, schema2]
+          value = toJSON (15 :: Int)  -- Passes schema2 only
+          recursiveValidator schema val = validateValueWithRegistry defaultValidationConfig emptyRegistry schema val
+
+      case validateOneOf recursiveValidator schemas value of
+        ValidationSuccess _ -> pure ()
+        ValidationFailure errs -> expectationFailure $ "Expected success but got: " ++ show errs
 
     it "fails when ZERO schemas pass" $ do
       let schemaJson1 = Aeson.object [("type", toJSON ("string" :: Text))]
@@ -108,6 +138,16 @@ spec = describe "Applicator Keywords" $ do
         ValidationFailure _ -> pure ()
         ValidationSuccess _ -> expectationFailure "Expected failure but validation passed"
 
-    it "returns annotations from the single passing schema" $ 
-      pendingWith "Need to investigate why both schemas pass validation"
+    it "returns annotations from the single passing schema" $ do
+      let schemaJson1 = Aeson.object [("type", toJSON ("string" :: Text))]
+          schemaJson2 = Aeson.object [("type", toJSON ("number" :: Text)), ("minimum", toJSON (0 :: Int))]
+          Right schema1 = parseSchema schemaJson1
+          Right schema2 = parseSchema schemaJson2
+          schemas = NE.fromList [schema1, schema2]
+          value = toJSON (15 :: Int)  -- Passes schema2 only (number >= 0)
+          recursiveValidator schema val = validateValueWithRegistry defaultValidationConfig emptyRegistry schema val
+
+      case validateOneOf recursiveValidator schemas value of
+        ValidationSuccess anns -> anns `shouldBe` mempty  -- Schema2 returns empty annotations
+        ValidationFailure errs -> expectationFailure $ "Expected success: " ++ show errs
 

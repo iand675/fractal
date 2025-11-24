@@ -52,5 +52,6 @@ uniqueItemsKeyword = KeywordDefinition
   , keywordCompile = compileUniqueItems
   , keywordValidate = validateUniqueItems
   , keywordNavigation = NoNavigation
+  , keywordPostValidate = Nothing
   }
 
