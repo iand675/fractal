@@ -55,6 +55,7 @@ library
                     , Fractal.JsonSchema.Types
                     , Fractal.JsonSchema.Parser
                     , Fractal.JsonSchema.Parser.Extended
+                    , Fractal.JsonSchema.Parser.Internal
                     , Fractal.JsonSchema.Renderer
                     , Fractal.JsonSchema.Validator
                     , Fractal.JsonSchema.Validator.Annotations
@@ -63,6 +64,8 @@ library
                     , Fractal.JsonSchema.Vocabulary
                     , Fractal.JsonSchema.ReferenceLoader
                     , Fractal.JsonSchema.EmbeddedMetaschemas
+                    , Fractal.JsonSchema.EmbeddedMetaschemas.Raw
+                    , Fractal.JsonSchema.MetaschemaValidation
                     , Fractal.JsonSchema.Regex
                     -- Basic Keywords
                     , Fractal.JsonSchema.Keywords.Type

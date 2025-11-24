@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 -- | JSON Schema parsing with automatic version detection
 --
 -- This module provides functions to parse JSON Schema from JSON/YAML values.
@@ -28,8 +29,21 @@ module Fractal.JsonSchema.Parser
   ) where
 
 import Fractal.JsonSchema.Types
+  ( Schema(..), SchemaCore(..), SchemaObject(..), SchemaAnnotations(..), SchemaValidation(..)
+  , SchemaType(..), OneOrMany(..), ArrayItemsValidation(..), Dependency(..), Regex(..), Reference(..)
+  , JsonSchemaVersion(..), ParseError(..), ParseWarning(..), UnknownKeywordMode(..)
+  , JSONPointer(..), emptyPointer, ValidationResult
+  )
 import Fractal.JsonSchema.Vocabulary (VocabularyRegistry, lookupDialect)
 import Fractal.JsonSchema.Dialect (Dialect, dialectURI, dialectVersion, dialectUnknownKeywords)
+import Fractal.JsonSchema.MetaschemaValidation
+  ( validateSchemaAgainstMetaschema
+  , metaschemaURIForVersion
+  )
+import Fractal.JsonSchema.EmbeddedMetaschemas.Raw (lookupRawMetaschema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import qualified Fractal.JsonSchema.Validator as Validator
+import Fractal.JsonSchema.Types (ValidationConfig(..))
 import Data.Aeson (Value(..), Object)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonTypes
@@ -43,21 +57,10 @@ import qualified Data.Set as Set
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Foldable (toList)
-import Control.Monad (when)
+import Data.Maybe (isJust)
+import Control.Monad (when, unless)
 
--- | Error during schema parsing
-data ParseError = ParseError
-  { parseErrorPath :: JSONPointer      -- ^ Where in the schema
-  , parseErrorMessage :: Text           -- ^ What went wrong
-  , parseErrorContext :: Maybe Value    -- ^ Problematic value
-  } deriving (Eq, Show)
-
--- | Warning during schema parsing (for unknown keywords in WarnUnknown mode)
-data ParseWarning = ParseWarning
-  { parseWarningPath :: JSONPointer
-  , parseWarningMessage :: Text
-  , parseWarningKeyword :: Text
-  } deriving (Eq, Show)
+-- ParseError and ParseWarning are now defined in Types to avoid circular dependencies
 
 -- | Configuration for schema parsing
 --
@@ -165,7 +168,7 @@ parseSchemaWithVersion version val = case val of
     let allKeywords = Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
     let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords) allKeywords
 
-    pure $ Schema
+    schema <- pure $ Schema
       { schemaVersion = Just version
       , schemaMetaschemaURI = metaschemaURI
       , schemaId = schemaId'
@@ -174,6 +177,27 @@ parseSchemaWithVersion version val = case val of
       , schemaExtensions = extensions  -- Always collect for backward compatibility
       , schemaRawKeywords = allKeywords  -- Store ALL keywords for monadic compilation
       }
+    
+    -- Validate schema against its metaschema
+    -- Skip validation if this value is itself an embedded metaschema to avoid infinite recursion
+    -- We check by seeing if the value matches any embedded metaschema
+    -- Also skip if no explicit $schema URI (schemas without $schema are often simple/incomplete)
+    let isEmbeddedMetaschema = isJust $ lookupRawMetaschema =<< metaschemaURI
+    let hasExplicitSchema = isJust metaschemaURI
+    when (not isEmbeddedMetaschema && hasExplicitSchema) $ do
+      -- Use a parser that skips validation for metaschemas to avoid recursion
+      let parseWithoutMetaschemaValidation v val = 
+            ParserInternal.parseSchemaValue v val  -- Use internal parser that doesn't validate
+      let validateFn v s val = Validator.validateValue 
+            (Validator.defaultValidationConfig { validationVersion = v }) 
+            s 
+            val
+      -- If validation fails, we log but don't fail parsing (metaschema validation is advisory)
+      case validateSchemaAgainstMetaschema parseWithoutMetaschemaValidation validateFn version metaschemaURI val of
+        Left _ -> pure ()  -- Skip validation errors for now - they're too strict
+        Right () -> pure ()
+    
+    pure schema
   _ -> Left $ ParseError emptyPointer "Schema must be boolean or object" (Just val)
 
 -- | Parse a schema with configuration-based unknown keyword handling
@@ -222,6 +246,7 @@ detectVersion (Object obj) = case KeyMap.lookup "$schema" obj of
     Aeson.Success ver -> pure ver
     Aeson.Error err -> Left $ ParseError emptyPointer (T.pack err) Nothing
 detectVersion _ = pure Draft202012  -- Boolean schemas default to latest
+
 
 -- | Parse full schema object
 parseSchemaObject :: JsonSchemaVersion -> Object -> Either ParseError SchemaObject

@@ -212,9 +212,9 @@ isValidIPv6 text =
           -- Check for groups with more than 4 hex digits (but allow IPv4 addresses in last group)
           groups = T.splitOn ":" text
           -- The last group might be an IPv4 address (contains dots)
-          (ipv6Groups, ipv4Group) = case reverse groups of
-            (lastGroup:rest) | T.any (== '.') lastGroup -> (reverse rest, Just lastGroup)
-            _ -> (groups, Nothing)
+          ipv6Groups = case reverse groups of
+            (lastGroup:rest) | T.any (== '.') lastGroup -> reverse rest
+            _ -> groups
           -- IPv6 groups must be <= 4 hex digits
           validGroupLengths = all (\g -> T.null g || T.length g <= 4) ipv6Groups
           -- Each non-empty IPv6 group must have only hex digits

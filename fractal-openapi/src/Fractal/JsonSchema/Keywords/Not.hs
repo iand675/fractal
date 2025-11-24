@@ -16,7 +16,8 @@ import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 
 import Fractal.JsonSchema.Types (Schema, SchemaCore(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaCore, schemaNot)
-import Fractal.JsonSchema.Parser (parseSchema, ParseError)
+import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import Fractal.JsonSchema.Types (ParseError)
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordNavigation(..), CompilationContext(..), ValidationContext')
 import Fractal.JsonSchema.Keyword (mkKeywordDefinition)
 

@@ -9,17 +9,14 @@ module Fractal.OpenApi.Codegen.IntegrationSpec (spec) where
 
 import Test.Hspec
 import Fractal.OpenApi.Codegen.TH
-import Fractal.OpenApi.Codegen.Core
-import Fractal.JsonSchema.Types
-import Data.Aeson (Value(..), FromJSON, ToJSON, encode, decode)
+import Fractal.OpenApi.Codegen.Core (schemaFor)
+import Fractal.JsonSchema.Types (schemaCore, schemaAnnotations, annotationTitle, SchemaCore(..))
+import Data.Aeson (Value(..), FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
-import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import GHC.Generics (Generic)
 import Data.Proxy (Proxy(..))
-import Data.ByteString.Lazy (ByteString)
 
 -- Generate a real Person type at compile time
 $(deriveJSONSchema $ Aeson.object
@@ -60,7 +57,7 @@ spec = describe "End-to-End Code Generation Integration" $ do
       
       case Aeson.fromJSON json of
         Aeson.Error err -> expectationFailure $ "Parse error: " <> err
-        Aeson.Success (person :: Person) -> do
+        Aeson.Success (_person :: Person) -> do
           -- The type was generated and can parse!
           True `shouldBe` True
     
@@ -71,7 +68,7 @@ spec = describe "End-to-End Code Generation Integration" $ do
       
       case Aeson.fromJSON json of
         Aeson.Error err -> expectationFailure $ "Parse error: " <> err
-        Aeson.Success (person :: Person) -> do
+        Aeson.Success (_person :: Person) -> do
           -- Optional fields should be accepted as missing
           True `shouldBe` True
     
@@ -109,7 +106,7 @@ spec = describe "End-to-End Code Generation Integration" $ do
       
       case Aeson.fromJSON json :: Aeson.Result Status of
         Aeson.Error err -> expectationFailure $ "Parse error: " <> err
-        Aeson.Success status -> do
+        Aeson.Success _status -> do
           -- Successfully parsed enum value
           True `shouldBe` True
     

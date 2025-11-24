@@ -25,7 +25,8 @@ import Data.Typeable (Typeable)
 import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationErrors, ValidationAnnotations, schemaAllOf)
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), CompilationContext(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
-import Fractal.JsonSchema.Parser (parseSchema, ParseError)
+import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import Fractal.JsonSchema.Types (ParseError)
 
 -- | Compiled data for allOf keyword
 newtype AllOfData = AllOfData (NonEmpty Schema)

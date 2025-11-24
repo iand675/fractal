@@ -48,7 +48,7 @@ import Fractal.JsonSchema.Types
   , JsonSchemaVersion(..), schemaVersion
   )
 import qualified Fractal.JsonSchema.Validator.Result as VR
-import Fractal.JsonSchema.Parser (parseSchemaWithVersion)
+import Fractal.JsonSchema.Parser.Internal (parseSchemaValue)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson (Value(..), object)
@@ -260,7 +260,7 @@ compileDefsKeyword (Object _defsObj) schema ctx = do
       refValue = case version of
         Draft201909 -> object [("$recursiveRef", String "#")]
         _ -> object [("$dynamicRef", String "#meta")]  -- 2020-12+
-  case parseSchemaWithVersion version refValue of
+  case parseSchemaValue version refValue of
     Left err -> Left $ "Failed to compile $defs validation schema: " <> T.pack (show err)
     Right defsValidationSchema -> Right $ DefsData defsValidationSchema
 compileDefsKeyword _ _ _ = Left "$defs must be an object"

@@ -30,8 +30,12 @@ import Fractal.JsonSchema.Types
   , JsonSchemaVersion(..), ValidationConfig(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , ArrayItemsValidation(..), validationItems, validationPrefixItems, schemaValidation, schemaCore
-  , ValidationAnnotations(..)
+  , ValidationAnnotations(..), schemaRawKeywords
   )
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (maybeToList)
+import Control.Applicative ((<|>))
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
@@ -53,18 +57,44 @@ data ItemsData = ItemsData
 
 -- | Compile the items keyword
 compileItems :: CompileFunc ItemsData
-compileItems _value schema _ctx = 
+compileItems value schema ctx = 
   -- Extract the already-parsed items schemas from the parent SchemaObject
+  -- If not pre-parsed, parse on-demand using the compilation context
   -- This preserves base URI context that was set during initial schema parsing
   case schemaCore schema of
     BooleanSchema _ -> 
       Left "items keyword cannot appear in boolean schema"
     ObjectSchema obj ->
       case validationItems (schemaValidation obj) of
-        Nothing -> Left "items keyword present but no parsed items found in schema"
         Just itemsValidation ->
+          -- Already parsed - use it
           let hasPrefix = validationPrefixItems (schemaValidation obj) /= Nothing
           in Right $ ItemsData itemsValidation hasPrefix
+        Nothing -> do
+          -- Not pre-parsed - parse on-demand from raw keywords or value
+          let itemsVal = Map.lookup "items" (schemaRawKeywords schema) <|> Just value
+          case itemsVal of
+            Just (Array arr) -> do
+              -- Tuple-style items (array of schemas)
+              schemas <- traverse (contextParseSubschema ctx) (toList arr)
+              nonEmpty <- case NE.nonEmpty schemas of
+                Just ne -> Right ne
+                Nothing -> Left "items array must contain at least one schema"
+              -- Parse additionalItems if present
+              let additionalItemsVal = Map.lookup "additionalItems" (schemaRawKeywords schema)
+              additionalItems' <- case additionalItemsVal of
+                Just val -> case contextParseSubschema ctx val of
+                  Right s -> Right (Just s)
+                  Left err -> Left $ "Failed to parse additionalItems: " <> err
+                Nothing -> Right Nothing
+              let hasPrefix = validationPrefixItems (schemaValidation obj) /= Nothing
+              Right $ ItemsData (ItemsTuple nonEmpty additionalItems') hasPrefix
+            Just val -> do
+              -- Single schema for all items
+              itemSchema <- contextParseSubschema ctx val
+              let hasPrefix = validationPrefixItems (schemaValidation obj) /= Nothing
+              Right $ ItemsData (ItemsSchema itemSchema) hasPrefix
+            Nothing -> Left "items keyword present but no parsed items found in schema"
 
 -- | Validate items using the pluggable keyword system
 validateItemsKeyword :: ValidateFunc ItemsData

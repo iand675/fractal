@@ -25,7 +25,7 @@ import Data.Typeable (Typeable, cast)
 
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Types (Schema, schemaVersion, JsonSchemaVersion(..))
-import qualified Fractal.JsonSchema.Parser as Parser
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
 import Data.Maybe (fromMaybe)
 
 -- | Collection of compiled keywords
@@ -87,7 +87,7 @@ buildCompilationContext registry keywordRegistry schema parentPath =
     parseSubschemaWithContext parentSchema value =
       -- Inherit parent version unless subschema declares its own $schema
       let parentVersion = fromMaybe Draft202012 (schemaVersion parentSchema)
-      in case Parser.parseSubschema parentVersion value of
+      in case ParserInternal.parseSchemaValue parentVersion value of
         Left err -> Left $ T.pack (show err)
         Right s -> Right s
 

@@ -14,8 +14,6 @@ import qualified Data.Aeson as Aeson
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Base64 as Base64
 import Data.Char (isAscii, isAlphaNum)
 

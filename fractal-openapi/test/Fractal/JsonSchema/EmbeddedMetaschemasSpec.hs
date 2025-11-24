@@ -2,15 +2,18 @@ module Fractal.JsonSchema.EmbeddedMetaschemasSpec (spec) where
 
 import Test.Hspec
 import Fractal.JsonSchema.EmbeddedMetaschemas
+import Fractal.JsonSchema.EmbeddedMetaschemas.Raw (embeddedMetaschemaValues)
 import qualified Data.Text as T
+import qualified Data.Map.Strict as Map
 
 spec :: Spec
 spec = describe "Embedded Metaschemas" $ do
   it "has embedded files" $ do
-    putStrLn $ "\nNumber of embedded files: " ++ show (length embeddedFiles)
-    putStrLn "Embedded file paths:"
-    mapM_ (putStrLn . ("  - " ++) . fst) embeddedFiles
-    embeddedFiles `shouldSatisfy` (not . null)
+    let count = Map.size embeddedMetaschemaValues
+    putStrLn $ "\nNumber of embedded metaschemas: " ++ show count
+    putStrLn "Embedded metaschema URIs:"
+    mapM_ (putStrLn . ("  - " ++) . T.unpack) (Map.keys embeddedMetaschemaValues)
+    embeddedMetaschemaValues `shouldSatisfy` (not . Map.null)
 
   it "embeds at least one metaschema" $ do
     embeddedMetaschemaURIs `shouldSatisfy` (not . null)

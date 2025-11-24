@@ -32,7 +32,7 @@ import Fractal.JsonSchema.Keyword.Types
   , ValidationContext'(..), KeywordNavigation(..)
   , CompilationContext(..)
   )
-import Fractal.JsonSchema.Parser (parseSchema)
+import Fractal.JsonSchema.Parser.Internal (parseSchema)
 import Fractal.JsonSchema.Validator.Annotations
   ( annotateProperties
   , propertyPointer

@@ -10,7 +10,6 @@ module Fractal.JsonSchema.Keywords.Numeric
 
 import Fractal.JsonSchema.Types
 import Data.Aeson (Value(..))
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Scientific as Sci
 

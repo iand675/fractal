@@ -23,7 +23,7 @@ module Fractal.JsonSchema.Validator
 
 import Fractal.JsonSchema.Types
 import qualified Fractal.JsonSchema.Validator.Result as VR
-import qualified Fractal.JsonSchema.Parser as Parser
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
 -- Pluggable keyword system
 import Fractal.JsonSchema.Keywords.Standard
   ( standardKeywordRegistry
@@ -969,7 +969,7 @@ resolvePointerInSchemaWithBase pointer schema currentBase =
           case Map.lookup seg (schemaExtensions parentSchema) of
             Just val ->
               let version = fromMaybe Draft07 (schemaVersion parentSchema)
-              in case Parser.parseSchemaWithVersion version val of
+              in case ParserInternal.parseSchemaValue version val of
                 Right schema -> followPointer rest schema currentBase
                 Left _ ->
                   -- Not a direct schema - might be an array of schemas
@@ -977,7 +977,7 @@ resolvePointerInSchemaWithBase pointer schema currentBase =
                     (Aeson.Array arr, (idx:remaining)) ->
                       case reads (T.unpack idx) :: [(Int, String)] of
                         [(n, "")] | n >= 0 && n < length arr ->
-                          case Parser.parseSchemaWithVersion version (arr ! n) of
+                          case ParserInternal.parseSchemaValue version (arr ! n) of
                             Right schema -> followPointer remaining schema currentBase
                             Left _ -> Nothing
                         _ -> Nothing

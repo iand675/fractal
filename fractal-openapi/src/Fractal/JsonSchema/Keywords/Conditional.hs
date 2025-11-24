@@ -32,7 +32,7 @@ import Fractal.JsonSchema.Keyword.Types
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
   )
-import Fractal.JsonSchema.Parser (parseSchema)
+import Fractal.JsonSchema.Parser.Internal (parseSchema)
 
 -- | Validate conditional keywords (if/then/else)
 --

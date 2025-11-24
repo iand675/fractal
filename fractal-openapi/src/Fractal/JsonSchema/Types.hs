@@ -48,6 +48,10 @@ module Fractal.JsonSchema.Types
   , ValidationResult
   , pattern ValidationSuccess
   , pattern ValidationFailure
+  
+    -- * Parse Errors
+  , ParseError(..)
+  , ParseWarning(..)
   , ValidationAnnotations(..)
   , ValidationErrors(..)
   , ValidationError(..)
@@ -100,6 +104,22 @@ import Fractal.JSONPointer (JSONPointer(..), emptyPointer, (/.), renderPointer, 
 
 -- Import new validation result types
 import qualified Fractal.JsonSchema.Validator.Result as VR
+
+-- | Error during schema parsing
+data ParseError = ParseError
+  { parseErrorPath :: JSONPointer      -- ^ Where in the schema
+  , parseErrorMessage :: Text           -- ^ What went wrong
+  , parseErrorContext :: Maybe Value    -- ^ Problematic value
+  } deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Warning during schema parsing (for unknown keywords in WarnUnknown mode)
+data ParseWarning = ParseWarning
+  { parseWarningPath :: JSONPointer
+  , parseWarningMessage :: Text
+  , parseWarningKeyword :: Text
+  } deriving (Eq, Show, Generic)
+  deriving stock Lift
 
 -- | Reference to another schema ($ref, $dynamicRef)
 newtype Reference = Reference Text
@@ -662,7 +682,7 @@ extractLegacyAnnotations result
     
     extractKeywordMap :: [VR.SomeAnnotation] -> Map Text Value
     extractKeywordMap [] = Map.empty
-    extractKeywordMap (VR.SomeAnnotation val ty : rest) =
+    extractKeywordMap (VR.SomeAnnotation val _ty : rest) =
       case cast val of
         Just (kwMap :: Map Text Value) -> kwMap <> extractKeywordMap rest
         Nothing -> extractKeywordMap rest
@@ -700,7 +720,9 @@ legacyErrorsToValidationResult (ValidationErrors errs) =
   VR.validationFailureTree $ VR.ErrorBranch "root" (map VR.ErrorLeaf $ NE.toList errs)
 
 -- | Type alias for successful validation (legacy)
+-- This is kept for backward compatibility but is not actively used
 type ValidationSuccess = ValidationAnnotations
+{-# WARNING ValidationSuccess "This type alias is deprecated and may be removed in a future version" #-}
 
 -- | Check if validation succeeded
 isSuccess :: ValidationResult -> Bool
@@ -1307,6 +1329,8 @@ instance FromJSON SchemaValidation where
     , validationMinLength = Nothing
     , validationPattern = Nothing
     , validationFormat = Nothing
+    , validationContentEncoding = Nothing
+    , validationContentMediaType = Nothing
     , validationItems = Nothing
     , validationPrefixItems = Nothing
     , validationContains = Nothing
@@ -1376,6 +1400,8 @@ instance FromJSON SchemaObject where
         , validationMinLength = Nothing
         , validationPattern = Nothing
         , validationFormat = Nothing
+        , validationContentEncoding = Nothing
+        , validationContentMediaType = Nothing
         , validationItems = Nothing
         , validationPrefixItems = Nothing
         , validationContains = Nothing

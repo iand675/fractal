@@ -10,7 +10,6 @@ module Fractal.JsonSchema.Keywords.UniqueItems
   ) where
 
 import Data.Aeson (Value(..))
-import Control.Monad.Reader (Reader)
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Foldable (toList)

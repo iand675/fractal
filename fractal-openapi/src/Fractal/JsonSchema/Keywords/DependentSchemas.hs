@@ -31,7 +31,7 @@ import Fractal.JsonSchema.Keyword.Types
   , ValidationContext'(..), KeywordNavigation(..)
   , combineValidationResults
   )
-import Fractal.JsonSchema.Parser (parseSchema)
+import Fractal.JsonSchema.Parser.Internal (parseSchema)
 
 -- | Compiled data for dependentSchemas keyword
 -- Maps property names to schemas
