@@ -22,11 +22,15 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaOneOf)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaOneOf, schemaRawKeywords, schemaVersion, JsonSchemaVersion(..))
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
 import Fractal.JsonSchema.Types (ParseError)
+import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
+import Data.Foldable (toList)
 
 -- | Compiled data for oneOf keyword
 newtype OneOfData = OneOfData (NonEmpty Schema)
@@ -83,7 +87,21 @@ oneOfKeyword = KeywordDefinition
   , keywordCompile = compileOneOf
   , keywordValidate = validateOneOfKeyword
   , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> fmap NE.toList (schemaOneOf obj)
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case schemaOneOf obj of
+          Just oneOfSchemas -> Just (NE.toList oneOfSchemas)
+          Nothing -> parseOneOfFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseOneOfFromRaw :: Schema -> Maybe [Schema]
+    parseOneOfFromRaw s = case Map.lookup "oneOf" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+        in if null schemas && not (null arr)
+           then Nothing  -- Had items but all failed to parse
+           else Just schemas
+      _ -> Nothing

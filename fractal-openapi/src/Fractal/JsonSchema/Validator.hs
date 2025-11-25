@@ -964,8 +964,9 @@ resolvePointerInSchemaWithBase pointer schema currentBase =
                 Nothing -> Nothing
             [] -> Nothing
       
-      -- Check schemaExtensions for arbitrary/unknown keywords
+      -- Check schemaExtensions and schemaRawKeywords for arbitrary/unknown keywords
       | otherwise =
+          -- First check schemaExtensions (for backward compatibility)
           case Map.lookup seg (schemaExtensions parentSchema) of
             Just val ->
               let version = fromMaybe Draft07 (schemaVersion parentSchema)
@@ -982,7 +983,25 @@ resolvePointerInSchemaWithBase pointer schema currentBase =
                             Left _ -> Nothing
                         _ -> Nothing
                     _ -> Nothing
-            Nothing -> Nothing
+            Nothing ->
+              -- Fall back to schemaRawKeywords (where unknown keywords are stored)
+              case Map.lookup seg (schemaRawKeywords parentSchema) of
+                Just val ->
+                  let version = fromMaybe Draft07 (schemaVersion parentSchema)
+                  in case ParserInternal.parseSchemaValue version val of
+                    Right schema -> followPointer rest schema currentBase
+                    Left _ ->
+                      -- Not a direct schema - might be an array of schemas
+                      case (val, rest) of
+                        (Aeson.Array arr, (idx:remaining)) ->
+                          case reads (T.unpack idx) :: [(Int, String)] of
+                            [(n, "")] | n >= 0 && n < length arr ->
+                              case ParserInternal.parseSchemaValue version (arr ! n) of
+                                Right schema -> followPointer remaining schema currentBase
+                                Left _ -> Nothing
+                            _ -> Nothing
+                        _ -> Nothing
+                Nothing -> Nothing
 
 -- | Show a reference for error messages
 showReference :: Reference -> Text

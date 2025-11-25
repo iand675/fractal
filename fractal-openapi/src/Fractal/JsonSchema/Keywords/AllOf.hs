@@ -22,11 +22,15 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationErrors, ValidationAnnotations, schemaAllOf)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationErrors, ValidationAnnotations, schemaAllOf, schemaRawKeywords, schemaVersion, JsonSchemaVersion(..))
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), CompilationContext(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
 import Fractal.JsonSchema.Types (ParseError)
+import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
+import Data.Foldable (toList)
 
 -- | Compiled data for allOf keyword
 newtype AllOfData = AllOfData (NonEmpty Schema)
@@ -79,7 +83,21 @@ allOfKeyword = KeywordDefinition
   , keywordCompile = compileAllOf
   , keywordValidate = validateAllOfKeyword
   , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> fmap NE.toList (schemaAllOf obj)
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case schemaAllOf obj of
+          Just allOfSchemas -> Just (NE.toList allOfSchemas)
+          Nothing -> parseAllOfFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseAllOfFromRaw :: Schema -> Maybe [Schema]
+    parseAllOfFromRaw s = case Map.lookup "allOf" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+        in if null schemas && not (null arr)
+           then Nothing  -- Had items but all failed to parse
+           else Just schemas
+      _ -> Nothing

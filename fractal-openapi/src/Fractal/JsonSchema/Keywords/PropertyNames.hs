@@ -13,6 +13,8 @@ module Fractal.JsonSchema.Keywords.PropertyNames
 import Data.Aeson (Value(..))
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -21,6 +23,7 @@ import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , validationPropertyNames, schemaValidation
+  , schemaRawKeywords, schemaVersion, JsonSchemaVersion(..)
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
@@ -28,6 +31,8 @@ import Fractal.JsonSchema.Keyword.Types
   , combineValidationResults
   )
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import Data.Maybe (fromMaybe)
 
 -- | Compiled data for propertyNames keyword
 newtype PropertyNamesData = PropertyNamesData Schema
@@ -56,8 +61,21 @@ propertyNamesKeyword = KeywordDefinition
   , keywordCompile = compilePropertyNames
   , keywordValidate = validatePropertyNamesKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> validationPropertyNames (schemaValidation obj)
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case validationPropertyNames (schemaValidation obj) of
+          Just propNames -> Just propNames
+          Nothing -> parsePropertyNamesFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parsePropertyNamesFromRaw :: Schema -> Maybe Schema
+    parsePropertyNamesFromRaw s = case Map.lookup "propertyNames" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 

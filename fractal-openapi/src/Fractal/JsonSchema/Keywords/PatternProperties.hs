@@ -27,12 +27,17 @@ import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..), Regex(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , validationPatternProperties, schemaValidation
+  , schemaRawKeywords, schemaVersion, JsonSchemaVersion(..)
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
   )
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import Data.Maybe (fromMaybe, mapMaybe)
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Fractal.JsonSchema.Regex as RegexModule
 import Fractal.JsonSchema.Validator.Annotations
   ( annotateProperties
@@ -94,12 +99,24 @@ patternPropertiesKeyword = KeywordDefinition
   , keywordValidate = validatePatternPropertiesKeyword
   , keywordNavigation = SchemaMap $ \schema -> case schemaCore schema of
       ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
         case validationPatternProperties (schemaValidation obj) of
           Just patterns ->
             -- Convert Regex keys to Text keys for navigation
             Just $ Map.fromList [(pat, schema') | (Regex pat, schema') <- Map.toList patterns]
-          Nothing -> Nothing
+          Nothing -> parsePatternPropertiesFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parsePatternPropertiesFromRaw :: Schema -> Maybe (Map Text Schema)
+    parsePatternPropertiesFromRaw s = case Map.lookup "patternProperties" (schemaRawKeywords s) of
+      Just (Object patternsObj) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            entries = KeyMap.toList patternsObj
+            parseEntry (k, v) = case ParserInternal.parseSchemaValue version v of
+              Right schema -> Just (Key.toText k, schema)
+              Left _ -> Nothing
+        in Just $ Map.fromList $ mapMaybe parseEntry entries
+      _ -> Nothing
 

@@ -22,11 +22,15 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 
-import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaAnyOf)
+import Fractal.JsonSchema.Types (Schema(..), SchemaCore(..), SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaAnyOf, schemaRawKeywords, schemaVersion, JsonSchemaVersion(..))
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, ValidationContext'(..), KeywordNavigation(..), CompilationContext(..))
 import Fractal.JsonSchema.Keyword.Compile (compileKeyword)
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
 import Fractal.JsonSchema.Types (ParseError)
+import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
+import Data.Foldable (toList)
 
 -- | Compiled data for anyOf keyword
 newtype AnyOfData = AnyOfData (NonEmpty Schema)
@@ -89,7 +93,21 @@ anyOfKeyword = KeywordDefinition
   , keywordCompile = compileAnyOf
   , keywordValidate = validateAnyOfKeyword
   , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> fmap NE.toList (schemaAnyOf obj)
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case schemaAnyOf obj of
+          Just anyOfSchemas -> Just (NE.toList anyOfSchemas)
+          Nothing -> parseAnyOfFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseAnyOfFromRaw :: Schema -> Maybe [Schema]
+    parseAnyOfFromRaw s = case Map.lookup "anyOf" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+        in if null schemas && not (null arr)
+           then Nothing  -- Had items but all failed to parse
+           else Just schemas
+      _ -> Nothing

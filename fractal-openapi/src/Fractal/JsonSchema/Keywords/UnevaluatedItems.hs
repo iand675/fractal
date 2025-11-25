@@ -30,7 +30,7 @@ import Fractal.JsonSchema.Types
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , ValidationAnnotations(..), ValidationErrors(..)
   , validationUnevaluatedItems, schemaValidation
-  , emptyPointer
+  , emptyPointer, validationError
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc, PostValidateFunc
@@ -71,21 +71,33 @@ validateUnevaluatedItemsPost recursiveValidator (UnevaluatedItemsData unevalSche
       allIndices = Set.fromList [0 .. V.length arr - 1]
       -- Unevaluated items are those not in the evaluated set
       unevaluatedIndices = Set.difference allIndices evaluatedIndices
-  in if Set.null unevaluatedIndices
-     -- No unevaluated items - always succeed (even if schema is false)
-     then pure $ ValidationSuccess mempty
-     else
-       -- Validate unevaluated items against the schema
-       let results =
-             [ recursiveValidator unevalSchema (arr V.! idx)
-             | idx <- Set.toList unevaluatedIndices
-             , idx < V.length arr  -- Safety check
-             ]
-           failures = [errs | ValidationFailure errs <- results]
-           annotations = [anns | ValidationSuccess anns <- results]
-       in case failures of
-         [] -> pure $ ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
-         (e:es) -> pure $ ValidationFailure $ foldl (<>) e es
+  in case schemaCore unevalSchema of
+    BooleanSchema False ->
+      -- No unevaluated items allowed - fail if there are any unevaluated items
+      if Set.null unevaluatedIndices
+      then pure $ ValidationSuccess mempty
+      else pure $ ValidationFailure $ ValidationErrors $ pure $
+           validationError "unevaluatedItems is false, no unevaluated items allowed"
+    BooleanSchema True ->
+      -- All unevaluated items allowed - mark them as evaluated and succeed
+      if Set.null unevaluatedIndices
+      then pure $ ValidationSuccess mempty
+      else pure $ ValidationSuccess $ annotateItems unevaluatedIndices
+    _ ->
+      -- Validate unevaluated items against the schema
+      if Set.null unevaluatedIndices
+      then pure $ ValidationSuccess mempty
+      else
+        let results =
+              [ recursiveValidator unevalSchema (arr V.! idx)
+              | idx <- Set.toList unevaluatedIndices
+              , idx < V.length arr  -- Safety check
+              ]
+            failures = [errs | ValidationFailure errs <- results]
+            annotations = [anns | ValidationSuccess anns <- results]
+        in case failures of
+          [] -> pure $ ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
+          (e:es) -> pure $ ValidationFailure $ foldl (<>) e es
 validateUnevaluatedItemsPost _ _ _ _ _ = pure $ ValidationSuccess mempty  -- Only applies to arrays
 
 -- | Validate unevaluatedItems with access to collected annotations

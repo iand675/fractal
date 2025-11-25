@@ -17,17 +17,23 @@ module Fractal.OpenApi.Codegen.Strategy
 
 import Fractal.OpenApi.Codegen.Core
 import Fractal.JsonSchema.Types hiding (codegenStrictFields)
-import Data.Aeson (Value(..))
+import Fractal.JsonSchema.Parser.Internal (parseSchemaValue)
+import qualified Fractal.JsonSchema.Parser as Parser
+import Data.Aeson (Value(..), Object)
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.Types as AesonTypes
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Language.Haskell.TH (Name, mkName)
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (isJust, mapMaybe, fromMaybe)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Foldable (toList)
 
 -- | Strategy for generating code from a schema
 data CodegenStrategy
@@ -73,6 +79,26 @@ data GeneratedField = GeneratedField
   }
   deriving (Eq, Show)
 
+-- | Parse properties from raw keywords
+parsePropertiesFromRaw :: Schema -> Map Text Schema
+parsePropertiesFromRaw schema = 
+  case Map.lookup "properties" (schemaRawKeywords schema) of
+    Just (Object propsObj) ->
+      let version = fromMaybe Draft202012 (schemaVersion schema)
+          entries = KeyMap.toList propsObj
+          parseEntry (k, v) = case parseSchemaValue version v of
+            Right s -> Just (Key.toText k, s)
+            Left _ -> Nothing
+      in Map.fromList $ mapMaybe parseEntry entries
+    _ -> Map.empty
+
+-- | Parse required from raw keywords
+parseRequiredFromRaw :: Schema -> Set Text
+parseRequiredFromRaw schema =
+  case Map.lookup "required" (schemaRawKeywords schema) of
+    Just (Array arr) -> Set.fromList [t | String t <- toList arr]
+    _ -> Set.empty
+
 -- | Select appropriate strategy for a schema
 selectStrategy :: CodegenConfig -> Schema -> CodegenStrategy
 selectStrategy config schema =
@@ -92,9 +118,9 @@ selectStrategy config schema =
               case schemaEnum obj of
                 Just _ -> EnumStrategy
                 Nothing ->
-                  -- Check for single field with newtype optimization
-                  let props = maybe Map.empty id (validationProperties $ schemaValidation obj)
-                      required = maybe Set.empty id (validationRequired $ schemaValidation obj)
+                  -- Parse properties and required on-demand from raw keywords
+                  let props = parsePropertiesFromRaw schema
+                      required = parseRequiredFromRaw schema
                   in if codegenNewtypeOptimization config && 
                         Map.size props == 1 && 
                         Set.size required == 1
@@ -108,8 +134,8 @@ defaultStrategy config ctx =
   in case schemaCore schema of
     BooleanSchema _ -> Left "Cannot generate type from boolean schema"
     ObjectSchema obj ->
-      let props = maybe Map.empty id (validationProperties $ schemaValidation obj)
-          required = maybe Set.empty id (validationRequired $ schemaValidation obj)
+      let props = parsePropertiesFromRaw schema
+          required = parseRequiredFromRaw schema
           
           -- Generate fields
           fields = mapMaybe (generateField config required) (Map.toList props)
@@ -169,7 +195,7 @@ newtypeStrategy config ctx =
   let schema = codegenSchema ctx
   in case schemaCore schema of
     ObjectSchema obj ->
-      let props = maybe Map.empty id (validationProperties $ schemaValidation obj)
+      let props = parsePropertiesFromRaw schema
           typeName = generateTypeName config ctx
           doc = annotationTitle (schemaAnnotations obj)
       in if Map.size props /= 1

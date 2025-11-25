@@ -28,7 +28,11 @@ import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..)
   , ValidationResult, validationFailure, pattern ValidationSuccess, pattern ValidationFailure
   , validationContains, validationMinContains, validationMaxContains, schemaValidation
+  , schemaRawKeywords, schemaVersion, JsonSchemaVersion(..)
   )
+import qualified Data.Aeson.Types as AesonTypes
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import qualified Data.Map.Strict as Map
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
@@ -62,13 +66,31 @@ compileContains value schema _ctx = case parseSchema value of
   Left err -> Left $ "Invalid schema in contains: " <> T.pack (show err)
   Right containsSchema ->
     -- Read minContains and maxContains from adjacent keywords in the schema
-    let validation = case schemaCore schema of
-          ObjectSchema obj -> schemaValidation obj
+    -- Parse on-demand from raw keywords if not pre-parsed
+    let (minCount, maxCount) = case schemaCore schema of
+          ObjectSchema obj ->
+            let validation = schemaValidation obj
+                minVal = case validationMinContains validation of
+                  Just m -> Just m
+                  Nothing -> parseMinContainsFromRaw schema
+                maxVal = case validationMaxContains validation of
+                  Just m -> Just m
+                  Nothing -> parseMaxContainsFromRaw schema
+            in (maybe 1 fromIntegral minVal, fmap fromIntegral maxVal)
           _ -> error "contains can only appear in object schemas"
-        -- When contains is present, minContains defaults to 1
-        minCount = maybe 1 fromIntegral (validationMinContains validation)
-        maxCount = fmap fromIntegral (validationMaxContains validation)
     in Right $ ContainsData containsSchema minCount maxCount
+  where
+    parseMinContainsFromRaw :: Schema -> Maybe Natural
+    parseMinContainsFromRaw s = case Map.lookup "minContains" (schemaRawKeywords s) of
+      Just (Number n) | Sci.isInteger n && n >= 0 ->
+        Just (fromInteger $ truncate n)
+      _ -> Nothing
+    
+    parseMaxContainsFromRaw :: Schema -> Maybe Natural
+    parseMaxContainsFromRaw s = case Map.lookup "maxContains" (schemaRawKeywords s) of
+      Just (Number n) | Sci.isInteger n && n >= 0 ->
+        Just (fromInteger $ truncate n)
+      _ -> Nothing
 
 -- | Compile the minContains keyword
 compileMinContains :: CompileFunc MinContainsData
@@ -132,10 +154,23 @@ containsKeyword = KeywordDefinition
   , keywordCompile = compileContains
   , keywordValidate = validateContainsKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> validationContains (schemaValidation obj)
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case validationContains (schemaValidation obj) of
+          Just containsSchema -> Just containsSchema
+          Nothing -> parseContainsFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseContainsFromRaw :: Schema -> Maybe Schema
+    parseContainsFromRaw s = case Map.lookup "contains" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Keyword definition for minContains
 minContainsKeyword :: KeywordDefinition

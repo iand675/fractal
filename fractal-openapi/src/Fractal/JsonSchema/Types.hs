@@ -74,6 +74,7 @@ module Fractal.JsonSchema.Types
   , isFailure
   , validationError
   , validationFailure
+  , splitUriFragment
   ) where
 
 import Data.Aeson (Value, ToJSON(..), FromJSON(..), object, (.=))
@@ -91,6 +92,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Vector (fromList)
 import Data.Foldable (toList)
+import Data.Maybe (fromMaybe)
 import Data.Scientific (Scientific)
 import Data.Hashable (Hashable)
 import Data.Typeable (typeOf, cast)
@@ -1047,7 +1049,7 @@ buildRegistryWithExternalRefs loader rootSchema = do
           let effectiveBase = schemaEffectiveBase parentBase schema
               directRefs = maybe [] (resolveRef effectiveBase) (schemaRef obj)
               dynamicRefs = maybe [] (resolveRef effectiveBase) (schemaDynamicRef obj)
-              subRefs = collectFromObject effectiveBase obj
+              subRefs = collectFromObject effectiveBase schema obj
           in uniqueTexts (metaschemaRefs <> directRefs <> dynamicRefs <> subRefs)
 
     resolveRef :: Maybe Text -> Reference -> [Text]
@@ -1063,41 +1065,117 @@ buildRegistryWithExternalRefs loader rootSchema = do
                   else docUri
           in if T.null target then [] else [target]
 
-    collectFromObject :: Maybe Text -> SchemaObject -> [Text]
-    collectFromObject base obj =
+    collectFromObject :: Maybe Text -> Schema -> SchemaObject -> [Text]
+    collectFromObject base parentSchema obj =
       -- IMPORTANT: For $defs, each definition may have its own $id that changes the base URI.
       -- We must use the parent schema's effective base when collecting from $defs, because
       -- the parent might have an $id. But collectExternalReferenceDocs will compute each
       -- def's effective base internally. So we should pass `base` here, which is the
       -- effective base of the parent schema (computed by collectExternalReferenceDocs).
-      let defRefs = concatMap (collectExternalReferenceDocs base) (Map.elems $ schemaDefs obj)
+      let version = fromMaybe Draft202012 (schemaVersion parentSchema)
+          rawKeywords = schemaRawKeywords parentSchema
+          defRefs = concatMap (collectExternalReferenceDocs base) (Map.elems $ schemaDefs obj)
           allOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaAllOf obj)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "allOf"
           anyOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaAnyOf obj)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "anyOf"
           oneOfRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (schemaOneOf obj)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "oneOf"
           notRefs = maybe [] (collectExternalReferenceDocs base) (schemaNot obj)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "not"
           ifRefs = maybe [] (collectExternalReferenceDocs base) (schemaIf obj)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "if"
           thenRefs = maybe [] (collectExternalReferenceDocs base) (schemaThen obj)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "then"
           elseRefs = maybe [] (collectExternalReferenceDocs base) (schemaElse obj)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "else"
           validation = schemaValidation obj
           propRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . Map.elems) (validationProperties validation)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "properties"
           patternRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . Map.elems) (validationPatternProperties validation)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "patternProperties"
           additionalRefs = maybe [] (collectExternalReferenceDocs base) (validationAdditionalProperties validation)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "additionalProperties"
           unevaluatedRefs = maybe [] (collectExternalReferenceDocs base) (validationUnevaluatedProperties validation)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "unevaluatedProperties"
           itemsRefs = case validationItems validation of
             Just (ItemsSchema s) -> collectExternalReferenceDocs base s
             Just (ItemsTuple schemas maybeAdditional) ->
               concatMap (collectExternalReferenceDocs base) (NE.toList schemas) <>
               maybe [] (collectExternalReferenceDocs base) maybeAdditional
-            Nothing -> []
+            Nothing -> collectRefsFromRawKeyword base parentSchema version rawKeywords "items"
           prefixRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . NE.toList) (validationPrefixItems validation)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "prefixItems"
           containsRefs = maybe [] (collectExternalReferenceDocs base) (validationContains validation)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "contains"
           dependentSchemaRefs = maybe [] (concatMap (collectExternalReferenceDocs base) . Map.elems) (validationDependentSchemas validation)
+            <> collectRefsFromRawKeyword base parentSchema version rawKeywords "dependentSchemas"
       in concat
            [ defRefs, allOfRefs, anyOfRefs, oneOfRefs, notRefs
            , ifRefs, thenRefs, elseRefs, propRefs, patternRefs
            , additionalRefs, unevaluatedRefs, itemsRefs, prefixRefs
            , containsRefs, dependentSchemaRefs
            ]
+      
+    -- Helper to collect references from a raw keyword value when pre-parsed field is Nothing
+    collectRefsFromRawKeyword :: Maybe Text -> Schema -> JsonSchemaVersion -> Map Text Value -> Text -> [Text]
+    collectRefsFromRawKeyword base parentSchema version rawKeywords keywordName =
+      case Map.lookup keywordName rawKeywords of
+        Nothing -> []
+        Just val -> collectRefsFromValue base parentSchema version val
+      
+    -- Helper to collect references from a JSON Value (extracting $ref/$dynamicRef directly)
+    -- We extract references directly from JSON without full parsing to avoid circular dependencies
+    collectRefsFromValue :: Maybe Text -> Schema -> JsonSchemaVersion -> Value -> [Text]
+    collectRefsFromValue base parentSchema version val =
+      case val of
+        Aeson.Object objMap ->
+          -- Extract $ref and $dynamicRef directly from the object
+          let refRefs = case KeyMap.lookup "$ref" objMap of
+                Just (Aeson.String refText) -> resolveRefFromText base refText
+                _ -> []
+              dynamicRefRefs = if version >= Draft202012
+                               then case KeyMap.lookup "$dynamicRef" objMap of
+                                 Just (Aeson.String refText) -> resolveRefFromText base refText
+                                 _ -> []
+                               else []
+              -- Also check for references in nested subschemas
+              -- For array keywords (allOf, anyOf, oneOf, prefixItems), extract from array elements
+              arrayKeywords = ["allOf", "anyOf", "oneOf", "prefixItems"]
+              arrayRefs = concatMap (\k -> case KeyMap.lookup (Key.fromText k) objMap of
+                Just (Aeson.Array arr) -> concatMap (collectRefsFromValue base parentSchema version) (toList arr)
+                _ -> []) arrayKeywords
+              -- For single schema keywords
+              singleSchemaKeywords = ["not", "if", "then", "else", "additionalProperties",
+                                     "unevaluatedProperties", "items", "contains", "propertyNames"]
+              singleRefs = concatMap (\k -> case KeyMap.lookup (Key.fromText k) objMap of
+                Just v -> collectRefsFromValue base parentSchema version v
+                _ -> []) singleSchemaKeywords
+              -- For object keywords (properties, patternProperties, dependentSchemas), extract from values
+              objectKeywords = ["properties", "patternProperties", "dependentSchemas"]
+              objectRefs = concatMap (\k -> case KeyMap.lookup (Key.fromText k) objMap of
+                Just (Aeson.Object nestedObj) -> concatMap (collectRefsFromValue base parentSchema version) (KeyMap.elems nestedObj)
+                _ -> []) objectKeywords
+              -- Also check $defs and definitions for references within definitions
+              defsRefs = concatMap (\k -> case KeyMap.lookup (Key.fromText k) objMap of
+                Just (Aeson.Object defsObj) -> concatMap (collectRefsFromValue base parentSchema version) (KeyMap.elems defsObj)
+                _ -> []) ["$defs", "definitions"]
+          in refRefs <> dynamicRefRefs <> arrayRefs <> singleRefs <> objectRefs <> defsRefs
+        Aeson.Array arr ->
+          -- Array of schemas - collect references from each
+          concatMap (collectRefsFromValue base parentSchema version) (toList arr)
+        _ -> []
+      
+    -- Helper to resolve a reference from text
+    resolveRefFromText :: Maybe Text -> Text -> [Text]
+    resolveRefFromText base refText
+      | T.null refText = []
+      | T.isPrefixOf "#" refText = []  -- Fragment only, not external
+      | otherwise =
+          let resolved = resolveAgainstBaseURI base refText
+              (docUri, _) = splitUriFragment resolved
+              target = if T.null docUri then resolved else docUri
+          in if T.null target then [] else [target]
 
 -- | Custom validator function type
 type CustomValidator = Value -> Either ValidationError ()

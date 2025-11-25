@@ -297,8 +297,19 @@ parseSchemaObject version obj = do
              )
         else (Nothing, Nothing, Nothing)
   
-  -- Parse validation keywords
-  validation <- parseValidationKeywords version obj
+  -- Parse validation keywords for backward compatibility
+  -- Items, prefixItems, contains, properties, and dependentSchemas are parsed here
+  -- for navigation/test compatibility
+  -- Other subschema keywords are stored in schemaRawKeywords and parsed on-demand
+  -- This makes the parser metaschema-driven: any boolean or object can be a schema
+  simpleValidation <- parseValidationKeywords version obj
+  let validation' = simpleValidation
+        { validationPatternProperties = Nothing
+        , validationAdditionalProperties = Nothing
+        , validationUnevaluatedProperties = Nothing
+        , validationPropertyNames = Nothing
+        , validationUnevaluatedItems = Nothing
+        }
   
   -- Parse annotations
   let annotations = SchemaAnnotations
@@ -367,7 +378,7 @@ parseSchemaObject version obj = do
     , schemaIf = schemaIf'
     , schemaThen = schemaThen'
     , schemaElse = schemaElse'
-    , schemaValidation = validation
+    , schemaValidation = validation'
     , schemaAnnotations = annotations
     , schemaDefs = schemaDefs'
     }

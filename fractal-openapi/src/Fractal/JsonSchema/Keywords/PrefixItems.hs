@@ -25,8 +25,14 @@ import qualified Data.Set as Set
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..), ArrayItemsValidation(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
-  , validationPrefixItems, validationItems, schemaValidation
+  , validationPrefixItems, validationItems, schemaValidation, schemaRawKeywords
+  , JsonSchemaVersion(..), schemaVersion, schemaCore
+  , ValidationErrors(..), validationError
   )
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import Fractal.JsonSchema.Parser.Internal (parseSchemaValue)
+import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , KeywordNavigation(..)
@@ -56,12 +62,33 @@ compilePrefixItems value schema _ctx = case value of
         case schemaCore schema of
           BooleanSchema _ -> Left "prefixItems cannot appear in boolean schemas"
           ObjectSchema obj ->
-            Right $ PrefixItemsData schemas' (validationItems (schemaValidation obj))
+            -- Parse items on-demand if not pre-parsed
+            let itemsValidation = case validationItems (schemaValidation obj) of
+                  Just items -> Just items
+                  Nothing -> parseItemsFromRaw schema
+            in Right $ PrefixItemsData schemas' itemsValidation
   _ -> Left "prefixItems must be a non-empty array of schemas"
   where
     parseSchemaElem v = case parseSchema v of
       Left err -> Left $ "Invalid schema in prefixItems: " <> T.pack (show err)
       Right s -> Right s
+    
+    parseItemsFromRaw :: Schema -> Maybe ArrayItemsValidation
+    parseItemsFromRaw s = case Map.lookup "items" (schemaRawKeywords s) of
+      Just (Array arr) -> do
+        -- Tuple-style items
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+        case NE.nonEmpty schemas of
+          Just ne -> Just (ItemsTuple ne Nothing)
+          Nothing -> Nothing
+      Just val -> do
+        -- Single schema
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        case parseSchemaValue version val of
+          Right schema -> Just (ItemsSchema schema)
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Validate prefixItems using the pluggable keyword system
 validatePrefixItemsKeyword :: ValidateFunc PrefixItemsData
@@ -81,17 +108,31 @@ validatePrefixItemsKeyword recursiveValidator (PrefixItemsData schemas additiona
       (additionalFailures, additionalIndices, additionalAnnotations) =
         case additional of
           Just (ItemsSchema itemSchema) ->
-            let evals =
-                  [ (idx, recursiveValidator itemSchema item)
-                  | (idx, item) <- zip [startIdx..] remainingItems
-                  ]
-                failures = [errs | (_, ValidationFailure errs) <- evals]
-                indices = if null evals then Set.empty else Set.fromList [startIdx .. startIdx + length evals - 1]
-                annotations =
-                  [ shiftAnnotations (arrayIndexPointer idx) anns
-                  | (idx, ValidationSuccess anns) <- evals
-                  ]
-            in (failures, indices, annotations)
+            -- Check if additionalItems is false (no additional items allowed)
+            case schemaCore itemSchema of
+              BooleanSchema False ->
+                -- No additional items allowed - fail validation if there are any additional items
+                if null remainingItems
+                then ([], Set.empty, [])
+                else let errs = ValidationErrors $ pure $ validationError "additionalItems is false, no additional items allowed"
+                     in ([errs], Set.empty, [])
+              BooleanSchema True ->
+                -- All additional items allowed - mark them as evaluated
+                let additionalIndices = Set.fromList [startIdx .. startIdx + length remainingItems - 1]
+                in ([], additionalIndices, [])
+              _ ->
+                -- Validate additional items against the schema
+                let evals =
+                      [ (idx, recursiveValidator itemSchema item)
+                      | (idx, item) <- zip [startIdx..] remainingItems
+                      ]
+                    failures = [errs | (_, ValidationFailure errs) <- evals]
+                    indices = if null evals then Set.empty else Set.fromList [startIdx .. startIdx + length evals - 1]
+                    annotations =
+                      [ shiftAnnotations (arrayIndexPointer idx) anns
+                      | (idx, ValidationSuccess anns) <- evals
+                      ]
+                in (failures, indices, annotations)
           Just (ItemsTuple tupleSchemas maybeAdditional) ->
             -- Treat tuple-style additional validation similar to legacy semantics
             let tupleEvals =
@@ -106,18 +147,31 @@ validatePrefixItemsKeyword recursiveValidator (PrefixItemsData schemas additiona
                   ]
                 extraItems = drop (length tupleSchemas) remainingItems
                 extraStart = startIdx + length tupleSchemas
-                extraEvals = case maybeAdditional of
+                (extraFailures, extraIndices, extraAnnotations) = case maybeAdditional of
                   Just addlSchema ->
-                    [ (idx, recursiveValidator addlSchema item)
-                    | (idx, item) <- zip [extraStart..] extraItems
-                    ]
-                  Nothing -> []
-                extraFailures = [errs | (_, ValidationFailure errs) <- extraEvals]
-                extraIndices = if null extraEvals then Set.empty else Set.fromList [extraStart .. extraStart + length extraEvals - 1]
-                extraAnnotations =
-                  [ shiftAnnotations (arrayIndexPointer idx) anns
-                  | (idx, ValidationSuccess anns) <- extraEvals
-                  ]
+                    -- Check if additionalItems is false
+                    case schemaCore addlSchema of
+                      BooleanSchema False ->
+                        -- No additional items allowed - fail validation if there are any additional items
+                        if null extraItems
+                        then ([], Set.empty, [])
+                        else let errs = ValidationErrors $ pure $ validationError "additionalItems is false, no additional items allowed"
+                             in ([errs], Set.empty, [])
+                      BooleanSchema True ->
+                        -- All additional items allowed - no validation needed
+                        ([], Set.empty, [])
+                      _ ->
+                        -- Validate additional items against the schema
+                        let evals = [ (idx, recursiveValidator addlSchema item)
+                                    | (idx, item) <- zip [extraStart..] extraItems
+                                    ]
+                            failures = [errs | (_, ValidationFailure errs) <- evals]
+                            indices = if null evals then Set.empty else Set.fromList [extraStart .. extraStart + length evals - 1]
+                            annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
+                                          | (idx, ValidationSuccess anns) <- evals
+                                          ]
+                        in (failures, indices, annotations)
+                  Nothing -> ([], Set.empty, [])
             in (tupleFailures <> extraFailures, tupleIndices <> extraIndices, tupleAnnotations <> extraAnnotations)
           Nothing -> ([], Set.empty, [])
       allFailures = prefixFailures <> additionalFailures
@@ -137,10 +191,22 @@ prefixItemsKeyword = KeywordDefinition
   , keywordCompile = compilePrefixItems
   , keywordValidate = validatePrefixItemsKeyword
   , keywordNavigation = SchemaArray $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> case validationPrefixItems (schemaValidation obj) of
-        Just prefixSchemas -> Just (NE.toList prefixSchemas)
-        Nothing -> Nothing
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case validationPrefixItems (schemaValidation obj) of
+          Just prefixSchemas -> Just (NE.toList prefixSchemas)
+          Nothing -> parsePrefixItemsFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parsePrefixItemsFromRaw :: Schema -> Maybe [Schema]
+    parsePrefixItemsFromRaw s = case Map.lookup "prefixItems" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+        in if null schemas && not (null arr)
+           then Nothing  -- Had items but all failed to parse
+           else Just schemas
+      _ -> Nothing
 

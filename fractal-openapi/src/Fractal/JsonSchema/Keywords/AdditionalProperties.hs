@@ -26,13 +26,20 @@ import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..), Regex(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , validationAdditionalProperties, validationProperties, validationPatternProperties
-  , schemaValidation, ValidationAnnotations(..)
+  , schemaValidation, ValidationAnnotations(..), schemaRawKeywords
+  , schemaVersion, JsonSchemaVersion(..)
   )
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
-  , CompilationContext(..)
+  , CompilationContext(..), contextParseSubschema
   )
+import Fractal.JsonSchema.Parser.Internal (parseSchemaValue)
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Aeson.Key as Key
+import Data.Maybe (fromMaybe)
+import Data.Foldable (toList)
 import qualified Fractal.JsonSchema.Regex as RegexModule
 import Fractal.JsonSchema.Validator.Annotations
   ( annotateProperties
@@ -57,14 +64,30 @@ compileAdditionalProperties value schema ctx = do
     Right s -> Right s
   
   -- Read adjacent 'properties' and 'patternProperties' keywords from schema
-  let validation = case schemaCore schema of
-        ObjectSchema obj -> schemaValidation obj
+  -- Parse on-demand from raw keywords if not pre-parsed
+  let (definedProps, patterns) = case schemaCore schema of
+        ObjectSchema obj ->
+          let validation = schemaValidation obj
+              props = case validationProperties validation of
+                Just p -> Map.keysSet p
+                Nothing -> parsePropertiesKeysFromRaw schema
+              pats = case validationPatternProperties validation of
+                Just pp -> map fst (Map.toList pp)
+                Nothing -> parsePatternPropertiesKeysFromRaw schema
+          in (props, pats)
         _ -> error "additionalProperties can only appear in object schemas"
-      
-      definedProps = maybe Set.empty Map.keysSet (validationProperties validation)
-      patterns = maybe [] (map fst . Map.toList) (validationPatternProperties validation)
   
   Right $ AdditionalPropertiesData addlSchema definedProps patterns
+  where
+    parsePropertiesKeysFromRaw :: Schema -> Set Text
+    parsePropertiesKeysFromRaw s = case Map.lookup "properties" (schemaRawKeywords s) of
+      Just (Object propsObj) -> Set.fromList [Key.toText k | k <- KeyMap.keys propsObj]
+      _ -> Set.empty
+    
+    parsePatternPropertiesKeysFromRaw :: Schema -> [Regex]
+    parsePatternPropertiesKeysFromRaw s = case Map.lookup "patternProperties" (schemaRawKeywords s) of
+      Just (Object patternsObj) -> [Regex (Key.toText k) | k <- KeyMap.keys patternsObj]
+      _ -> []
 
 -- | Check if a property name matches any pattern
 matchesAnyPattern :: Text -> [Regex] -> Bool
@@ -111,8 +134,26 @@ additionalPropertiesKeyword = KeywordDefinition
   , keywordCompile = compileAdditionalProperties
   , keywordValidate = validateAdditionalPropertiesKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> validationAdditionalProperties (schemaValidation obj)
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case validationAdditionalProperties (schemaValidation obj) of
+          Just addl -> Just addl
+          Nothing -> parseAdditionalPropertiesFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseAdditionalPropertiesFromRaw :: Schema -> Maybe Schema
+    parseAdditionalPropertiesFromRaw s = case Map.lookup "additionalProperties" (schemaRawKeywords s) of
+      Just (Bool b) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version (Bool b) of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 

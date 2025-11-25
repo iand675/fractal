@@ -30,8 +30,11 @@ import Fractal.JsonSchema.Types
   , JsonSchemaVersion(..), ValidationConfig(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , ArrayItemsValidation(..), validationItems, validationPrefixItems, schemaValidation, schemaCore
-  , ValidationAnnotations(..), schemaRawKeywords
+  , ValidationAnnotations(..), schemaRawKeywords, schemaVersion
+  , ValidationErrors(..), validationError
   )
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import Data.Maybe (fromMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
@@ -52,6 +55,7 @@ import Fractal.JsonSchema.Validator.Annotations
 data ItemsData = ItemsData
   { itemsValidationData :: ArrayItemsValidation
   , itemsHasPrefix :: Bool
+  , itemsPrefixCount :: Int  -- Number of items covered by prefixItems (for Draft202012+)
   }
   deriving (Typeable)
 
@@ -69,7 +73,10 @@ compileItems value schema ctx =
         Just itemsValidation ->
           -- Already parsed - use it
           let hasPrefix = validationPrefixItems (schemaValidation obj) /= Nothing
-          in Right $ ItemsData itemsValidation hasPrefix
+              prefixCount = case validationPrefixItems (schemaValidation obj) of
+                Just prefixSchemas -> length prefixSchemas
+                Nothing -> 0
+          in Right $ ItemsData itemsValidation hasPrefix prefixCount
         Nothing -> do
           -- Not pre-parsed - parse on-demand from raw keywords or value
           let itemsVal = Map.lookup "items" (schemaRawKeywords schema) <|> Just value
@@ -88,21 +95,43 @@ compileItems value schema ctx =
                   Left err -> Left $ "Failed to parse additionalItems: " <> err
                 Nothing -> Right Nothing
               let hasPrefix = validationPrefixItems (schemaValidation obj) /= Nothing
-              Right $ ItemsData (ItemsTuple nonEmpty additionalItems') hasPrefix
+                  prefixCount = case validationPrefixItems (schemaValidation obj) of
+                    Just prefixSchemas -> length prefixSchemas
+                    Nothing -> 0
+              Right $ ItemsData (ItemsTuple nonEmpty additionalItems') hasPrefix prefixCount
             Just val -> do
               -- Single schema for all items
               itemSchema <- contextParseSubschema ctx val
               let hasPrefix = validationPrefixItems (schemaValidation obj) /= Nothing
-              Right $ ItemsData (ItemsSchema itemSchema) hasPrefix
+                  prefixCount = case validationPrefixItems (schemaValidation obj) of
+                    Just prefixSchemas -> length prefixSchemas
+                    Nothing -> 0
+              Right $ ItemsData (ItemsSchema itemSchema) hasPrefix prefixCount
             Nothing -> Left "items keyword present but no parsed items found in schema"
 
 -- | Validate items using the pluggable keyword system
 validateItemsKeyword :: ValidateFunc ItemsData
-validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix) _ctx (Array arr) = do
+validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix prefixCount) _ctx (Array arr) = do
   config <- ask
   let version = validationVersion config
   if hasPrefix && version >= Draft202012
-    then pure (ValidationSuccess mempty)
+    then case itemsValidation of
+      ItemsSchema itemSchema ->
+        -- In Draft202012+, items only applies to items after prefixItems
+        -- But we still need to annotate those items as evaluated
+        let remainingItems = drop prefixCount (toList arr)
+            remainingIndices = Set.fromList [prefixCount .. prefixCount + length remainingItems - 1]
+            evaluations = [ (idx, recursiveValidator itemSchema item)
+                          | (idx, item) <- zip [prefixCount..] remainingItems
+                          ]
+            failures = [errs | (_, ValidationFailure errs) <- evaluations]
+            shiftedAnnotations = [ shiftAnnotations (arrayIndexPointer idx) anns
+                                 | (idx, ValidationSuccess anns) <- evaluations
+                                 ]
+        in pure $ case failures of
+          [] -> ValidationSuccess (annotateItems remainingIndices <> mconcat shiftedAnnotations)
+          (e:es) -> ValidationFailure (foldl (<>) e es)
+      _ -> pure (ValidationSuccess mempty)
     else case itemsValidation of
       ItemsSchema itemSchema ->
         let evaluations =
@@ -130,21 +159,40 @@ validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix) _c
               ]
             tupleIndices = Set.fromList [idx | (idx, _) <- tupleEvaluations]
             additionalItems = drop (length tupleSchemas) (toList arr)
-            additionalEvaluations = case maybeAdditional of
+            (additionalEvaluations, additionalFailures, additionalIndices, additionalAnnotations) = case maybeAdditional of
               Just addlSchema ->
-                [ (idx, recursiveValidator addlSchema item)
-                | (idx, item) <- zip [length tupleSchemas ..] additionalItems
-                ]
-              Nothing -> []
-            additionalIndices = Set.fromList [idx | (idx, _) <- additionalEvaluations]
+                -- Check if additionalItems is false
+                case schemaCore addlSchema of
+                  BooleanSchema False ->
+                    -- No additional items allowed - fail validation if there are any additional items
+                    if null additionalItems
+                    then ([], [], Set.empty, [])
+                    else let errs = ValidationErrors $ pure $ validationError "additionalItems is false, no additional items allowed"
+                         in ([], [errs], Set.empty, [])
+                  BooleanSchema True ->
+                    -- All additional items allowed - mark them as evaluated
+                    let additionalIndices = Set.fromList [length tupleSchemas .. length tupleSchemas + length additionalItems - 1]
+                    in ([], [], additionalIndices, [])
+                  _ ->
+                    -- Validate additional items against the schema
+                    let evals = [ (idx, recursiveValidator addlSchema item)
+                                | (idx, item) <- zip [length tupleSchemas ..] additionalItems
+                                ]
+                        failures = [errs | (_, ValidationFailure errs) <- evals]
+                        indices = Set.fromList [idx | (idx, _) <- evals]
+                        annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
+                                      | (idx, ValidationSuccess anns) <- evals
+                                      ]
+                    in (evals, failures, indices, annotations)
+              Nothing -> ([], [], Set.empty, [])
             failures =
               [ errs
               | (_, ValidationFailure errs) <- tupleEvaluations ++ additionalEvaluations
-              ]
+              ] <> additionalFailures
             shiftedAnnotations =
               [ shiftAnnotations (arrayIndexPointer idx) anns
               | (idx, ValidationSuccess anns) <- tupleEvaluations ++ additionalEvaluations
-              ]
+              ] <> additionalAnnotations
             allIndices = tupleIndices <> additionalIndices
         in pure $
              case failures of
@@ -175,8 +223,32 @@ itemsKeyword = KeywordDefinition
                     Just (NE.toList schemas !! n, remaining)
                   _ -> Nothing
               [] -> Nothing  -- Need an index for tuple items
-          Nothing -> Nothing
+          Nothing -> parseItemsFromRaw schema rest
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseItemsFromRaw :: Schema -> [Text] -> Maybe (Schema, [Text])
+    parseItemsFromRaw s rest = case Map.lookup "items" (schemaRawKeywords s) of
+      Just (Array arr) | not (null arr) -> do
+        -- Tuple-style items (array of schemas)
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+        -- Only proceed if we successfully parsed at least one schema
+        case schemas of
+          [] -> Nothing  -- Failed to parse all schemas
+          _ -> case rest of
+            (idx:remaining) ->
+              case reads (T.unpack idx) :: [(Int, String)] of
+                [(n, "")] | n >= 0 && n < length schemas ->
+                  Just (schemas !! n, remaining)
+                _ -> Nothing
+            [] -> Nothing
+      Just val -> do
+        -- Single schema for all items
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just (schema, rest)
+          Left _ -> Nothing
+      _ -> Nothing
 

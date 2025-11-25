@@ -15,11 +15,14 @@ import Data.Aeson (Value(..))
 import Control.Monad.Reader (Reader)
 import qualified Data.Text as T
 
-import Fractal.JsonSchema.Types (Schema, SchemaCore(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaCore, schemaNot)
+import Fractal.JsonSchema.Types (Schema, SchemaCore(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations, validationFailure, schemaCore, schemaNot, schemaRawKeywords, schemaVersion, JsonSchemaVersion(..))
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
 import Fractal.JsonSchema.Types (ParseError)
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), CompileFunc, ValidateFunc, KeywordNavigation(..), CompilationContext(..), ValidationContext')
 import Fractal.JsonSchema.Keyword (mkKeywordDefinition)
+import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
 
 -- | Compiled data for 'not' keyword
 newtype NotData = NotData Schema
@@ -66,8 +69,21 @@ notKeyword = KeywordDefinition
   , keywordCompile = compileNot
   , keywordValidate = validateNotKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> schemaNot obj
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case schemaNot obj of
+          Just notSchema -> Just notSchema
+          Nothing -> parseNotFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseNotFromRaw :: Schema -> Maybe Schema
+    parseNotFromRaw s = case Map.lookup "not" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 

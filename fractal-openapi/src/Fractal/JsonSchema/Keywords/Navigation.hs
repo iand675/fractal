@@ -45,7 +45,7 @@ import Fractal.JsonSchema.Types
   , validationDependentSchemas, validationPropertyNames, validationUnevaluatedProperties
   , ValidationAnnotations(..), pattern ValidationSuccess, pattern ValidationFailure
   , ValidationResult, ValidationErrors(..), emptyPointer
-  , JsonSchemaVersion(..), schemaVersion
+  , JsonSchemaVersion(..), schemaVersion, schemaRawKeywords
   )
 import qualified Fractal.JsonSchema.Validator.Result as VR
 import Fractal.JsonSchema.Parser.Internal (parseSchemaValue)
@@ -54,8 +54,9 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson (Value(..), object)
 import Control.Monad.Reader (ask)
 import qualified Data.Text as T
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Typeable (Typeable)
+import Data.Foldable (toList)
 
 -- | Navigate into 'properties' keyword (SchemaMap)
 propertiesKeyword :: KeywordDefinition
@@ -64,8 +65,26 @@ propertiesKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())  -- No compilation needed for navigation-only
   (\_ _ _ _ -> pure (ValidationSuccess mempty))      -- No validation needed for navigation-only
   (SchemaMap $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> validationProperties (schemaValidation obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case validationProperties (schemaValidation obj) of
+        Just props -> Just props
+        Nothing -> parsePropertiesFromRaw schema
     _ -> Nothing)
+  where
+    parsePropertiesFromRaw :: Schema -> Maybe (Map Text Schema)
+    parsePropertiesFromRaw s = case Map.lookup "properties" (schemaRawKeywords s) of
+      Just (Object propsObj) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            entries = KeyMap.toList propsObj
+            parseEntry (k, v) = case parseSchemaValue version v of
+              Right schema -> Just (Key.toText k, schema)
+              Left _ -> Nothing
+            parsedMap = Map.fromList $ mapMaybe parseEntry entries
+        in if Map.null parsedMap && not (KeyMap.null propsObj)
+           then Nothing  -- Had properties but all failed to parse
+           else Just parsedMap  -- Either successfully parsed or was empty to begin with
+      _ -> Nothing
 
 -- | Navigate into 'patternProperties' keyword (SchemaMap with regex keys)
 patternPropertiesKeyword :: KeywordDefinition
@@ -75,12 +94,24 @@ patternPropertiesKeyword = mkNavigableKeyword
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaMap $ \schema -> case schemaCore schema of
     ObjectSchema obj ->
+      -- Check pre-parsed first, then parse on-demand
       case validationPatternProperties (schemaValidation obj) of
         Just patterns ->
           -- Convert Regex keys to Text keys for navigation
           Just $ Map.fromList [(pat, schema) | (Regex pat, schema) <- Map.toList patterns]
-        Nothing -> Nothing
+        Nothing -> parsePatternPropertiesFromRaw schema
     _ -> Nothing)
+  where
+    parsePatternPropertiesFromRaw :: Schema -> Maybe (Map Text Schema)
+    parsePatternPropertiesFromRaw s = case Map.lookup "patternProperties" (schemaRawKeywords s) of
+      Just (Object patternsObj) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            entries = KeyMap.toList patternsObj
+            parseEntry (k, v) = case parseSchemaValue version v of
+              Right schema -> Just (Key.toText k, schema)
+              Left _ -> Nothing
+        in Just $ Map.fromList $ mapMaybe parseEntry entries
+      _ -> Nothing
 
 -- | Navigate into 'additionalProperties' keyword (SingleSchema)
 additionalPropertiesKeyword :: KeywordDefinition
@@ -89,8 +120,26 @@ additionalPropertiesKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> validationAdditionalProperties (schemaValidation obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case validationAdditionalProperties (schemaValidation obj) of
+        Just addl -> Just addl
+        Nothing -> parseAdditionalPropertiesFromRaw schema
     _ -> Nothing)
+  where
+    parseAdditionalPropertiesFromRaw :: Schema -> Maybe Schema
+    parseAdditionalPropertiesFromRaw s = case Map.lookup "additionalProperties" (schemaRawKeywords s) of
+      Just (Bool b) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version (Bool b) of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'items' keyword (can be SingleSchema or SchemaArray in Draft-04)
 itemsKeyword :: KeywordDefinition
@@ -100,6 +149,7 @@ itemsKeyword = mkNavigableKeyword
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (CustomNavigation $ \schema _seg rest -> case schemaCore schema of
     ObjectSchema obj ->
+      -- Check pre-parsed first, then parse on-demand
       case validationItems (schemaValidation obj) of
         Just (ItemsSchema itemSchema) ->
           -- Single schema for all items - return it with full rest path
@@ -113,8 +163,32 @@ itemsKeyword = mkNavigableKeyword
                   Just (NE.toList schemas !! n, remaining)
                 _ -> Nothing
             [] -> Nothing  -- Need an index for tuple items
-        Nothing -> Nothing
+        Nothing -> parseItemsFromRaw schema rest
     _ -> Nothing)
+  where
+    parseItemsFromRaw :: Schema -> [Text] -> Maybe (Schema, [Text])
+    parseItemsFromRaw s rest = case Map.lookup "items" (schemaRawKeywords s) of
+      Just (Array arr) | not (null arr) -> do
+        -- Tuple-style items (array of schemas)
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+        -- Only proceed if we successfully parsed at least one schema
+        case schemas of
+          [] -> Nothing  -- Failed to parse all schemas
+          _ -> case rest of
+            (idx:remaining) ->
+              case reads (T.unpack idx) :: [(Int, String)] of
+                [(n, "")] | n >= 0 && n < length schemas ->
+                  Just (schemas !! n, remaining)
+                _ -> Nothing
+            [] -> Nothing
+      Just val -> do
+        -- Single schema for all items
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        case parseSchemaValue version val of
+          Right schema -> Just (schema, rest)
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'prefixItems' keyword (SchemaArray)
 prefixItemsKeyword :: KeywordDefinition
@@ -123,10 +197,22 @@ prefixItemsKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> case validationPrefixItems (schemaValidation obj) of
-      Just prefixSchemas -> Just (NE.toList prefixSchemas)
-      Nothing -> Nothing
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case validationPrefixItems (schemaValidation obj) of
+        Just prefixSchemas -> Just (NE.toList prefixSchemas)
+        Nothing -> parsePrefixItemsFromRaw schema
     _ -> Nothing)
+  where
+    parsePrefixItemsFromRaw :: Schema -> Maybe [Schema]
+    parsePrefixItemsFromRaw s = case Map.lookup "prefixItems" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+        in case schemas of
+          [] -> Nothing
+          _ -> Just schemas
+      _ -> Nothing
 
 -- | Navigate into 'contains' keyword (SingleSchema)
 containsKeyword :: KeywordDefinition
@@ -135,8 +221,21 @@ containsKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> validationContains (schemaValidation obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case validationContains (schemaValidation obj) of
+        Just contains -> Just contains
+        Nothing -> parseContainsFromRaw schema
     _ -> Nothing)
+  where
+    parseContainsFromRaw :: Schema -> Maybe Schema
+    parseContainsFromRaw s = case Map.lookup "contains" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'allOf' keyword (SchemaArray)
 allOfKeyword :: KeywordDefinition
@@ -145,8 +244,22 @@ allOfKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> fmap NE.toList (schemaAllOf obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case schemaAllOf obj of
+        Just allOfSchemas -> Just (NE.toList allOfSchemas)
+        Nothing -> parseAllOfFromRaw schema
     _ -> Nothing)
+  where
+    parseAllOfFromRaw :: Schema -> Maybe [Schema]
+    parseAllOfFromRaw s = case Map.lookup "allOf" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+        in if null schemas && not (null arr)
+           then Nothing  -- Had items but all failed to parse
+           else Just schemas
+      _ -> Nothing
 
 -- | Navigate into 'anyOf' keyword (SchemaArray)
 anyOfKeyword :: KeywordDefinition
@@ -155,8 +268,22 @@ anyOfKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> fmap NE.toList (schemaAnyOf obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case schemaAnyOf obj of
+        Just anyOfSchemas -> Just (NE.toList anyOfSchemas)
+        Nothing -> parseAnyOfFromRaw schema
     _ -> Nothing)
+  where
+    parseAnyOfFromRaw :: Schema -> Maybe [Schema]
+    parseAnyOfFromRaw s = case Map.lookup "anyOf" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+        in if null schemas && not (null arr)
+           then Nothing  -- Had items but all failed to parse
+           else Just schemas
+      _ -> Nothing
 
 -- | Navigate into 'oneOf' keyword (SchemaArray)
 oneOfKeyword :: KeywordDefinition
@@ -165,8 +292,22 @@ oneOfKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaArray $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> fmap NE.toList (schemaOneOf obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case schemaOneOf obj of
+        Just oneOfSchemas -> Just (NE.toList oneOfSchemas)
+        Nothing -> parseOneOfFromRaw schema
     _ -> Nothing)
+  where
+    parseOneOfFromRaw :: Schema -> Maybe [Schema]
+    parseOneOfFromRaw s = case Map.lookup "oneOf" (schemaRawKeywords s) of
+      Just (Array arr) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+        in if null schemas && not (null arr)
+           then Nothing  -- Had items but all failed to parse
+           else Just schemas
+      _ -> Nothing
 
 -- | Navigate into 'not' keyword (SingleSchema)
 notKeyword :: KeywordDefinition
@@ -175,8 +316,21 @@ notKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> schemaNot obj
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case schemaNot obj of
+        Just notSchema -> Just notSchema
+        Nothing -> parseNotFromRaw schema
     _ -> Nothing)
+  where
+    parseNotFromRaw :: Schema -> Maybe Schema
+    parseNotFromRaw s = case Map.lookup "not" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'if' keyword (SingleSchema)
 ifKeyword :: KeywordDefinition
@@ -185,8 +339,21 @@ ifKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> schemaIf obj
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case schemaIf obj of
+        Just ifSchema -> Just ifSchema
+        Nothing -> parseIfFromRaw schema
     _ -> Nothing)
+  where
+    parseIfFromRaw :: Schema -> Maybe Schema
+    parseIfFromRaw s = case Map.lookup "if" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'then' keyword (SingleSchema)
 thenKeyword :: KeywordDefinition
@@ -195,8 +362,21 @@ thenKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> schemaThen obj
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case schemaThen obj of
+        Just thenSchema -> Just thenSchema
+        Nothing -> parseThenFromRaw schema
     _ -> Nothing)
+  where
+    parseThenFromRaw :: Schema -> Maybe Schema
+    parseThenFromRaw s = case Map.lookup "then" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'else' keyword (SingleSchema)
 elseKeyword :: KeywordDefinition
@@ -205,8 +385,21 @@ elseKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> schemaElse obj
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case schemaElse obj of
+        Just elseSchema -> Just elseSchema
+        Nothing -> parseElseFromRaw schema
     _ -> Nothing)
+  where
+    parseElseFromRaw :: Schema -> Maybe Schema
+    parseElseFromRaw s = case Map.lookup "else" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'dependentSchemas' keyword (SchemaMap)
 dependentSchemasKeyword :: KeywordDefinition
@@ -215,8 +408,23 @@ dependentSchemasKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SchemaMap $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> validationDependentSchemas (schemaValidation obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case validationDependentSchemas (schemaValidation obj) of
+        Just depSchemas -> Just depSchemas
+        Nothing -> parseDependentSchemasFromRaw schema
     _ -> Nothing)
+  where
+    parseDependentSchemasFromRaw :: Schema -> Maybe (Map Text Schema)
+    parseDependentSchemasFromRaw s = case Map.lookup "dependentSchemas" (schemaRawKeywords s) of
+      Just (Object depSchemasObj) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            entries = KeyMap.toList depSchemasObj
+            parseEntry (k, v) = case parseSchemaValue version v of
+              Right schema -> Just (Key.toText k, schema)
+              Left _ -> Nothing
+        in Just $ Map.fromList $ mapMaybe parseEntry entries
+      _ -> Nothing
 
 -- | Navigate into 'propertyNames' keyword (SingleSchema)
 propertyNamesKeyword :: KeywordDefinition
@@ -225,8 +433,21 @@ propertyNamesKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> validationPropertyNames (schemaValidation obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case validationPropertyNames (schemaValidation obj) of
+        Just propNames -> Just propNames
+        Nothing -> parsePropertyNamesFromRaw schema
     _ -> Nothing)
+  where
+    parsePropertyNamesFromRaw :: Schema -> Maybe Schema
+    parsePropertyNamesFromRaw s = case Map.lookup "propertyNames" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Navigate into 'unevaluatedProperties' keyword (SingleSchema)
 unevaluatedPropertiesKeyword :: KeywordDefinition
@@ -235,8 +456,21 @@ unevaluatedPropertiesKeyword = mkNavigableKeyword
   (\_ _ _ -> Right ())
   (\_ _ _ _ -> pure (ValidationSuccess mempty))
   (SingleSchema $ \schema -> case schemaCore schema of
-    ObjectSchema obj -> validationUnevaluatedProperties (schemaValidation obj)
+    ObjectSchema obj -> 
+      -- Check pre-parsed first, then parse on-demand
+      case validationUnevaluatedProperties (schemaValidation obj) of
+        Just unevalProps -> Just unevalProps
+        Nothing -> parseUnevaluatedPropertiesFromRaw schema
     _ -> Nothing)
+  where
+    parseUnevaluatedPropertiesFromRaw :: Schema -> Maybe Schema
+    parseUnevaluatedPropertiesFromRaw s = case Map.lookup "unevaluatedProperties" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Compiled data for $defs keyword
 -- Stores the schema that validates each definition value (from metaschema's additionalProperties)

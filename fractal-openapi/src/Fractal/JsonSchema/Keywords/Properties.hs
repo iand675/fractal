@@ -26,6 +26,7 @@ import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure
   , validationProperties, schemaValidation, ValidationAnnotations(..)
+  , schemaRawKeywords, schemaVersion, JsonSchemaVersion(..)
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
@@ -33,6 +34,8 @@ import Fractal.JsonSchema.Keyword.Types
   , CompilationContext(..)
   )
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import Data.Maybe (fromMaybe, mapMaybe)
 import Fractal.JsonSchema.Validator.Annotations
   ( annotateProperties
   , propertyPointer
@@ -88,8 +91,26 @@ propertiesKeyword = KeywordDefinition
   , keywordCompile = compileProperties
   , keywordValidate = validatePropertiesKeyword
   , keywordNavigation = SchemaMap $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> validationProperties (schemaValidation obj)
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case validationProperties (schemaValidation obj) of
+          Just props -> Just props
+          Nothing -> parsePropertiesFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parsePropertiesFromRaw :: Schema -> Maybe (Map Text Schema)
+    parsePropertiesFromRaw s = case Map.lookup "properties" (schemaRawKeywords s) of
+      Just (Object propsObj) ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+            entries = KeyMap.toList propsObj
+            parseEntry (k, v) = case ParserInternal.parseSchemaValue version v of
+              Right schema -> Just (Key.toText k, schema)
+              Left _ -> Nothing
+            parsedMap = Map.fromList $ mapMaybe parseEntry entries
+        in if Map.null parsedMap && not (KeyMap.null propsObj)
+           then Nothing  -- Had properties but all failed to parse
+           else Just parsedMap  -- Either successfully parsed or was empty to begin with
+      _ -> Nothing
 

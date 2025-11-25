@@ -6,9 +6,9 @@ module Fractal.JsonSchema.ComplianceSpec (spec) where
 import Test.Hspec
 import Fractal.JsonSchema
 import Fractal.JsonSchema.Validator (validateValueWithRegistry)
-import Fractal.JsonSchema.ReferenceLoader
+import Fractal.JsonSchema.ReferenceLoader (ReferenceLoader, fileLoaderWithVersion, noOpLoader, makeLoader, registerScheme, registerDefaultLoader, emptyLoaderRegistry)
 import Fractal.JsonSchema.EmbeddedMetaschemas (standardMetaschemaLoader)
-import Fractal.JsonSchema.Types (buildRegistryWithExternalRefs)
+import Fractal.JsonSchema.Types (buildRegistryWithExternalRefs, Schema(..), SchemaCore(..), splitUriFragment)
 import qualified Data.Map.Strict as Map
 import Data.Aeson (Value, FromJSON(..), (.:), (.=), eitherDecodeFileStrict, object)
 import qualified Data.Aeson as Aeson
@@ -17,7 +17,9 @@ import qualified Data.Text as T
 import Data.List (sort)
 import GHC.Generics (Generic)
 import System.Directory (listDirectory, doesFileExist, doesDirectoryExist, getCurrentDirectory)
-import System.FilePath ((</>), takeExtension, makeRelative)
+import System.FilePath ((</>), takeExtension, makeRelative, takeFileName, isAbsolute)
+import Data.Maybe (Maybe(..), catMaybes)
+import Control.Applicative ((<|>))
 import Control.Monad (forM, forM_, when)
 import System.IO (hPutStrLn, stderr)
 
@@ -69,15 +71,28 @@ testSuiteLoader version =
 -- | Loader for http://localhost:1234/... URIs (maps to local test suite files)
 localhostLoader :: JsonSchemaVersion -> ReferenceLoader
 localhostLoader version uri
+  | T.isPrefixOf "http://example.com/" uri =
+      -- Skip intentionally fake example URIs gracefully - return a minimal schema
+      pure $ Right $ Schema
+        { schemaVersion = Just version
+        , schemaMetaschemaURI = Nothing
+        , schemaId = Just uri
+        , schemaCore = BooleanSchema True  -- Always valid schema
+        , schemaVocabulary = Nothing
+        , schemaExtensions = Map.empty
+        , schemaRawKeywords = Map.empty
+        }
   | T.isPrefixOf "http://localhost:1234/" uri =
-      let path = T.drop (T.length "http://localhost:1234/") uri
+      let (path, _) = splitUriFragment $ T.drop (T.length "http://localhost:1234/") uri
       in loadFromRemotes version path
   | otherwise =
       metaschemaLoader uri  -- Check for metaschemas
 
 -- | Load from test-suite/json-schema-test-suite/remotes/ directory
 loadFromRemotes :: JsonSchemaVersion -> Text -> IO (Either Text Schema)
-loadFromRemotes version path = do
+loadFromRemotes version uri = do
+  -- Strip fragment from URI (e.g., "draft7/name.json#/definitions/orNull" -> "draft7/name.json")
+  let (path, _) = splitUriFragment uri
   let versionDir = case version of
         Draft04 -> "draft4"
         Draft06 -> "draft6"
@@ -89,6 +104,9 @@ loadFromRemotes version path = do
       pathIncludesVersion = any (\v -> T.isPrefixOf (T.pack v <> "/") path)
         ["draft4", "draft6", "draft7", "draft2019-09", "draft2020-12", "v1"]
 
+      -- Extract filename from path (handle subdirectories)
+      filename = T.pack $ takeFileName (T.unpack path)
+      
       -- Try both with and without fractal-openapi/ prefix to support running from different directories
       -- For draft4/06/07, also try v1/ directory as those use the v1 test fixtures
       commonPath1 = T.pack $ "test-suite/json-schema-test-suite/remotes/" <> T.unpack path
@@ -97,32 +115,188 @@ loadFromRemotes version path = do
       versionPath2 = T.pack $ "fractal-openapi/test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
       v1Path1 = T.pack $ "test-suite/json-schema-test-suite/remotes/v1/" <> T.unpack path
       v1Path2 = T.pack $ "fractal-openapi/test-suite/json-schema-test-suite/remotes/v1/" <> T.unpack path
+      
+      -- Also try paths with subdirectories preserved (e.g., "nested/foo-ref-string.json")
+      -- by trying them in version directories
+      subdirVersionPath1 = if T.any (== '/') path && not pathIncludesVersion
+                           then Just $ T.pack $ "test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
+                           else Nothing
+      subdirVersionPath2 = if T.any (== '/') path && not pathIncludesVersion
+                           then Just $ T.pack $ "fractal-openapi/test-suite/json-schema-test-suite/remotes/" <> versionDir <> "/" <> T.unpack path
+                           else Nothing
+      subdirV1Path1 = if T.any (== '/') path && not pathIncludesVersion && (version == Draft04 || version == Draft06 || version == Draft07)
+                      then Just $ T.pack $ "test-suite/json-schema-test-suite/remotes/v1/" <> T.unpack path
+                      else Nothing
+      subdirV1Path2 = if T.any (== '/') path && not pathIncludesVersion && (version == Draft04 || version == Draft06 || version == Draft07)
+                      then Just $ T.pack $ "fractal-openapi/test-suite/json-schema-test-suite/remotes/v1/" <> T.unpack path
+                      else Nothing
 
   -- Try paths with fallback: version-specific first, then v1 (for older drafts), then common
+  -- Include subdirectory paths if applicable
+  -- If path includes version directory, try it as-is first, then fallback to version-specific
   let pathsToTry = if pathIncludesVersion
-                   then [commonPath1, commonPath2]
-                   else case version of
-                     Draft04 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
-                     Draft06 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
-                     Draft07 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
-                     _ -> [versionPath1, versionPath2, commonPath1, commonPath2]
+                   then let basePaths = [commonPath1, commonPath2]
+                            -- Also try in version-specific directories (in case path is wrong)
+                            fallbackPaths = case version of
+                                Draft04 -> [versionPath1, versionPath2, v1Path1, v1Path2]
+                                Draft06 -> [versionPath1, versionPath2, v1Path1, v1Path2]
+                                Draft07 -> [versionPath1, versionPath2, v1Path1, v1Path2]
+                                _ -> [versionPath1, versionPath2]
+                        in basePaths ++ fallbackPaths
+                   else let basePaths = case version of
+                                Draft04 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
+                                Draft06 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
+                                Draft07 -> [versionPath1, versionPath2, v1Path1, v1Path2, commonPath1, commonPath2]
+                                _ -> [versionPath1, versionPath2, commonPath1, commonPath2]
+                            subdirPaths = catMaybes [subdirVersionPath1, subdirVersionPath2, subdirV1Path1, subdirV1Path2]
+                        in basePaths ++ subdirPaths
 
-  tryPaths pathsToTry pathsToTry
+  -- First try direct paths
+  result <- tryPaths path pathsToTry pathsToTry
+  case result of
+    Right schema -> pure $ Right schema
+    Left _ ->
+      -- If direct paths failed, try searching subdirectories
+      -- First try searching with the full path preserved (in case it's in a subdirectory)
+      -- Then fall back to searching for just the filename
+      let searchName = if T.any (== '/') path
+                      then T.pack $ takeFileName (T.unpack path)
+                      else path
+          searchPath = if T.any (== '/') path then path else searchName
+      in do
+        -- Try searching with full path first
+        resultWithPath <- searchSubdirectoriesWithPath version versionDir searchPath
+        case resultWithPath of
+          Right schema -> pure $ Right schema
+          Left _ -> searchSubdirectories version versionDir searchName
   where
-    tryPaths allPaths [] = do
+    tryPaths originalPath allPaths [] = do
       let pathsList = T.intercalate ", " allPaths
-      pure $ Left $ "Could not load schema from any path for: " <> path <> " (tried: " <> pathsList <> ")"
-    tryPaths allPaths (p:ps) = do
-      result <- fileLoaderWithVersion version p
-      case result of
-        Right schema -> pure $ Right schema
-        Left _ -> tryPaths allPaths ps
+      pure $ Left $ "Could not load schema from any path for: " <> originalPath <> " (tried: " <> pathsList <> ")"
+    tryPaths originalPath allPaths (p:ps) = do
+      -- Make path absolute if it's relative
+      currentDir <- getCurrentDirectory
+      let absPath = if isAbsolute (T.unpack p)
+                   then T.unpack p
+                   else currentDir </> T.unpack p
+      -- Check if file exists before trying to load
+      fileExists <- doesFileExist absPath
+      if fileExists
+      then do
+        result <- fileLoaderWithVersion version (T.pack absPath)
+        case result of
+          Right schema -> pure $ Right schema
+          Left err -> tryPaths originalPath allPaths ps  -- Try next path on error
+      else tryPaths originalPath allPaths ps
+    
+    -- Search for file in subdirectories with path preserved
+    searchSubdirectoriesWithPath :: JsonSchemaVersion -> String -> Text -> IO (Either Text Schema)
+    searchSubdirectoriesWithPath v vDir fullPath = do
+      let baseDirs = ["test-suite/json-schema-test-suite/remotes"
+                     , "fractal-openapi/test-suite/json-schema-test-suite/remotes"]
+          versionDirs = case v of
+            Draft04 -> [vDir, "v1"]
+            Draft06 -> [vDir, "v1"]
+            Draft07 -> [vDir, "v1"]
+            _ -> [vDir]
+          -- Try root directories first (where baseUriChangeFolder/ files are), then version directories
+          allDirs = baseDirs ++ [baseDir </> vDir' | baseDir <- baseDirs, vDir' <- versionDirs]
+      
+      -- Try each directory with the full path
+      tryDirsWithPath allDirs
+      where
+        tryDirsWithPath [] = pure $ Left $ "Could not find " <> fullPath <> " in any subdirectory"
+        tryDirsWithPath (dir:dirs) = do
+          exists <- doesDirectoryExist dir
+          if exists
+          then do
+            -- Try the full path directly
+            let fullFilePath = dir </> T.unpack fullPath
+            -- Make path absolute
+            currentDir <- getCurrentDirectory
+            let absFilePath = if isAbsolute fullFilePath
+                             then fullFilePath
+                             else currentDir </> fullFilePath
+            fileExists <- doesFileExist absFilePath
+            if fileExists
+            then do
+              result <- fileLoaderWithVersion v (T.pack absFilePath)
+              case result of
+                Right schema -> pure $ Right schema
+                Left _ -> tryDirsWithPath dirs
+            else tryDirsWithPath dirs
+          else tryDirsWithPath dirs
+    
+    -- Search for file in subdirectories
+    searchSubdirectories :: JsonSchemaVersion -> String -> Text -> IO (Either Text Schema)
+    searchSubdirectories v vDir fname = do
+      let baseDirs = ["test-suite/json-schema-test-suite/remotes"
+                     , "fractal-openapi/test-suite/json-schema-test-suite/remotes"]
+          versionDirs = case v of
+            Draft04 -> [vDir, "v1"]
+            Draft06 -> [vDir, "v1"]
+            Draft07 -> [vDir, "v1"]
+            _ -> [vDir]
+          allDirs = [baseDir </> vDir' | baseDir <- baseDirs, vDir' <- versionDirs] ++
+                    baseDirs
+      
+      -- Try each directory
+      tryDirs allDirs
+      where
+        tryDirs [] = pure $ Left $ "Could not find " <> fname <> " in any subdirectory"
+        tryDirs (dir:dirs) = do
+          exists <- doesDirectoryExist dir
+          if exists
+          then do
+            -- Search recursively in this directory
+            found <- findFileRecursive dir (T.unpack fname)
+            case found of
+              Just filepath -> do
+                -- Make path absolute
+                currentDir <- getCurrentDirectory
+                let absFilePath = if isAbsolute filepath
+                                 then filepath
+                                 else currentDir </> filepath
+                result <- fileLoaderWithVersion v (T.pack absFilePath)
+                case result of
+                  Right schema -> pure $ Right schema
+                  Left _ -> tryDirs dirs
+              Nothing -> tryDirs dirs
+          else tryDirs dirs
+        
+        findFileRecursive :: FilePath -> FilePath -> IO (Maybe FilePath)
+        findFileRecursive dir targetFile = do
+          entries <- listDirectory dir
+          let checkEntry entry = do
+                let fullPath = dir </> entry
+                isDir <- doesDirectoryExist fullPath
+                if isDir
+                then findFileRecursive fullPath targetFile
+                else if entry == targetFile
+                     then pure $ Just fullPath
+                     else pure Nothing
+          results <- mapM checkEntry entries
+          return $ foldr (<|>) Nothing results
 
 -- | Loader for relative paths (no scheme)
 relativePath :: JsonSchemaVersion -> ReferenceLoader
 relativePath version uri
   | T.isPrefixOf "#" uri = noOpLoader uri  -- Fragment only, not a file reference
-  | otherwise = loadFromRemotes version uri
+  | T.isPrefixOf "http://example.com/" uri = 
+      -- Skip intentionally fake example URIs gracefully - return a minimal schema
+      -- so registry building doesn't fail
+      pure $ Right $ Schema
+        { schemaVersion = Just version
+        , schemaMetaschemaURI = Nothing
+        , schemaId = Just uri
+        , schemaCore = BooleanSchema True  -- Always valid schema
+        , schemaVocabulary = Nothing
+        , schemaExtensions = Map.empty
+        , schemaRawKeywords = Map.empty
+        }
+  | otherwise = 
+      let (path, _) = splitUriFragment uri
+      in loadFromRemotes version path
 
 -- | Loader for known metaschemas
 -- Now uses embedded metaschemas with fallback to stubs

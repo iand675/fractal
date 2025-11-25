@@ -26,13 +26,19 @@ import Data.Typeable (Typeable)
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
   , ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, ValidationAnnotations
-  , schemaIf, schemaThen, schemaElse
+  , schemaIf, schemaThen, schemaElse, schemaRawKeywords
+  , schemaVersion, JsonSchemaVersion(..)
   )
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
+  , CompilationContext(..), contextParseSubschema
   )
 import Fractal.JsonSchema.Parser.Internal (parseSchema)
+import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 
 -- | Validate conditional keywords (if/then/else)
 --
@@ -85,18 +91,33 @@ newtype ElseData = ElseData Schema deriving (Typeable)
 
 -- | Compile the 'if' keyword
 compileIf :: CompileFunc IfData
-compileIf value schema _ctx = do
+compileIf value schema ctx = do
   -- Parse the 'if' schema
-  ifSchema' <- case parseSchema value of
-    Left err -> Left $ "Invalid schema in if: " <> T.pack (show err)
+  ifSchema' <- case contextParseSubschema ctx value of
+    Left err -> Left $ "Invalid schema in if: " <> err
     Right s -> Right s
   
-  -- Read adjacent 'then' and 'else' keywords from the schema
+  -- Read adjacent 'then' and 'else' keywords from raw keywords or pre-parsed fields
   let (thenSchema', elseSchema') = case schemaCore schema of
-        ObjectSchema obj -> (schemaThen obj, schemaElse obj)
+        ObjectSchema obj -> 
+          -- Check if pre-parsed (for backward compatibility)
+          case (schemaThen obj, schemaElse obj) of
+            (Just thenS, Just elseS) -> (Just thenS, Just elseS)
+            (Just thenS, Nothing) -> (Just thenS, parseElseFromRaw schema ctx)
+            (Nothing, Just elseS) -> (parseThenFromRaw schema ctx, Just elseS)
+            (Nothing, Nothing) -> (parseThenFromRaw schema ctx, parseElseFromRaw schema ctx)
         _ -> (Nothing, Nothing)
   
   Right $ IfData ifSchema' thenSchema' elseSchema'
+  where
+    parseThenFromRaw s c = Map.lookup "then" (schemaRawKeywords s) >>= \v ->
+      case contextParseSubschema c v of
+        Right schema -> Just schema
+        Left _ -> Nothing
+    parseElseFromRaw s c = Map.lookup "else" (schemaRawKeywords s) >>= \v ->
+      case contextParseSubschema c v of
+        Right schema -> Just schema
+        Left _ -> Nothing
 
 -- | Compile the 'then' keyword (no-op, handled by 'if')
 compileThen :: CompileFunc ThenData
@@ -130,10 +151,23 @@ ifKeyword = KeywordDefinition
   , keywordCompile = compileIf
   , keywordValidate = validateIfKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> schemaIf obj
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case schemaIf obj of
+          Just ifSchema -> Just ifSchema
+          Nothing -> parseIfFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseIfFromRaw :: Schema -> Maybe Schema
+    parseIfFromRaw s = case Map.lookup "if" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Keyword definition for 'then'
 thenKeyword :: KeywordDefinition
@@ -142,10 +176,23 @@ thenKeyword = KeywordDefinition
   , keywordCompile = compileThen
   , keywordValidate = validateThenKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> schemaThen obj
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case schemaThen obj of
+          Just thenSchema -> Just thenSchema
+          Nothing -> parseThenFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseThenFromRaw :: Schema -> Maybe Schema
+    parseThenFromRaw s = case Map.lookup "then" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
 
 -- | Keyword definition for 'else'
 elseKeyword :: KeywordDefinition
@@ -154,7 +201,20 @@ elseKeyword = KeywordDefinition
   , keywordCompile = compileElse
   , keywordValidate = validateElseKeyword
   , keywordNavigation = SingleSchema $ \schema -> case schemaCore schema of
-      ObjectSchema obj -> schemaElse obj
+      ObjectSchema obj -> 
+        -- Check pre-parsed first, then parse on-demand
+        case schemaElse obj of
+          Just elseSchema -> Just elseSchema
+          Nothing -> parseElseFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing
   }
+  where
+    parseElseFromRaw :: Schema -> Maybe Schema
+    parseElseFromRaw s = case Map.lookup "else" (schemaRawKeywords s) of
+      Just val ->
+        let version = fromMaybe Draft202012 (schemaVersion s)
+        in case ParserInternal.parseSchemaValue version val of
+          Right schema -> Just schema
+          Left _ -> Nothing
+      _ -> Nothing
