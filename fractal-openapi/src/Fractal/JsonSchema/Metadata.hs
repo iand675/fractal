@@ -5,6 +5,9 @@ module Fractal.JsonSchema.Metadata
   ) where
 
 import Fractal.JsonSchema.Types
+  ( Schema(..), SchemaCore(..), SchemaObject(..)
+  , schemaAnnotations, SchemaAnnotations(..)
+  )
 import Data.Text (Text)
 
 -- | Extracted metadata from a schema

@@ -38,8 +38,11 @@ import Fractal.JsonSchema.Keyword.Types
   , CompilationContext(..), ValidateFunc, CompileFunc
   )
 import Fractal.JsonSchema.Types 
-  ( Schema, SchemaCore(..), SchemaObject(..), ArrayItemsValidation(..), Regex(..)
-  , schemaCore, schemaValidation, schemaDefs, SchemaValidation(..)
+  ( Schema(..), SchemaCore(..), SchemaObject(..), ArrayItemsValidation(..), Regex(..)
+  , schemaAllOf, schemaAnyOf, schemaOneOf, schemaNot
+  , schemaIf, schemaThen, schemaElse, schemaDefs
+  , schemaCore, schemaValidation, SchemaValidation(..)
+  , schemaRawKeywords, schemaVersion
   , validationProperties, validationPatternProperties, validationAdditionalProperties
   , validationItems, validationPrefixItems, validationContains
   , validationDependentSchemas, validationPropertyNames, validationUnevaluatedProperties

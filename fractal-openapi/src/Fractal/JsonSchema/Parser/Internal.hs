@@ -12,7 +12,7 @@ module Fractal.JsonSchema.Parser.Internal
   ) where
 
 import Fractal.JsonSchema.Types
-  ( Schema(..), SchemaCore(..), SchemaObject(..), SchemaAnnotations(..), SchemaValidation(..)
+  ( Schema(..), SchemaCore(..), SchemaObject(..), ObjectSchemaData(..), SchemaAnnotations(..), SchemaValidation(..)
   , SchemaType(..), OneOrMany(..), ArrayItemsValidation(..), Dependency(..), Regex(..), Reference(..)
   , JsonSchemaVersion(..), ParseError(..), JsonPointer(..), emptyPointer
   )
@@ -164,25 +164,25 @@ parseSchemaObjectMinimal version obj = do
   
   -- Minimal parsing - just create empty structures for composition and conditional keywords
   -- These are not needed for basic navigation, so we leave them as Nothing
-  pure $ SchemaObject
-    { schemaType = schemaType'
-    , schemaEnum = schemaEnum'
-    , schemaConst = schemaConst'
-    , schemaRef = schemaRef'
-    , schemaDynamicRef = schemaDynamicRef'
-    , schemaAnchor = schemaAnchor'
-    , schemaDynamicAnchor = schemaDynamicAnchor'
-    , schemaRecursiveRef = schemaRecursiveRef'
-    , schemaRecursiveAnchor = schemaRecursiveAnchor'
-    , schemaAllOf = Nothing
-    , schemaAnyOf = Nothing
-    , schemaOneOf = Nothing
-    , schemaNot = Nothing
-    , schemaIf = Nothing
-    , schemaThen = Nothing
-    , schemaElse = Nothing
-    , schemaDefs = fromMaybe Map.empty schemaDefs'
-    , schemaValidation = SchemaValidation
+  pure $ SchemaObject $ Right $ ObjectSchemaData
+    { objectSchemaDataType = schemaType'
+    , objectSchemaDataEnum = schemaEnum'
+    , objectSchemaDataConst = schemaConst'
+    , objectSchemaDataRef = schemaRef'
+    , objectSchemaDataDynamicRef = schemaDynamicRef'
+    , objectSchemaDataAnchor = schemaAnchor'
+    , objectSchemaDataDynamicAnchor = schemaDynamicAnchor'
+    , objectSchemaDataRecursiveRef = schemaRecursiveRef'
+    , objectSchemaDataRecursiveAnchor = schemaRecursiveAnchor'
+    , objectSchemaDataAllOf = Nothing
+    , objectSchemaDataAnyOf = Nothing
+    , objectSchemaDataOneOf = Nothing
+    , objectSchemaDataNot = Nothing
+    , objectSchemaDataIf = Nothing
+    , objectSchemaDataThen = Nothing
+    , objectSchemaDataElse = Nothing
+    , objectSchemaDataDefs = fromMaybe Map.empty schemaDefs'
+    , objectSchemaDataValidation = SchemaValidation
         { validationMultipleOf = Nothing
         , validationMaximum = Nothing
         , validationExclusiveMaximum = Nothing
@@ -215,7 +215,7 @@ parseSchemaObjectMinimal version obj = do
         , validationDependentSchemas = Nothing
         , validationDependencies = Nothing
         }
-    , schemaAnnotations = SchemaAnnotations
+    , objectSchemaDataAnnotations = SchemaAnnotations
         { annotationTitle = Nothing
         , annotationDescription = Nothing
         , annotationDefault = Nothing
@@ -223,6 +223,8 @@ parseSchemaObjectMinimal version obj = do
         , annotationReadOnly = Nothing
         , annotationWriteOnly = Nothing
         , annotationExamples = []
+        , annotationComment = Nothing
+        , annotationCodegen = Nothing
         }
     }
 

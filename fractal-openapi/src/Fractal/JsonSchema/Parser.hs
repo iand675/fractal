@@ -29,7 +29,7 @@ module Fractal.JsonSchema.Parser
   ) where
 
 import Fractal.JsonSchema.Types
-  ( Schema(..), SchemaCore(..), SchemaObject(..), SchemaAnnotations(..), SchemaValidation(..)
+  ( Schema(..), SchemaCore(..), SchemaObject(..), ObjectSchemaData(..), SchemaAnnotations(..), SchemaValidation(..)
   , SchemaType(..), OneOrMany(..), ArrayItemsValidation(..), Dependency(..), Regex(..), Reference(..)
   , JsonSchemaVersion(..), ParseError(..), ParseWarning(..), UnknownKeywordMode(..)
   , JsonPointer(..), emptyPointer, ValidationResult
@@ -366,26 +366,26 @@ parseSchemaObject version obj = do
                          then KeyMap.lookup "$recursiveAnchor" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
                          else Nothing
 
-  pure $ SchemaObject
-    { schemaType = schemaType'
-    , schemaEnum = schemaEnum'
-    , schemaConst = schemaConst'
-    , schemaRef = schemaRef'
-    , schemaDynamicRef = dynamicRef'
-    , schemaAnchor = KeyMap.lookup "$anchor" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
-    , schemaDynamicAnchor = dynamicAnchor'
-    , schemaRecursiveRef = recursiveRef'
-    , schemaRecursiveAnchor = recursiveAnchor'
-    , schemaAllOf = schemaAllOf'
-    , schemaAnyOf = schemaAnyOf'
-    , schemaOneOf = schemaOneOf'
-    , schemaNot = schemaNot'
-    , schemaIf = schemaIf'
-    , schemaThen = schemaThen'
-    , schemaElse = schemaElse'
-    , schemaValidation = validation'
-    , schemaAnnotations = annotations
-    , schemaDefs = schemaDefs'
+  pure $ SchemaObject $ Right $ ObjectSchemaData
+    { objectSchemaDataType = schemaType'
+    , objectSchemaDataEnum = schemaEnum'
+    , objectSchemaDataConst = schemaConst'
+    , objectSchemaDataRef = schemaRef'
+    , objectSchemaDataDynamicRef = dynamicRef'
+    , objectSchemaDataAnchor = KeyMap.lookup "$anchor" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
+    , objectSchemaDataDynamicAnchor = dynamicAnchor'
+    , objectSchemaDataRecursiveRef = recursiveRef'
+    , objectSchemaDataRecursiveAnchor = recursiveAnchor'
+    , objectSchemaDataAllOf = schemaAllOf'
+    , objectSchemaDataAnyOf = schemaAnyOf'
+    , objectSchemaDataOneOf = schemaOneOf'
+    , objectSchemaDataNot = schemaNot'
+    , objectSchemaDataIf = schemaIf'
+    , objectSchemaDataThen = schemaThen'
+    , objectSchemaDataElse = schemaElse'
+    , objectSchemaDataValidation = validation'
+    , objectSchemaDataAnnotations = annotations
+    , objectSchemaDataDefs = schemaDefs'
     }
 
 -- | Helper to convert Either to Maybe

@@ -21,6 +21,9 @@ module Fractal.JsonSchema.Types
   , JsonSchemaVersion(..)
   , SchemaCore(..)
   , SchemaObject(..)
+  , ObjectSchemaData(..)  -- The record type for object schemas
+  -- Pattern synonyms BooleanSchemaObject and ObjectSchemaObject are available but not exported
+  -- Use accessor functions (schemaType, schemaRef, etc.) for backward compatibility
   , SchemaType(..)
   , OneOrMany(..)
   
@@ -75,6 +78,27 @@ module Fractal.JsonSchema.Types
   , validationError
   , validationFailure
   , splitUriFragment
+  
+    -- * SchemaObject Accessors (backward compatibility)
+  , schemaType
+  , schemaEnum
+  , schemaConst
+  , schemaRef
+  , schemaDynamicRef
+  , schemaAnchor
+  , schemaDynamicAnchor
+  , schemaRecursiveRef
+  , schemaRecursiveAnchor
+  , schemaAllOf
+  , schemaAnyOf
+  , schemaOneOf
+  , schemaNot
+  , schemaIf
+  , schemaThen
+  , schemaElse
+  , schemaValidation
+  , schemaAnnotations
+  , schemaDefs
   ) where
 
 import Data.Aeson (Value, ToJSON(..), FromJSON(..), object, (.=))
@@ -494,74 +518,214 @@ data SchemaCore
   deriving (Eq, Show, Generic)
   deriving stock Lift
 
--- | Complete schema object with all keyword groups
-data SchemaObject = SchemaObject
+-- | Object schema with all keyword groups
+-- This is the actual record structure containing all schema keywords
+data ObjectSchemaData = ObjectSchemaData
   { -- === Type Keywords ===
-    schemaType :: Maybe (OneOrMany SchemaType)
+    objectSchemaDataType :: Maybe (OneOrMany SchemaType)
     -- ^ Type constraint (single type or union)
   
-  , schemaEnum :: Maybe (NonEmpty Value)
+  , objectSchemaDataEnum :: Maybe (NonEmpty Value)
     -- ^ Enumeration of allowed values (at least one)
   
-  , schemaConst :: Maybe Value
+  , objectSchemaDataConst :: Maybe Value
     -- ^ Single allowed value (draft-06+)
 
     -- === Reference Keywords ===
-  , schemaRef :: Maybe Reference
+  , objectSchemaDataRef :: Maybe Reference
     -- ^ Reference to another schema ($ref)
   
-  , schemaDynamicRef :: Maybe Reference
+  , objectSchemaDataDynamicRef :: Maybe Reference
     -- ^ Dynamic reference (2020-12+)
   
-  , schemaAnchor :: Maybe Text
+  , objectSchemaDataAnchor :: Maybe Text
     -- ^ Named anchor for references ($anchor, 2019-09+)
   
-  , schemaDynamicAnchor :: Maybe Text
+  , objectSchemaDataDynamicAnchor :: Maybe Text
     -- ^ Dynamic anchor (2020-12+)
-
-  , schemaRecursiveRef :: Maybe Reference
+  
+  , objectSchemaDataRecursiveRef :: Maybe Reference
     -- ^ Recursive reference (2019-09, replaced by $dynamicRef in 2020-12)
 
-  , schemaRecursiveAnchor :: Maybe Bool
+  , objectSchemaDataRecursiveAnchor :: Maybe Bool
     -- ^ Recursive anchor (2019-09, replaced by $dynamicAnchor in 2020-12)
 
     -- === Composition Keywords ===
-  , schemaAllOf :: Maybe (NonEmpty Schema)
+  , objectSchemaDataAllOf :: Maybe (NonEmpty Schema)
     -- ^ Must satisfy all subschemas
   
-  , schemaAnyOf :: Maybe (NonEmpty Schema)
+  , objectSchemaDataAnyOf :: Maybe (NonEmpty Schema)
     -- ^ Must satisfy at least one subschema
   
-  , schemaOneOf :: Maybe (NonEmpty Schema)
+  , objectSchemaDataOneOf :: Maybe (NonEmpty Schema)
     -- ^ Must satisfy exactly one subschema
   
-  , schemaNot :: Maybe Schema
+  , objectSchemaDataNot :: Maybe Schema
     -- ^ Must NOT satisfy this subschema
 
     -- === Conditional Keywords (draft-07+) ===
-  , schemaIf :: Maybe Schema
+  , objectSchemaDataIf :: Maybe Schema
     -- ^ Condition schema
   
-  , schemaThen :: Maybe Schema
+  , objectSchemaDataThen :: Maybe Schema
     -- ^ Applied if 'if' validates successfully
   
-  , schemaElse :: Maybe Schema
+  , objectSchemaDataElse :: Maybe Schema
     -- ^ Applied if 'if' validates unsuccessfully
 
     -- === Validation Substructure ===
-  , schemaValidation :: SchemaValidation
+  , objectSchemaDataValidation :: SchemaValidation
     -- ^ All validation keywords
 
     -- === Annotation/Metadata ===
-  , schemaAnnotations :: SchemaAnnotations
+  , objectSchemaDataAnnotations :: SchemaAnnotations
     -- ^ Annotations (title, description, examples, etc.)
 
     -- === Definition Storage ===
-  , schemaDefs :: Map Text Schema
+  , objectSchemaDataDefs :: Map Text Schema
     -- ^ Local schema definitions ($defs or definitions)
   }
   deriving (Eq, Show, Generic)
   deriving stock Lift
+
+-- | Complete schema object: boolean shorthand or full object schema
+-- Under the hood, this is `Either Bool ObjectSchemaData`
+newtype SchemaObject = SchemaObject (Either Bool ObjectSchemaData)
+  deriving (Eq, Show, Generic)
+  deriving stock Lift
+
+-- | Pattern synonym for boolean schema objects
+pattern BooleanSchemaObject :: Bool -> SchemaObject
+pattern BooleanSchemaObject b <- SchemaObject (Left b) where
+  BooleanSchemaObject b = SchemaObject (Left b)
+
+-- | Pattern synonym for object schema objects
+pattern ObjectSchemaObject :: ObjectSchemaData -> SchemaObject
+pattern ObjectSchemaObject obj <- SchemaObject (Right obj) where
+  ObjectSchemaObject obj = SchemaObject (Right obj)
+
+{-# COMPLETE BooleanSchemaObject, ObjectSchemaObject #-}
+
+-- | Accessor functions for SchemaObject fields (backward compatibility)
+-- These return Nothing for boolean schemas
+
+schemaType :: SchemaObject -> Maybe (OneOrMany SchemaType)
+schemaType (SchemaObject (Left _)) = Nothing
+schemaType (SchemaObject (Right obj)) = objectSchemaDataType obj
+
+schemaEnum :: SchemaObject -> Maybe (NonEmpty Value)
+schemaEnum (SchemaObject (Left _)) = Nothing
+schemaEnum (SchemaObject (Right obj)) = objectSchemaDataEnum obj
+
+schemaConst :: SchemaObject -> Maybe Value
+schemaConst (SchemaObject (Left _)) = Nothing
+schemaConst (SchemaObject (Right obj)) = objectSchemaDataConst obj
+
+schemaRef :: SchemaObject -> Maybe Reference
+schemaRef (SchemaObject (Left _)) = Nothing
+schemaRef (SchemaObject (Right obj)) = objectSchemaDataRef obj
+
+schemaDynamicRef :: SchemaObject -> Maybe Reference
+schemaDynamicRef (SchemaObject (Left _)) = Nothing
+schemaDynamicRef (SchemaObject (Right obj)) = objectSchemaDataDynamicRef obj
+
+schemaAnchor :: SchemaObject -> Maybe Text
+schemaAnchor (SchemaObject (Left _)) = Nothing
+schemaAnchor (SchemaObject (Right obj)) = objectSchemaDataAnchor obj
+
+schemaDynamicAnchor :: SchemaObject -> Maybe Text
+schemaDynamicAnchor (SchemaObject (Left _)) = Nothing
+schemaDynamicAnchor (SchemaObject (Right obj)) = objectSchemaDataDynamicAnchor obj
+
+schemaRecursiveRef :: SchemaObject -> Maybe Reference
+schemaRecursiveRef (SchemaObject (Left _)) = Nothing
+schemaRecursiveRef (SchemaObject (Right obj)) = objectSchemaDataRecursiveRef obj
+
+schemaRecursiveAnchor :: SchemaObject -> Maybe Bool
+schemaRecursiveAnchor (SchemaObject (Left _)) = Nothing
+schemaRecursiveAnchor (SchemaObject (Right obj)) = objectSchemaDataRecursiveAnchor obj
+
+schemaAllOf :: SchemaObject -> Maybe (NonEmpty Schema)
+schemaAllOf (SchemaObject (Left _)) = Nothing
+schemaAllOf (SchemaObject (Right obj)) = objectSchemaDataAllOf obj
+
+schemaAnyOf :: SchemaObject -> Maybe (NonEmpty Schema)
+schemaAnyOf (SchemaObject (Left _)) = Nothing
+schemaAnyOf (SchemaObject (Right obj)) = objectSchemaDataAnyOf obj
+
+schemaOneOf :: SchemaObject -> Maybe (NonEmpty Schema)
+schemaOneOf (SchemaObject (Left _)) = Nothing
+schemaOneOf (SchemaObject (Right obj)) = objectSchemaDataOneOf obj
+
+schemaNot :: SchemaObject -> Maybe Schema
+schemaNot (SchemaObject (Left _)) = Nothing
+schemaNot (SchemaObject (Right obj)) = objectSchemaDataNot obj
+
+schemaIf :: SchemaObject -> Maybe Schema
+schemaIf (SchemaObject (Left _)) = Nothing
+schemaIf (SchemaObject (Right obj)) = objectSchemaDataIf obj
+
+schemaThen :: SchemaObject -> Maybe Schema
+schemaThen (SchemaObject (Left _)) = Nothing
+schemaThen (SchemaObject (Right obj)) = objectSchemaDataThen obj
+
+schemaElse :: SchemaObject -> Maybe Schema
+schemaElse (SchemaObject (Left _)) = Nothing
+schemaElse (SchemaObject (Right obj)) = objectSchemaDataElse obj
+
+schemaValidation :: SchemaObject -> SchemaValidation
+schemaValidation (SchemaObject (Left _)) = SchemaValidation
+  { validationMultipleOf = Nothing
+  , validationMaximum = Nothing
+  , validationExclusiveMaximum = Nothing
+  , validationMinimum = Nothing
+  , validationExclusiveMinimum = Nothing
+  , validationMaxLength = Nothing
+  , validationMinLength = Nothing
+  , validationPattern = Nothing
+  , validationFormat = Nothing
+  , validationContentEncoding = Nothing
+  , validationContentMediaType = Nothing
+  , validationItems = Nothing
+  , validationPrefixItems = Nothing
+  , validationContains = Nothing
+  , validationMaxItems = Nothing
+  , validationMinItems = Nothing
+  , validationUniqueItems = Nothing
+  , validationMaxContains = Nothing
+  , validationMinContains = Nothing
+  , validationProperties = Nothing
+  , validationPatternProperties = Nothing
+  , validationAdditionalProperties = Nothing
+  , validationUnevaluatedProperties = Nothing
+  , validationUnevaluatedItems = Nothing
+  , validationPropertyNames = Nothing
+  , validationMaxProperties = Nothing
+  , validationMinProperties = Nothing
+  , validationRequired = Nothing
+  , validationDependentRequired = Nothing
+  , validationDependentSchemas = Nothing
+  , validationDependencies = Nothing
+  }
+schemaValidation (SchemaObject (Right obj)) = objectSchemaDataValidation obj
+
+schemaAnnotations :: SchemaObject -> SchemaAnnotations
+schemaAnnotations (SchemaObject (Left _)) = SchemaAnnotations
+  { annotationTitle = Nothing
+  , annotationDescription = Nothing
+  , annotationDefault = Nothing
+  , annotationExamples = []
+  , annotationDeprecated = Nothing
+  , annotationReadOnly = Nothing
+  , annotationWriteOnly = Nothing
+  , annotationComment = Nothing
+  , annotationCodegen = Nothing
+  }
+schemaAnnotations (SchemaObject (Right obj)) = objectSchemaDataAnnotations obj
+
+schemaDefs :: SchemaObject -> Map Text Schema
+schemaDefs (SchemaObject (Left _)) = Map.empty
+schemaDefs (SchemaObject (Right obj)) = objectSchemaDataDefs obj
 
 -- | Top-level JSON Schema document
 data Schema = Schema
@@ -1458,24 +1622,25 @@ instance ToJSON SchemaObject where
   toJSON _ = object []  -- TODO: Implement in renderer phase
 
 instance FromJSON SchemaObject where
-  parseJSON _ = pure $ SchemaObject  -- TODO: Implement in parser phase
-    { schemaType = Nothing
-    , schemaEnum = Nothing
-    , schemaConst = Nothing
-    , schemaRef = Nothing
-    , schemaDynamicRef = Nothing
-    , schemaAnchor = Nothing
-    , schemaDynamicAnchor = Nothing
-    , schemaRecursiveRef = Nothing
-    , schemaRecursiveAnchor = Nothing
-    , schemaAllOf = Nothing
-    , schemaAnyOf = Nothing
-    , schemaOneOf = Nothing
-    , schemaNot = Nothing
-    , schemaIf = Nothing
-    , schemaThen = Nothing
-    , schemaElse = Nothing
-    , schemaValidation = SchemaValidation
+  parseJSON (Aeson.Bool b) = pure $ SchemaObject (Left b)  -- Boolean schema
+  parseJSON _ = pure $ SchemaObject $ Right $ ObjectSchemaData  -- TODO: Implement in parser phase
+    { objectSchemaDataType = Nothing
+    , objectSchemaDataEnum = Nothing
+    , objectSchemaDataConst = Nothing
+    , objectSchemaDataRef = Nothing
+    , objectSchemaDataDynamicRef = Nothing
+    , objectSchemaDataAnchor = Nothing
+    , objectSchemaDataDynamicAnchor = Nothing
+    , objectSchemaDataRecursiveRef = Nothing
+    , objectSchemaDataRecursiveAnchor = Nothing
+    , objectSchemaDataAllOf = Nothing
+    , objectSchemaDataAnyOf = Nothing
+    , objectSchemaDataOneOf = Nothing
+    , objectSchemaDataNot = Nothing
+    , objectSchemaDataIf = Nothing
+    , objectSchemaDataThen = Nothing
+    , objectSchemaDataElse = Nothing
+    , objectSchemaDataValidation = SchemaValidation
         { validationMultipleOf = Nothing
         , validationMaximum = Nothing
         , validationExclusiveMaximum = Nothing
@@ -1508,7 +1673,7 @@ instance FromJSON SchemaObject where
         , validationDependentSchemas = Nothing
         , validationDependencies = Nothing
         }
-    , schemaAnnotations = SchemaAnnotations
+    , objectSchemaDataAnnotations = SchemaAnnotations
         { annotationTitle = Nothing
         , annotationDescription = Nothing
         , annotationDefault = Nothing
@@ -1519,7 +1684,7 @@ instance FromJSON SchemaObject where
         , annotationComment = Nothing
         , annotationCodegen = Nothing
         }
-    , schemaDefs = Map.empty
+    , objectSchemaDataDefs = Map.empty
     }
 
 instance ToJSON SchemaCore where

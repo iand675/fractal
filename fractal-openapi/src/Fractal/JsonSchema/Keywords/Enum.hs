@@ -20,7 +20,7 @@ import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
-import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure)
+import Fractal.JsonSchema.Types (Schema, SchemaObject(..), ValidationResult, pattern ValidationSuccess, pattern ValidationFailure, validationFailure, schemaEnum)
 
 -- | Compiled data for the 'enum' keyword
 data EnumData = EnumData

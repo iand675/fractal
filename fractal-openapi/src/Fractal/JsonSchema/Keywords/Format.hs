@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | Format keyword validation
 --
 -- Validates format constraints for string values. Supports RFC-compliant validators
@@ -14,6 +15,12 @@ module Fractal.JsonSchema.Keywords.Format
   ) where
 
 import Fractal.JsonSchema.Types
+  ( ValidationContext(..), SchemaObject(..), ValidationResult
+  , schemaValidation, SchemaValidation(..), ValidationConfig(..)
+  , Format(..), FormatBehavior(..), validationFormat
+  , pattern ValidationSuccess, pattern ValidationFailure
+  , validationFailure, ValidationAnnotations(..)
+  )
 import qualified Fractal.JsonSchema.Regex as Regex
 import Data.Aeson (Value(..))
 import Data.Text (Text)
@@ -493,9 +500,9 @@ isValidDuration text =
       let hasY = T.isInfixOf "Y" t
           hasM = T.isInfixOf "M" t
           hasD = T.isInfixOf "D" t
-          pattern = "^(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?$"
+          regexPattern = "^(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?$"
       in (hasY || hasM || hasD) &&
-         case Regex.compileText pattern [] of
+         case Regex.compileText regexPattern [] of
            Left _ -> False
            Right regex -> Regex.test regex (TE.encodeUtf8 t)
 
@@ -505,9 +512,9 @@ isValidDuration text =
           hasM = T.isInfixOf "M" t
           hasS = T.isInfixOf "S" t
           -- Allow decimal seconds
-          pattern = "^(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?$"
+          regexPattern = "^(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\\.[0-9]+)?S)?$"
       in (hasH || hasM || hasS) &&
-         case Regex.compileText pattern [] of
+         case Regex.compileText regexPattern [] of
            Left _ -> False
            Right regex -> Regex.test regex (TE.encodeUtf8 t)
 

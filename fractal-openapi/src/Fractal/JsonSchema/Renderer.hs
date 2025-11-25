@@ -8,6 +8,10 @@ module Fractal.JsonSchema.Renderer
   ) where
 
 import Fractal.JsonSchema.Types
+  ( Schema(..), SchemaCore(..), SchemaObject(..)
+  , schemaRef, schemaAnnotations, schemaId, schemaVersion
+  , SchemaAnnotations(..), Reference(..)
+  )
 import Data.Aeson (Value(..), object, (.=))
 
 -- | Render schema to JSON Value

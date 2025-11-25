@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 -- | String keyword validation
 --
 -- Validates string constraint keywords: minLength, maxLength, pattern,
@@ -8,6 +9,12 @@ module Fractal.JsonSchema.Keywords.String
   ) where
 
 import Fractal.JsonSchema.Types
+  ( ValidationContext(..), SchemaObject(..), ValidationResult
+  , schemaValidation, SchemaValidation(..), ValidationConfig(..)
+  , pattern ValidationSuccess, pattern ValidationFailure
+  , Regex(..), validationPattern, validationFailure
+  , validationContentAssertion, validationContentEncoding, validationContentMediaType
+  )
 import Fractal.JsonSchema.Keyword.Types (combineValidationResults)
 import qualified Fractal.JsonSchema.Regex as Regex
 import Data.Aeson (Value(..))
@@ -43,13 +50,13 @@ validateStringConstraints ctx obj (String txt) =
     validatePattern :: Text -> SchemaValidation -> ValidationResult
     validatePattern text schemaValidation = case validationPattern schemaValidation of
       Nothing -> ValidationSuccess mempty
-      Just (Regex pattern) ->
+      Just (Regex regexPattern) ->
         -- Use ecma262-regex to match pattern
-        case Regex.compileRegex pattern of
+        case Regex.compileRegex regexPattern of
           Right regex ->
             if Regex.matchRegex regex text
               then ValidationSuccess mempty
-              else validationFailure "pattern" $ "String does not match pattern: " <> pattern
+              else validationFailure "pattern" $ "String does not match pattern: " <> regexPattern
           Left err -> validationFailure "pattern" $ "Invalid regex pattern: " <> err
 
     validateContent :: ValidationContext -> Text -> SchemaValidation -> ValidationResult
