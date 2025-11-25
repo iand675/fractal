@@ -14,7 +14,7 @@ module Fractal.JsonSchema.Parser.Internal
 import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..), SchemaAnnotations(..), SchemaValidation(..)
   , SchemaType(..), OneOrMany(..), ArrayItemsValidation(..), Dependency(..), Regex(..), Reference(..)
-  , JsonSchemaVersion(..), ParseError(..), JSONPointer(..), emptyPointer
+  , JsonSchemaVersion(..), ParseError(..), JsonPointer(..), emptyPointer
   )
 import Data.Aeson (Value(..), Object)
 import qualified Data.Aeson as Aeson
@@ -69,7 +69,9 @@ parseSchemaValue version val = case val of
     core <- parseSchemaObjectMinimal version obj
 
     -- Collect all keywords for raw storage
-    let allKeywords = Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
+    let allKeywords = Map.fromList $ do
+          (k, v) <- KeyMap.toList obj
+          pure (Key.toText k, v)
 
     pure $ Schema
       { schemaVersion = Just version

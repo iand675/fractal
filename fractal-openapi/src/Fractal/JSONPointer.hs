@@ -13,9 +13,9 @@
 -- * @"/foo"@ - points to the value of property "foo" at the root
 -- * @"/foo/0"@ - points to the first element of array "foo"
 -- * @"/foo/bar"@ - points to the value of property "bar" within object "foo"
-module Fractal.JSONPointer
+module Fractal.JsonPointer
   ( -- * JSON Pointer Type
-    JSONPointer(..)
+    JsonPointer(..)
     -- * Construction
   , emptyPointer
   , (/.)
@@ -36,7 +36,7 @@ import Network.URI (unEscapeString)
 --
 -- Represented as a sequence of reference tokens (path segments).
 -- The empty list represents the root of the document.
-newtype JSONPointer = JSONPointer [Text]
+newtype JsonPointer = JsonPointer [Text]
   deriving (Eq, Show, Ord, Generic)
   deriving newtype (Semigroup, Monoid, ToJSON, FromJSON, Hashable)
   deriving stock Lift
@@ -44,16 +44,16 @@ newtype JSONPointer = JSONPointer [Text]
 -- | Empty JSON Pointer (root)
 --
 -- >>> emptyPointer
--- JSONPointer []
-emptyPointer :: JSONPointer
-emptyPointer = JSONPointer []
+-- JsonPointer []
+emptyPointer :: JsonPointer
+emptyPointer = JsonPointer []
 
 -- | Append a segment to a JSON Pointer
 --
 -- >>> emptyPointer /. "foo" /. "bar"
--- JSONPointer ["foo","bar"]
-(/.) :: JSONPointer -> Text -> JSONPointer
-(JSONPointer segments) /. seg = JSONPointer (segments <> [seg])
+-- JsonPointer ["foo","bar"]
+(/.) :: JsonPointer -> Text -> JsonPointer
+(JsonPointer segments) /. seg = JsonPointer (segments <> [seg])
 
 infixl 5 /.
 
@@ -69,9 +69,9 @@ infixl 5 /.
 -- "/foo/bar"
 -- >>> renderPointer (emptyPointer /. "a/b" /. "c~d")
 -- "/a~1b/c~0d"
-renderPointer :: JSONPointer -> Text
-renderPointer (JSONPointer []) = ""
-renderPointer (JSONPointer segments) = "/" <> T.intercalate "/" (map escapeSegment segments)
+renderPointer :: JsonPointer -> Text
+renderPointer (JsonPointer []) = ""
+renderPointer (JsonPointer segments) = "/" <> T.intercalate "/" (map escapeSegment segments)
   where
     -- IMPORTANT: Must escape ~ before / to avoid double-escaping
     -- First: ~ → ~0
@@ -83,18 +83,18 @@ renderPointer (JSONPointer segments) = "/" <> T.intercalate "/" (map escapeSegme
 -- Also handles URL-encoded pointers (e.g., %25 → %)
 --
 -- >>> parsePointer ""
--- Right (JSONPointer [])
+-- Right (JsonPointer [])
 -- >>> parsePointer "/foo/bar"
--- Right (JSONPointer ["foo","bar"])
+-- Right (JsonPointer ["foo","bar"])
 -- >>> parsePointer "/a~1b/c~0d"
--- Right (JSONPointer ["a/b","c~d"])
+-- Right (JsonPointer ["a/b","c~d"])
 -- >>> parsePointer "foo"
 -- Left "JSON Pointer must start with /"
-parsePointer :: Text -> Either Text JSONPointer
+parsePointer :: Text -> Either Text JsonPointer
 parsePointer "" = Right emptyPointer
 parsePointer txt
   | T.head txt /= '/' = Left "JSON Pointer must start with /"
-  | otherwise = Right $ JSONPointer $ map unescapeSegment $ T.splitOn "/" (T.tail txt)
+  | otherwise = Right $ JsonPointer $ map unescapeSegment $ T.splitOn "/" (T.tail txt)
   where
     -- IMPORTANT: Must unescape ~1 before ~0 to avoid double-unescaping
     -- First: URL decode (if pointer was in a URI fragment)

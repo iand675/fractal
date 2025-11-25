@@ -21,6 +21,8 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
+import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
@@ -63,24 +65,21 @@ compileProperties _ _ _ = Left "properties must be an object"
 -- | Validate properties using the pluggable keyword system
 validatePropertiesKeyword :: ValidateFunc PropertiesData
 validatePropertiesKeyword recursiveValidator (PropertiesData propSchemas) _ctx (Object objMap) =
-  let evaluations =
-        [ (propName, recursiveValidator propSchema propValue)
-        | (propName, propSchema) <- Map.toList propSchemas
-        , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
-        ]
-      evaluatedProps = Set.fromList [propName | (propName, _) <- evaluations]
-      failures =
-        [ errs
-        | (_, ValidationFailure errs) <- evaluations
-        ]
-      shiftedAnnotations =
-        [ shiftAnnotations (propertyPointer propName) anns
-        | (propName, ValidationSuccess anns) <- evaluations
-        ]
+  let evaluations = do
+        (propName, propSchema) <- Map.toList propSchemas
+        Just propValue <- pure $ KeyMap.lookup (Key.fromText propName) objMap
+        pure (propName, recursiveValidator propSchema propValue)
+      evaluatedProps = Set.fromList $ map fst evaluations
+      failures = do
+        (_, ValidationFailure errs) <- evaluations
+        pure errs
+      shiftedAnnotations = do
+        (propName, ValidationSuccess anns) <- evaluations
+        pure $ shiftAnnotations (propertyPointer propName) anns
   in pure $
        case failures of
          [] -> ValidationSuccess (annotateProperties evaluatedProps <> mconcat shiftedAnnotations)
-         (e:es) -> ValidationFailure (foldl (<>) e es)
+         failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 validatePropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 

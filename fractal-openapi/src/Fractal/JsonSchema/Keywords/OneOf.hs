@@ -72,8 +72,10 @@ validateOneOf
   -> Value                                   -- ^ Value to validate
   -> ValidationResult
 validateOneOf validateSchema schemas value =
-  let results = [validateSchema schema value | schema <- NE.toList schemas]
-      successes = [anns | ValidationSuccess anns <- results]
+  let results = map (flip validateSchema value) (NE.toList schemas)
+      successes = do
+        ValidationSuccess anns <- results
+        pure anns
   in case length successes of
     -- Collect annotations from the single passing branch
     1 -> ValidationSuccess $ head successes
@@ -100,7 +102,10 @@ oneOfKeyword = KeywordDefinition
     parseOneOfFromRaw s = case Map.lookup "oneOf" (schemaRawKeywords s) of
       Just (Array arr) ->
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ ParserInternal.parseSchemaValue version val
+              pure schema
         in if null schemas && not (null arr)
            then Nothing  -- Had items but all failed to parse
            else Just schemas

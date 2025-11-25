@@ -8,6 +8,7 @@ module Fractal.JsonSchema.Keywords.String
   ) where
 
 import Fractal.JsonSchema.Types
+import Fractal.JsonSchema.Keyword.Types (combineValidationResults)
 import qualified Fractal.JsonSchema.Regex as Regex
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as Aeson
@@ -24,7 +25,7 @@ validateStringConstraints :: ValidationContext -> SchemaObject -> Value -> Valid
 validateStringConstraints ctx obj (String txt) =
   let validation = schemaValidation obj
       textLength = T.length txt
-  in combineResults
+  in combineValidationResults
     [ maybe (ValidationSuccess mempty) (\max' ->
         if fromIntegral textLength <= max'
           then ValidationSuccess mempty
@@ -39,13 +40,6 @@ validateStringConstraints ctx obj (String txt) =
     , validateContent ctx txt validation
     ]
   where
-    combineResults :: [ValidationResult] -> ValidationResult
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-      in case failures of
-        [] -> ValidationSuccess mempty
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
     validatePattern :: Text -> SchemaValidation -> ValidationResult
     validatePattern text schemaValidation = case validationPattern schemaValidation of
       Nothing -> ValidationSuccess mempty

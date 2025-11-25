@@ -15,8 +15,8 @@ module Fractal.JsonSchema.Keywords.Items
 
 import Data.Aeson (Value(..))
 import qualified Data.Vector as V
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -124,13 +124,15 @@ validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix pre
             evaluations = [ (idx, recursiveValidator itemSchema item)
                           | (idx, item) <- zip [prefixCount..] remainingItems
                           ]
-            failures = [errs | (_, ValidationFailure errs) <- evaluations]
-            shiftedAnnotations = [ shiftAnnotations (arrayIndexPointer idx) anns
-                                 | (idx, ValidationSuccess anns) <- evaluations
-                                 ]
+            failures = do
+              (_, ValidationFailure errs) <- evaluations
+              pure errs
+            shiftedAnnotations = do
+              (idx, ValidationSuccess anns) <- evaluations
+              pure $ shiftAnnotations (arrayIndexPointer idx) anns
         in pure $ case failures of
           [] -> ValidationSuccess (annotateItems remainingIndices <> mconcat shiftedAnnotations)
-          (e:es) -> ValidationFailure (foldl (<>) e es)
+          failures' -> ValidationFailure $ sconcat (NE.fromList failures')
       _ -> pure (ValidationSuccess mempty)
     else case itemsValidation of
       ItemsSchema itemSchema ->
@@ -138,26 +140,24 @@ validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix pre
               [ (idx, recursiveValidator itemSchema item)
               | (idx, item) <- zip [0..] (toList arr)
               ]
-            indices = Set.fromList [idx | (idx, _) <- evaluations]
-            failures =
-              [ errs
-              | (_, ValidationFailure errs) <- evaluations
-              ]
-            shiftedAnnotations =
-              [ shiftAnnotations (arrayIndexPointer idx) anns
-              | (idx, ValidationSuccess anns) <- evaluations
-              ]
+            indices = Set.fromList $ map fst evaluations
+            failures = do
+              (_, ValidationFailure errs) <- evaluations
+              pure errs
+            shiftedAnnotations = do
+              (idx, ValidationSuccess anns) <- evaluations
+              pure $ shiftAnnotations (arrayIndexPointer idx) anns
         in pure $
              case failures of
                [] -> ValidationSuccess (annotateItems indices <> mconcat shiftedAnnotations)
-               (e:es) -> ValidationFailure (foldl (<>) e es)
+               failures' -> ValidationFailure $ sconcat (NE.fromList failures')
       ItemsTuple tupleSchemas maybeAdditional ->
         let tupleEvaluations =
               [ (idx, recursiveValidator schema item)
               | (idx, (schema, item)) <-
                   zip [0..] (zip (NE.toList tupleSchemas) (toList arr))
               ]
-            tupleIndices = Set.fromList [idx | (idx, _) <- tupleEvaluations]
+            tupleIndices = Set.fromList $ map fst tupleEvaluations
             additionalItems = drop (length tupleSchemas) (toList arr)
             (additionalEvaluations, additionalFailures, additionalIndices, additionalAnnotations) = case maybeAdditional of
               Just addlSchema ->
@@ -178,11 +178,13 @@ validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix pre
                     let evals = [ (idx, recursiveValidator addlSchema item)
                                 | (idx, item) <- zip [length tupleSchemas ..] additionalItems
                                 ]
-                        failures = [errs | (_, ValidationFailure errs) <- evals]
-                        indices = Set.fromList [idx | (idx, _) <- evals]
-                        annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
-                                      | (idx, ValidationSuccess anns) <- evals
-                                      ]
+                        failures = do
+                          (_, ValidationFailure errs) <- evals
+                          pure errs
+                        indices = Set.fromList $ map fst evals
+                        annotations = do
+                          (idx, ValidationSuccess anns) <- evals
+                          pure $ shiftAnnotations (arrayIndexPointer idx) anns
                     in (evals, failures, indices, annotations)
               Nothing -> ([], [], Set.empty, [])
             failures =
@@ -197,7 +199,7 @@ validateItemsKeyword recursiveValidator (ItemsData itemsValidation hasPrefix pre
         in pure $
              case failures of
                [] -> ValidationSuccess (annotateItems allIndices <> mconcat shiftedAnnotations)
-               (e:es) -> ValidationFailure (foldl (<>) e es)
+               failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 
 validateItemsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to arrays
@@ -233,7 +235,10 @@ itemsKeyword = KeywordDefinition
       Just (Array arr) | not (null arr) -> do
         -- Tuple-style items (array of schemas)
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ ParserInternal.parseSchemaValue version val
+              pure schema
         -- Only proceed if we successfully parsed at least one schema
         case schemas of
           [] -> Nothing  -- Failed to parse all schemas

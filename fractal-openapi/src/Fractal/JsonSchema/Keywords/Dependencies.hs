@@ -31,6 +31,7 @@ import Fractal.JsonSchema.Keyword.Types
   , CompilationContext(..), contextParseSubschema
   , combineValidationResults
   )
+import Fractal.JsonSchema.Keywords.Common (extractPropertyNames)
 import Fractal.JsonSchema.Parser.Internal (parseSchemaValue)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
@@ -66,7 +67,9 @@ compileDependencies value schema ctx =
       case v of
         Array arr -> do
           -- Array of required property names
-          let required = Set.fromList [t | String t <- toList arr]
+          let required = Set.fromList $ do
+                String t <- toList arr
+                pure t
           Right (propName, DependencyProperties required)
         Bool b -> do
           -- Boolean schema dependency (true/false)
@@ -91,7 +94,7 @@ compileDependencies value schema ctx =
 -- | Validate dependencies: property and schema dependencies (Draft-04/06/07)
 validateDependenciesKeyword :: ValidateFunc DependenciesData
 validateDependenciesKeyword recursiveValidator (DependenciesData deps) _ctx (Object objMap) =
-  let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+  let presentProps = extractPropertyNames objMap
       results = map (validateDependency presentProps) (Map.toList deps)
   in pure $ combineValidationResults results
   where

@@ -1,8 +1,9 @@
-module Fractal.JsonSchema.JSONPointerSpec (spec) where
+module Fractal.JsonSchema.JsonPointerSpec (spec) where
 
 import Test.Hspec
 import Fractal.JsonSchema.Types
 import Data.Text (Text)
+import Data.Either (isLeft)
 
 spec :: Spec
 spec = describe "JSON Pointer (RFC 6901)" $ do
@@ -98,9 +99,4 @@ spec = describe "JSON Pointer (RFC 6901)" $ do
     it "roundtrips with special characters" $ do
       let ptr = emptyPointer /. "a~b" /. "c/d" /. "e%f"
       parsePointer (renderPointer ptr) `shouldBe` Right ptr
-
--- Helper
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft (Right _) = False
 

@@ -10,9 +10,12 @@ module Fractal.JsonSchema.Keyword.Validate
   ) where
 
 import Control.Monad.Reader (runReader)
+import Control.Monad (guard)
 import Data.Aeson (Value)
 import Data.Maybe (isJust, isNothing)
 import qualified Data.Map.Strict as Map
+import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Keyword.Compile (CompiledKeywords(..))
@@ -50,24 +53,39 @@ validateKeywords
   -> ValidationResult
 validateKeywords recursiveValidator (CompiledKeywords compiled) value ctx config additionalAnns =
   -- Phase 1: Validate regular keywords
-  let regularKeywords = [ck | ck <- Map.elems compiled, isNothing (compiledPostValidate ck)]
+  let regularKeywords = do
+        ck <- Map.elems compiled
+        guard $ isNothing (compiledPostValidate ck)
+        pure ck
       regularResults = map (validateRegular recursiveValidator ctx value config) regularKeywords
-      regularFailures = [errs | ValidationFailure errs <- regularResults]
-      regularAnnotations = [anns | ValidationSuccess anns <- regularResults]
+      regularFailures = do
+        ValidationFailure errs <- regularResults
+        pure errs
+      regularAnnotations = do
+        ValidationSuccess anns <- regularResults
+        pure anns
       combinedAnnotations = additionalAnns <> mconcat regularAnnotations
   in case regularFailures of
-    -- If regular keywords failed, return failure immediately
-    (e:es) -> ValidationFailure (foldl (<>) e es)
     -- Phase 2: Validate post-validation keywords with annotations
     [] ->
-      let postKeywords = [ck | ck <- Map.elems compiled, isJust (compiledPostValidate ck)]
+      let postKeywords = do
+            ck <- Map.elems compiled
+            guard $ isJust (compiledPostValidate ck)
+            pure ck
           postResults = map (validatePost recursiveValidator ctx value config combinedAnnotations) postKeywords
-          postFailures = [errs | ValidationFailure errs <- postResults]
-          postAnnotations = [anns | ValidationSuccess anns <- postResults]
+          postFailures = do
+            ValidationFailure errs <- postResults
+            pure errs
+          postAnnotations = do
+            ValidationSuccess anns <- postResults
+            pure anns
           allAnnotations = combinedAnnotations <> mconcat postAnnotations
-      in case postFailures of
-        [] -> ValidationSuccess allAnnotations
-        (e:es) -> ValidationFailure (foldl (<>) e es)
+      in case NE.nonEmpty postFailures of
+        Nothing -> ValidationSuccess allAnnotations
+        Just failures'' -> ValidationFailure $ sconcat failures''
+    -- If regular keywords failed, return failure immediately
+    -- Note: regularFailures' is guaranteed non-empty because we're in the non-[] branch
+    regularFailures' -> ValidationFailure $ sconcat (NE.fromList regularFailures')
   where
     validateRegular :: (Schema -> Value -> ValidationResult) -> ValidationContext' -> Value -> ValidationConfig -> CompiledKeyword -> ValidationResult
     validateRegular recVal valCtx val cfg (CompiledKeyword _name _data validateFn _postValidate _adjacent) =

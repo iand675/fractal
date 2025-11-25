@@ -6,7 +6,7 @@
 -- simple Either/Boolean to support typed annotations that can be
 -- inspected programmatically.
 --
--- Note: This module depends on Types for JSONPointer, creating a circular
+-- Note: This module depends on Types for JsonPointer, creating a circular
 -- dependency that's resolved via hs-boot files.
 module Fractal.JsonSchema.Validator.Result
   ( -- * Validation Result
@@ -40,15 +40,15 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Typeable (TypeRep, typeOf)
-import Fractal.JSONPointer (JSONPointer, emptyPointer)
+import Fractal.JsonPointer (JsonPointer, emptyPointer)
 
 -- | A single validation error
 data ValidationError = ValidationError
   { errorMessage :: Text
     -- ^ Human-readable error message
-  , errorSchemaPath :: JSONPointer
+  , errorSchemaPath :: JsonPointer
     -- ^ Path in the schema where validation failed
-  , errorInstancePath :: JSONPointer
+  , errorInstancePath :: JsonPointer
     -- ^ Path in the instance where validation failed
   , errorKeyword :: Text
     -- ^ Keyword that produced this error
@@ -85,7 +85,7 @@ instance Show SomeAnnotation where
 -- Maps JSON Pointer paths to lists of annotations produced at that location.
 -- Multiple annotations can exist at the same path (e.g., "title" and "default").
 data AnnotationCollection = AnnotationCollection
-  { annotationsByPath :: Map JSONPointer [SomeAnnotation]
+  { annotationsByPath :: Map JsonPointer [SomeAnnotation]
     -- ^ Annotations indexed by their JSON Pointer path
   }
   deriving (Show)
@@ -97,14 +97,14 @@ emptyAnnotationCollection = AnnotationCollection
   }
 
 -- | Add an annotation at a specific path
-addAnnotation :: Typeable a => JSONPointer -> a -> AnnotationCollection -> AnnotationCollection
+addAnnotation :: Typeable a => JsonPointer -> a -> AnnotationCollection -> AnnotationCollection
 addAnnotation path value (AnnotationCollection m) =
   let annotation = SomeAnnotation value (typeOf value)
       existing = Map.findWithDefault [] path m
   in AnnotationCollection (Map.insert path (existing ++ [annotation]) m)
 
 -- | Get all annotations at a specific path
-getAnnotations :: JSONPointer -> AnnotationCollection -> [SomeAnnotation]
+getAnnotations :: JsonPointer -> AnnotationCollection -> [SomeAnnotation]
 getAnnotations path (AnnotationCollection m) =
   Map.findWithDefault [] path m
 
@@ -112,7 +112,7 @@ getAnnotations path (AnnotationCollection m) =
 --
 -- Uses Typeable to extract annotations matching the requested type.
 -- Returns (path, value) pairs for all matching annotations.
-getAnnotationsOfType :: forall a. Typeable a => AnnotationCollection -> [(JSONPointer, a)]
+getAnnotationsOfType :: forall a. Typeable a => AnnotationCollection -> [(JsonPointer, a)]
 getAnnotationsOfType (AnnotationCollection m) =
   let targetType = typeOf (undefined :: a)
   in [ (path, value)
@@ -134,7 +134,7 @@ instance Monoid AnnotationCollection where
   mempty = emptyAnnotationCollection
 
 -- | Add multiple annotations at once (batch operation)
-addAnnotations :: Typeable a => JSONPointer -> [a] -> AnnotationCollection -> AnnotationCollection
+addAnnotations :: Typeable a => JsonPointer -> [a] -> AnnotationCollection -> AnnotationCollection
 addAnnotations path values col =
   foldr (addAnnotation path) col values
 

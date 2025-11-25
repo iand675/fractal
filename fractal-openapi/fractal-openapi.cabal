@@ -50,7 +50,7 @@ common extensions
 
 library
     import:           warnings, extensions
-    exposed-modules:  Fractal.JSONPointer
+    exposed-modules:  Fractal.JsonPointer
                     , Fractal.JsonSchema
                     , Fractal.JsonSchema.Types
                     , Fractal.JsonSchema.Parser
@@ -110,7 +110,7 @@ library
                     , Fractal.JsonSchema.Keywords.Format
                     -- Standard Registry
                     , Fractal.JsonSchema.Keywords.Standard
-                    , Fractal.JsonSchema.Keywords.Registry
+                    , Fractal.JsonSchema.Keywords.Common
                     , Fractal.JsonSchema.Keywords.Navigation
                     -- Draft-04 Specific
                     , Fractal.JsonSchema.Keywords.Draft04.Minimum
@@ -194,7 +194,7 @@ test-suite fractal-openapi-test
                     , Fractal.JsonSchema.DialectFormatSpec
                     , Fractal.JsonSchema.ComplianceSpec
                     , Fractal.JsonSchema.IntegrationSpec
-                    , Fractal.JsonSchema.JSONPointerSpec
+                    , Fractal.JsonSchema.JsonPointerSpec
                     , Fractal.JsonSchema.EmbeddedMetaschemasSpec
                     , Fractal.JsonSchema.UnknownKeywordSpec
                     , Fractal.JsonSchema.Keyword.KeywordSpec

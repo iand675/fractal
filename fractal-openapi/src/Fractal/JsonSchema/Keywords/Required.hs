@@ -21,6 +21,7 @@ import qualified Data.Aeson.Key as Key
 
 import Fractal.JsonSchema.Keyword.Types (KeywordDefinition(..), KeywordNavigation(..), CompileFunc, ValidateFunc)
 import Fractal.JsonSchema.Types (Schema, validationFailure, ValidationAnnotations(..), ValidationResult, pattern ValidationSuccess)
+import Fractal.JsonSchema.Keywords.Common (extractPropertyNames)
 
 -- | Compiled data for the 'required' keyword
 newtype RequiredData = RequiredData (Set.Set Text)
@@ -42,7 +43,7 @@ compileRequired value _schema _ctx = case value of
 -- | Validate function for 'required' keyword
 validateRequired :: ValidateFunc RequiredData
 validateRequired _recursiveValidator (RequiredData requiredProps) _ctx (Object objMap) =
-  let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+  let presentProps = extractPropertyNames objMap
       missingProps = Set.difference requiredProps presentProps
   in if Set.null missingProps
      then pure (ValidationSuccess mempty)

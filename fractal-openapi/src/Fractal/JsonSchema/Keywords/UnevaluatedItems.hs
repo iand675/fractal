@@ -22,8 +22,11 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import Data.Foldable (toList)
+import Control.Monad (guard)
 import qualified Data.Map.Strict as Map
 import qualified Data.Scientific as Sci
+import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
@@ -88,16 +91,19 @@ validateUnevaluatedItemsPost recursiveValidator (UnevaluatedItemsData unevalSche
       if Set.null unevaluatedIndices
       then pure $ ValidationSuccess mempty
       else
-        let results =
-              [ recursiveValidator unevalSchema (arr V.! idx)
-              | idx <- Set.toList unevaluatedIndices
-              , idx < V.length arr  -- Safety check
-              ]
-            failures = [errs | ValidationFailure errs <- results]
-            annotations = [anns | ValidationSuccess anns <- results]
+        let results = do
+              idx <- Set.toList unevaluatedIndices
+              guard (idx < V.length arr)  -- Safety check
+              pure $ recursiveValidator unevalSchema (arr V.! idx)
+            failures = do
+              ValidationFailure errs <- results
+              pure errs
+            annotations = do
+              ValidationSuccess anns <- results
+              pure anns
         in case failures of
           [] -> pure $ ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
-          (e:es) -> pure $ ValidationFailure $ foldl (<>) e es
+          failures' -> pure $ ValidationFailure $ sconcat (NE.fromList failures')
 validateUnevaluatedItemsPost _ _ _ _ _ = pure $ ValidationSuccess mempty  -- Only applies to arrays
 
 -- | Validate unevaluatedItems with access to collected annotations
@@ -122,16 +128,19 @@ validateUnevaluatedItemsWithAnnotations recursiveValidator obj arr collectedAnno
           -- Unevaluated items are those not in the evaluated set
           unevaluatedIndices = Set.difference allIndices evaluatedIndices
           -- Validate unevaluated items against the schema
-          results =
-            [ recursiveValidator unevalSchema (arr V.! idx)
-            | idx <- Set.toList unevaluatedIndices
-            , idx < V.length arr  -- Safety check
-            ]
-          failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
+          results = do
+            idx <- Set.toList unevaluatedIndices
+            guard (idx < V.length arr)  -- Safety check
+            pure $ recursiveValidator unevalSchema (arr V.! idx)
+          failures = do
+            ValidationFailure errs <- results
+            pure errs
+          annotations = do
+            ValidationSuccess anns <- results
+            pure anns
       in case failures of
         [] -> ValidationSuccess $ annotateItems unevaluatedIndices <> mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
+        failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 -- | Extract evaluated items indices from collected annotations
 -- Only considers annotations at the current instance location (empty pointer)

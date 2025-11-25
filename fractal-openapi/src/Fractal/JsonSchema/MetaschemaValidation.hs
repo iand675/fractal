@@ -10,7 +10,7 @@ module Fractal.JsonSchema.MetaschemaValidation
   ) where
 
 import Fractal.JsonSchema.Types
-  ( Schema, JsonSchemaVersion(..), ParseError(..), JSONPointer(..), emptyPointer
+  ( Schema, JsonSchemaVersion(..), ParseError(..), JsonPointer(..), emptyPointer
   )
 import qualified Fractal.JsonSchema.Validator.Result as VR
 import Fractal.JsonSchema.Validator.Result (ValidationError(..))

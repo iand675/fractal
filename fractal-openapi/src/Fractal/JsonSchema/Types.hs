@@ -38,7 +38,7 @@ module Fractal.JsonSchema.Types
   
     -- * References and Pointers
   , Reference(..)
-  , JSONPointer(..)
+  , JsonPointer(..)
   , emptyPointer
   , (/.)
   , renderPointer
@@ -93,6 +93,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Vector (fromList)
 import Data.Foldable (toList)
 import Data.Maybe (fromMaybe)
+import Control.Monad (guard)
 import Data.Scientific (Scientific)
 import Data.Hashable (Hashable)
 import Data.Typeable (typeOf, cast)
@@ -102,14 +103,14 @@ import Language.Haskell.TH.Syntax (Lift)
 import Network.URI (parseURIReference, uriScheme, uriToString, relativeTo)
 
 -- Import JSON Pointer from separate module (avoids circular dependency)
-import Fractal.JSONPointer (JSONPointer(..), emptyPointer, (/.), renderPointer, parsePointer)
+import Fractal.JsonPointer (JsonPointer(..), emptyPointer, (/.), renderPointer, parsePointer)
 
 -- Import new validation result types
 import qualified Fractal.JsonSchema.Validator.Result as VR
 
 -- | Error during schema parsing
 data ParseError = ParseError
-  { parseErrorPath :: JSONPointer      -- ^ Where in the schema
+  { parseErrorPath :: JsonPointer      -- ^ Where in the schema
   , parseErrorMessage :: Text           -- ^ What went wrong
   , parseErrorContext :: Maybe Value    -- ^ Problematic value
   } deriving (Eq, Show, Generic)
@@ -117,7 +118,7 @@ data ParseError = ParseError
 
 -- | Warning during schema parsing (for unknown keywords in WarnUnknown mode)
 data ParseWarning = ParseWarning
-  { parseWarningPath :: JSONPointer
+  { parseWarningPath :: JsonPointer
   , parseWarningMessage :: Text
   , parseWarningKeyword :: Text
   } deriving (Eq, Show, Generic)
@@ -612,7 +613,7 @@ type SomeAnnotation = VR.SomeAnnotation
 -- | Legacy type for backward compatibility
 -- Maps JSON Pointer -> keyword -> value (untyped annotations)
 newtype ValidationAnnotations = ValidationAnnotations 
-  { unAnnotations :: Map JSONPointer (Map Text Value) }
+  { unAnnotations :: Map JsonPointer (Map Text Value) }
   deriving (Eq, Show, Generic)
 
 instance Semigroup ValidationAnnotations where
@@ -630,7 +631,9 @@ instance Monoid ValidationAnnotations where
 
 instance ToJSON ValidationAnnotations where
   toJSON (ValidationAnnotations m) =
-    Aeson.Object $ KeyMap.fromList [(Key.fromText $ renderPointer k, toJSON v) | (k, v) <- Map.toList m]
+    Aeson.Object $ KeyMap.fromList $ do
+      (k, v) <- Map.toList m
+      pure (Key.fromText $ renderPointer k, toJSON v)
 
 instance FromJSON ValidationAnnotations where
   parseJSON = Aeson.withObject "ValidationAnnotations" $ \obj -> do
@@ -1033,7 +1036,11 @@ buildRegistryWithExternalRefs loader rootSchema = do
                               then registry'
                               else registry' { registrySchemas = Map.insert uri schema (registrySchemas registry') }
                   newRefs = uniqueTexts $ collectExternalReferenceDocs (sriBaseURI info) schema
-                  unseen = [ref | ref <- newRefs, not (Set.member ref loaded), not (Map.member ref (registrySchemas registry''))]
+                  unseen = do
+                    ref <- newRefs
+                    guard $ not (Set.member ref loaded)
+                    guard $ not (Map.member ref (registrySchemas registry''))
+                    pure ref
               loadExternal registry'' (Set.insert uri loaded) (uris <> unseen)
 
     collectExternalReferenceDocs :: Maybe Text -> Schema -> [Text]

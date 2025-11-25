@@ -24,6 +24,7 @@ module Fractal.JsonSchema.Validator
 import Fractal.JsonSchema.Types
 import qualified Fractal.JsonSchema.Validator.Result as VR
 import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import Control.Applicative ((<|>))
 -- Pluggable keyword system
 import Fractal.JsonSchema.Keywords.Standard
   ( standardKeywordRegistry
@@ -36,7 +37,7 @@ import Fractal.JsonSchema.Keywords.Standard
 import Fractal.JsonSchema.Keyword (KeywordRegistry(..), keywordMap, lookupKeyword)
 import qualified Fractal.JsonSchema.Keyword as Keyword
 import qualified Fractal.JsonSchema.Keyword.Types as Keyword.Types
-import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..))
+import Fractal.JsonSchema.Keyword.Types (KeywordNavigation(..), combineValidationResults)
 import Fractal.JsonSchema.Keyword.Compile (compileKeywords, buildCompilationContext, CompiledKeywords(..))
 import qualified Fractal.JsonSchema.Keyword.Validate as KeywordValidate
 import Fractal.JsonSchema.Validator.Annotations
@@ -73,8 +74,8 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Scientific as Sci
 import Data.Foldable (toList)
-import Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, listToMaybe, maybeToList)
-import Control.Monad (mplus)
+import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe, maybeToList)
+import Control.Monad (mplus, guard)
 import Data.Vector (Vector, (!), fromList)
 import qualified Fractal.JsonSchema.Regex as Regex
 import qualified Data.UUID as UUID
@@ -169,17 +170,10 @@ validateValueWithContext ctx schema val =
          validationError "Schema is 'false'"
        ObjectSchema obj ->
          -- First validate against standard keywords, then custom keywords
-         combineResults
+         combineValidationResults
            [ validateAgainstObject ctx ctxWithBase schema obj val
            , validateCustomKeywords ctxWithBase schema val
            ]
-  where
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
 
 -- | Get the effective vocabularies for a schema based on its metaschema.
 -- Returns Nothing if all vocabularies should be active (pre-2019-09 or no vocabulary restrictions).
@@ -333,7 +327,7 @@ validateAgainstObject parentCtx ctx schema obj val =
             ValidationSuccess anns -> anns
             ValidationFailure _ -> mempty
           contentResult = validateObjectSchemaContentWithRefAnnotations ctxWithDynamicScope schema obj val refAnnotations
-      in combineResults [refResult, contentResult]
+      in combineValidationResults [refResult, contentResult]
     else
       -- Pre-2019-09: $ref short-circuits, ignores sibling keywords
       case schemaRef obj of
@@ -581,14 +575,6 @@ validateAgainstObject parentCtx ctx schema obj val =
                                 }
                 Nothing -> ValidationSuccess mempty  -- No ref at all
 
-    combineResults :: [ValidationResult] -> ValidationResult
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-        [] -> ValidationSuccess $ mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
     -- Validate basic validation keywords using pluggable keyword system
     -- Handles: type, enum, const, numeric (multipleOf, maximum, exclusiveMaximum, minimum, exclusiveMinimum),
     --          string (maxLength, minLength, pattern)
@@ -617,7 +603,7 @@ validateAgainstObject parentCtx ctx schema obj val =
              -- Combine keyword annotations (which already include ref annotations) and metadata annotations
              ValidationSuccess (anns <> metadataAnns)
 
--- | Attempt to validate a specific keyword via the registry, falling back to the legacy path.
+-- | Attempt to validate a specific keyword via the registry.
 -- | Validate conditional keywords (if/then/else, draft-07+)
 -- | Compile and validate a subset of keywords via the registry.
 -- | Select the appropriate keyword registry for the schema version.
@@ -669,15 +655,6 @@ compileAndValidateKeywords ctx schema value keywordValues additionalAnns
                    }
              in KeywordValidate.validateKeywords recursiveValidator compiledKeywords value keywordCtx (contextConfig ctx) additionalAnns
 
-combineValidationResults :: [ValidationResult] -> ValidationResult
-combineValidationResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
-      in case failures of
-       [] -> ValidationSuccess (mconcat annotations)
-       (e:es) -> ValidationFailure (foldl (<>) e es)
-
--- Legacy validation helpers removed - now using keyword modules
 -- See Fractal.JsonSchema.Keywords.UnevaluatedProperties and UnevaluatedItems
 -- See Fractal.JsonSchema.Keywords.DependentRequired and DependentSchemas
 -- See Fractal.JsonSchema.Keywords.Dependencies
@@ -740,33 +717,12 @@ resolveReference (Reference refText) ctx
           registry = contextSchemaRegistry ctx
           rootSchema = contextRootSchema ctx
           -- First try as an anchor (also check dynamic anchors for $ref resolution)
-          tryAnchor = case baseURI of
-            Just uri ->
-              -- Try with explicit base URI first (regular anchors)
-              case Map.lookup (uri, anchorName) (registryAnchors registry) of
-                Just s -> Just (s, Just uri, Just s)
-                Nothing ->
-                  -- Also try dynamic anchors (2020-12+: $ref can resolve $dynamicAnchor)
-                  case Map.lookup (uri, anchorName) (registryDynamicAnchors registry) of
-                    Just s -> Just (s, Just uri, Just s)
-                    Nothing ->
-                      -- Fallback: try with empty string base (for fragment-only $id)
-                      case Map.lookup ("", anchorName) (registryAnchors registry) of
-                        Just s -> Just (s, Nothing, Just s)
-                        Nothing ->
-                          case Map.lookup ("", anchorName) (registryDynamicAnchors registry) of
-                            Just s -> Just (s, Nothing, Just s)
-                            Nothing -> lookupAnyAnchor anchorName registry
-            Nothing ->
-              -- No base URI, try with empty string base first
-              case Map.lookup ("", anchorName) (registryAnchors registry) of
-                Just s -> Just (s, Nothing, Just s)
-                Nothing ->
-                  case Map.lookup ("", anchorName) (registryDynamicAnchors registry) of
-                    Just s -> Just (s, Nothing, Just s)
-                    Nothing ->
-                      -- Fallback: try looking up with any base
-                      lookupAnyAnchor anchorName registry
+          -- Use Alternative combinators for cleaner fallback chain
+          tryAnchor = lookupAnchorWithBase baseURI anchorName registry
+            <|> lookupDynamicAnchorWithBase baseURI anchorName registry
+            <|> lookupAnchorWithBase Nothing anchorName registry
+            <|> lookupDynamicAnchorWithBase Nothing anchorName registry
+            <|> lookupAnyAnchor anchorName registry
           -- If not found as anchor, try as JSON Pointer (without leading slash)
           tryPointer = resolvePointerInCurrentSchema ("/" <> anchorName) ctx >>= \schema ->
             Just (schema, contextBaseURI ctx, rootSchema)
@@ -805,13 +761,13 @@ resolveReference (Reference refText) ctx
                       -- Try regular anchors first, then dynamic anchors
                       let anchors = registryAnchors registry
                           dynamicAnchors = registryDynamicAnchors registry
-                          anchorResult = Map.lookup (resolvedUriPart, fragmentPart) anchors
-                          dynamicAnchorResult = Map.lookup (resolvedUriPart, fragmentPart) dynamicAnchors
-                      in case anchorResult of
-                        Just resolved -> Just (resolved, baseContext, Just baseSchema)
-                        Nothing -> case dynamicAnchorResult of
-                          Just resolved -> Just (resolved, baseContext, Just baseSchema)
-                          Nothing -> lookupAnyAnchor fragmentPart registry
+                          anchorResult = Map.lookup (resolvedUriPart, fragmentPart) anchors >>= \s ->
+                            Just (s, baseContext, Just baseSchema)
+                          dynamicAnchorResult = Map.lookup (resolvedUriPart, fragmentPart) dynamicAnchors >>= \s ->
+                            Just (s, baseContext, Just baseSchema)
+                      in anchorResult
+                        <|> dynamicAnchorResult
+                        <|> lookupAnyAnchor fragmentPart registry
                 Nothing ->
                   lookupAnyAnchor fragmentPart registry
   | otherwise =
@@ -830,22 +786,55 @@ resolveReference (Reference refText) ctx
       baseUri <- contextBaseURI ctx'
       Map.lookup baseUri (registrySchemas $ contextSchemaRegistry ctx')
 
+    -- Helper functions for anchor lookup with fallback strategies
+    -- These implement the anchor resolution order specified in JSON Schema:
+    -- 1. Try with explicit base URI (regular anchors)
+    -- 2. Try with explicit base URI (dynamic anchors, draft-2020-12+)
+    -- 3. Try with empty base URI (regular anchors)
+    -- 4. Try with empty base URI (dynamic anchors)
+    -- 5. Try any anchor matching the name (fallback)
+    
+    -- | Look up a regular anchor with a specific base URI
+    --
+    -- Returns the schema, base URI context, and root schema if found.
+    lookupAnchorWithBase :: Maybe Text -> Text -> SchemaRegistry -> Maybe (Schema, Maybe Text, Maybe Schema)
+    lookupAnchorWithBase baseUri anchorName registry =
+      let uri = fromMaybe "" baseUri
+      in Map.lookup (uri, anchorName) (registryAnchors registry) >>= \s ->
+           Just (s, baseUri, Just s)
+
+    -- | Look up a dynamic anchor with a specific base URI
+    --
+    -- Dynamic anchors are resolved in the same way as regular anchors but
+    -- are stored separately for draft-2020-12+ compatibility.
+    lookupDynamicAnchorWithBase :: Maybe Text -> Text -> SchemaRegistry -> Maybe (Schema, Maybe Text, Maybe Schema)
+    lookupDynamicAnchorWithBase baseUri anchorName registry =
+      let uri = fromMaybe "" baseUri
+      in Map.lookup (uri, anchorName) (registryDynamicAnchors registry) >>= \s ->
+           Just (s, baseUri, Just s)
+
+    -- | Look up an anchor by name across all base URIs
+    --
+    -- This is the final fallback when anchor lookup with specific base URIs fails.
+    -- It searches both regular and dynamic anchors, returning the first match found.
     lookupAnyAnchor :: Text -> SchemaRegistry -> Maybe (Schema, Maybe Text, Maybe Schema)
     lookupAnyAnchor anchorName registry =
       -- Try regular anchors first
-      case [ (base, schema)
-           | ((base, name), schema) <- Map.toList (registryAnchors registry)
-           , name == anchorName
-           ] of
+      let regularAnchors = do
+            ((base, name), schema) <- Map.toList (registryAnchors registry)
+            guard (name == anchorName)
+            pure (base, schema)
+      in case regularAnchors of
         ((baseUri, schema):_) ->
           let baseResult = if T.null baseUri then Nothing else Just baseUri
           in Just (schema, baseResult, Just schema)
         [] ->
           -- Also check dynamic anchors (2020-12+: $ref can resolve $dynamicAnchor)
-          case [ (base, schema)
-               | ((base, name), schema) <- Map.toList (registryDynamicAnchors registry)
-               , name == anchorName
-               ] of
+          let dynamicAnchors = do
+                ((base, name), schema) <- Map.toList (registryDynamicAnchors registry)
+                guard (name == anchorName)
+                pure (base, schema)
+          in case dynamicAnchors of
             ((baseUri, schema):_) ->
               let baseResult = if T.null baseUri then Nothing else Just baseUri
               in Just (schema, baseResult, Just schema)
@@ -872,7 +861,7 @@ resolvePointerInSchemaWithBase :: Text -> Schema -> Maybe Text -> Maybe (Schema,
 resolvePointerInSchemaWithBase pointer schema currentBase =
   case parsePointer pointer of
     Left _ -> Nothing
-    Right (JSONPointer segments) -> followPointer segments schema currentBase
+    Right (JsonPointer segments) -> followPointer segments schema currentBase
   where
     -- Get the appropriate keyword registry based on schema version
     getRegistry :: Schema -> Keyword.KeywordRegistry
@@ -1222,11 +1211,5 @@ validateCustomKeywords ctx schema val =
               ValidationSuccess mempty
         | (keyword, _value) <- Map.toList extensions
         ]
-  in combineResults results
-  where
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-      in case failures of
-        [] -> ValidationSuccess mempty
-        (e:es) -> ValidationFailure $ foldl (<>) e es
+  in combineValidationResults results
 

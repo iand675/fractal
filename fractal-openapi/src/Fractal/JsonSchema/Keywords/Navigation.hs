@@ -28,8 +28,8 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 import qualified Text.Read as Read
 
 import Fractal.JsonSchema.Keyword (mkNavigableKeyword)
@@ -98,7 +98,9 @@ patternPropertiesKeyword = mkNavigableKeyword
       case validationPatternProperties (schemaValidation obj) of
         Just patterns ->
           -- Convert Regex keys to Text keys for navigation
-          Just $ Map.fromList [(pat, schema) | (Regex pat, schema) <- Map.toList patterns]
+          Just $ Map.fromList $ do
+            (Regex pat, schema) <- Map.toList patterns
+            pure (pat, schema)
         Nothing -> parsePatternPropertiesFromRaw schema
     _ -> Nothing)
   where
@@ -171,7 +173,10 @@ itemsKeyword = mkNavigableKeyword
       Just (Array arr) | not (null arr) -> do
         -- Tuple-style items (array of schemas)
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ parseSchemaValue version val
+              pure schema
         -- Only proceed if we successfully parsed at least one schema
         case schemas of
           [] -> Nothing  -- Failed to parse all schemas
@@ -208,7 +213,10 @@ prefixItemsKeyword = mkNavigableKeyword
     parsePrefixItemsFromRaw s = case Map.lookup "prefixItems" (schemaRawKeywords s) of
       Just (Array arr) ->
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ parseSchemaValue version val
+              pure schema
         in case schemas of
           [] -> Nothing
           _ -> Just schemas
@@ -255,7 +263,10 @@ allOfKeyword = mkNavigableKeyword
     parseAllOfFromRaw s = case Map.lookup "allOf" (schemaRawKeywords s) of
       Just (Array arr) ->
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ parseSchemaValue version val
+              pure schema
         in if null schemas && not (null arr)
            then Nothing  -- Had items but all failed to parse
            else Just schemas
@@ -279,7 +290,10 @@ anyOfKeyword = mkNavigableKeyword
     parseAnyOfFromRaw s = case Map.lookup "anyOf" (schemaRawKeywords s) of
       Just (Array arr) ->
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ parseSchemaValue version val
+              pure schema
         in if null schemas && not (null arr)
            then Nothing  -- Had items but all failed to parse
            else Just schemas
@@ -303,7 +317,10 @@ oneOfKeyword = mkNavigableKeyword
     parseOneOfFromRaw s = case Map.lookup "oneOf" (schemaRawKeywords s) of
       Just (Array arr) ->
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ parseSchemaValue version val
+              pure schema
         in if null schemas && not (null arr)
            then Nothing  -- Had items but all failed to parse
            else Just schemas
@@ -517,10 +534,12 @@ validateDefsKeyword recursiveValidator (DefsData defsValidationSchema) _ctx (Obj
             [ recursiveValidator defsValidationSchema defValue
             | (defName, defValue) <- KeyMap.toList defsObj
             ]
-          failures = [errs | ValidationFailure errs <- results]
+          failures = do
+            ValidationFailure errs <- results
+            pure errs
       in pure $ case failures of
         [] -> ValidationSuccess mempty
-        (e:es) -> ValidationFailure $ foldl (<>) e es
+        failures' -> ValidationFailure $ sconcat (NE.fromList failures')
     Just _ -> 
       -- $defs is not an object
       pure $ ValidationFailure $ ValidationErrors $ pure $ VR.ValidationError

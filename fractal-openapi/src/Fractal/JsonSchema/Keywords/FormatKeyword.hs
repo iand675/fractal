@@ -10,10 +10,12 @@ module Fractal.JsonSchema.Keywords.FormatKeyword
   , FormatData(..)
   ) where
 
-import Data.Aeson (Value(..))
+import Data.Aeson (Value(..), FromJSON(..))
 import Control.Monad.Reader (ask)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Typeable (Typeable)
+import qualified Data.Aeson as Aeson
 
 import Fractal.JsonSchema.Types 
   ( Format(..)
@@ -33,32 +35,11 @@ newtype FormatData = FormatData Format
 
 -- | Compile the format keyword
 compileFormat :: CompileFunc FormatData
-compileFormat (String formatName) _schema _ctx =
-  -- Parse format name into Format type
-  Right $ FormatData $ parseFormatName formatName
-  where
-    parseFormatName "email" = Email
-    parseFormatName "idn-email" = IDNEmail
-    parseFormatName "uri" = URI
-    parseFormatName "uri-reference" = URIRef
-    parseFormatName "iri" = IRI
-    parseFormatName "iri-reference" = IRIRef
-    parseFormatName "ipv4" = IPv4
-    parseFormatName "ipv6" = IPv6
-    parseFormatName "uuid" = UUID
-    parseFormatName "date-time" = DateTime
-    parseFormatName "date" = Date
-    parseFormatName "time" = Time
-    parseFormatName "duration" = Duration
-    parseFormatName "hostname" = Hostname
-    parseFormatName "idn-hostname" = IDNHostname
-    parseFormatName "json-pointer" = JSONPointerFormat
-    parseFormatName "relative-json-pointer" = RelativeJSONPointerFormat
-    parseFormatName "regex" = RegexFormat
-    parseFormatName "uri-template" = URITemplate
-    parseFormatName other = CustomFormat other
-
-compileFormat _ _ _ = Left "format must be a string"
+compileFormat value _schema _ctx =
+  -- Use the existing FromJSON instance for Format to avoid code duplication
+  case Aeson.fromJSON value of
+    Aeson.Success format -> Right $ FormatData format
+    Aeson.Error err -> Left $ "Invalid format value: " <> T.pack err
 
 validateFormatKeyword :: ValidateFunc FormatData
 validateFormatKeyword _recursiveValidator (FormatData format) _ctx (String txt) = do
@@ -71,9 +52,9 @@ validateFormatKeyword _recursiveValidator (FormatData format) _ctx (String txt) 
   pure $
     if assertionMode
       then result
-      else case result of
-             ValidationSuccess anns -> ValidationSuccess anns
-             ValidationFailure _ -> ValidationSuccess mempty
+      else ValidationSuccess $ case result of
+             ValidationSuccess anns -> anns
+             ValidationFailure _ -> mempty
 validateFormatKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to strings
 
 -- | Keyword definition for format

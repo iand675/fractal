@@ -45,7 +45,7 @@ class HasSchema a where
   schemaFor :: Proxy a -> Schema
   
   -- | Optionally provide the JSON Pointer to the schema location
-  schemaPath :: Proxy a -> Maybe JSONPointer
+  schemaPath :: Proxy a -> Maybe JsonPointer
   schemaPath _ = Nothing
 
 -- | Validate a value against its schema
@@ -106,7 +106,7 @@ data CodegenContext = CodegenContext
   { codegenSchema :: Schema
     -- ^ The schema being generated from
   
-  , codegenPath :: JSONPointer
+  , codegenPath :: JsonPointer
     -- ^ Path to this schema in the document
   
   , codegenRegistry :: TypeRegistry

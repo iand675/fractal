@@ -11,6 +11,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.List (sort)
+import Data.Either (isLeft)
 
 import Fractal.JsonSchema.Dialect
 import Fractal.JsonSchema.Types (JsonSchemaVersion(..), pattern ValidationSuccess)
@@ -297,8 +298,3 @@ spec = describe "Dialect" $ do
         let registry = Vocab.standardDialectRegistry
         Vocab.getDialectByVersion Draft04 registry `shouldSatisfy` (/= Nothing)
         Vocab.getDialectByVersion Draft202012 registry `shouldSatisfy` (/= Nothing)
-
--- Helper to check if Either is Left
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft _        = False

@@ -21,7 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector, fromList)
 
-import Fractal.JSONPointer (JSONPointer(..), emptyPointer)
+import Fractal.JsonPointer (JsonPointer(..), emptyPointer)
 import Fractal.JsonSchema.Types (ValidationAnnotations(..))
 
 -- | Create annotation for evaluated properties at current location.
@@ -49,15 +49,15 @@ annotateItems indices =
     fromListNumber = fromList . map (Number . fromIntegral) . Set.toList
 
 -- | Shift all annotation pointers by prepending a prefix.
-shiftAnnotations :: JSONPointer -> ValidationAnnotations -> ValidationAnnotations
+shiftAnnotations :: JsonPointer -> ValidationAnnotations -> ValidationAnnotations
 shiftAnnotations prefix (ValidationAnnotations annMap) =
   ValidationAnnotations $ Map.mapKeys (prefix <>) annMap
 
 -- | Create a JSON Pointer for an array index.
-arrayIndexPointer :: Int -> JSONPointer
-arrayIndexPointer idx = JSONPointer [T.pack (show idx)]
+arrayIndexPointer :: Int -> JsonPointer
+arrayIndexPointer idx = JsonPointer [T.pack (show idx)]
 
 -- | Create a JSON Pointer for an object property.
-propertyPointer :: Text -> JSONPointer
-propertyPointer prop = JSONPointer [prop]
+propertyPointer :: Text -> JsonPointer
+propertyPointer prop = JsonPointer [prop]
 

@@ -29,7 +29,10 @@ import Fractal.JsonSchema.Types
   , schemaValidation, ValidationAnnotations(..), schemaRawKeywords
   , schemaVersion, JsonSchemaVersion(..)
   )
+import Fractal.JsonSchema.Keywords.Common (extractPropertyNames)
 import qualified Fractal.JsonSchema.Parser.Internal as ParserInternal
+import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 import Fractal.JsonSchema.Keyword.Types 
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
@@ -65,7 +68,7 @@ compileAdditionalProperties value schema ctx = do
   
   -- Read adjacent 'properties' and 'patternProperties' keywords from schema
   -- Parse on-demand from raw keywords if not pre-parsed
-  let (definedProps, patterns) = case schemaCore schema of
+  (definedProps, patterns) <- case schemaCore schema of
         ObjectSchema obj ->
           let validation = schemaValidation obj
               props = case validationProperties validation of
@@ -74,19 +77,21 @@ compileAdditionalProperties value schema ctx = do
               pats = case validationPatternProperties validation of
                 Just pp -> map fst (Map.toList pp)
                 Nothing -> parsePatternPropertiesKeysFromRaw schema
-          in (props, pats)
-        _ -> error "additionalProperties can only appear in object schemas"
+          in Right (props, pats)
+        _ -> Left "additionalProperties can only appear in object schemas"
   
   Right $ AdditionalPropertiesData addlSchema definedProps patterns
   where
     parsePropertiesKeysFromRaw :: Schema -> Set Text
     parsePropertiesKeysFromRaw s = case Map.lookup "properties" (schemaRawKeywords s) of
-      Just (Object propsObj) -> Set.fromList [Key.toText k | k <- KeyMap.keys propsObj]
+      Just (Object propsObj) -> extractPropertyNames propsObj
       _ -> Set.empty
     
     parsePatternPropertiesKeysFromRaw :: Schema -> [Regex]
     parsePatternPropertiesKeysFromRaw s = case Map.lookup "patternProperties" (schemaRawKeywords s) of
-      Just (Object patternsObj) -> [Regex (Key.toText k) | k <- KeyMap.keys patternsObj]
+      Just (Object patternsObj) -> do
+        k <- KeyMap.keys patternsObj
+        pure $ Regex (Key.toText k)
       _ -> []
 
 -- | Check if a property name matches any pattern
@@ -111,19 +116,17 @@ validateAdditionalPropertiesKeyword recursiveValidator (AdditionalPropertiesData
         [ (propName, recursiveValidator addlSchema propValue)
         | (propName, propValue) <- additionalProps
         ]
-      additionalPropNames = Set.fromList [propName | (propName, _) <- evaluations]
-      failures =
-        [ errs
-        | (_, ValidationFailure errs) <- evaluations
-        ]
-      shiftedAnnotations =
-        [ shiftAnnotations (propertyPointer propName) anns
-        | (propName, ValidationSuccess anns) <- evaluations
-        ]
+      additionalPropNames = Set.fromList $ map fst evaluations
+      failures = do
+        (_, ValidationFailure errs) <- evaluations
+        pure errs
+      shiftedAnnotations = do
+        (propName, ValidationSuccess anns) <- evaluations
+        pure $ shiftAnnotations (propertyPointer propName) anns
   in pure $
        case failures of
          [] -> ValidationSuccess (annotateProperties additionalPropNames <> mconcat shiftedAnnotations)
-         (e:es) -> ValidationFailure (foldl (<>) e es)
+         failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 validateAdditionalPropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 

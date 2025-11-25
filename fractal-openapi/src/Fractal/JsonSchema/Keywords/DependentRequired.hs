@@ -21,7 +21,6 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Foldable (toList)
 
@@ -35,6 +34,7 @@ import Fractal.JsonSchema.Keyword.Types
   ( KeywordDefinition(..), CompileFunc, ValidateFunc
   , ValidationContext'(..), KeywordNavigation(..)
   )
+import Fractal.JsonSchema.Keywords.Common (extractPropertyNames)
 
 -- | Compiled data for dependentRequired keyword
 -- Maps property names to sets of required properties
@@ -62,7 +62,7 @@ compileDependentRequired _ _ _ = Left "dependentRequired must be an object"
 -- | Validate dependentRequired using the pluggable keyword system
 validateDependentRequiredKeyword :: ValidateFunc DependentRequiredData
 validateDependentRequiredKeyword _recursiveValidator (DependentRequiredData depReqMap) _ctx (Object objMap) =
-  let presentProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+  let presentProps = extractPropertyNames objMap
       errors =
         [ VR.ValidationError
             { VR.errorKeyword = "dependentRequired"

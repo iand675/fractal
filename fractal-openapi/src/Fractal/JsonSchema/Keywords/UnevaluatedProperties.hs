@@ -24,6 +24,8 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
+import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..)
@@ -39,6 +41,7 @@ import Fractal.JsonSchema.Keyword.Types
   )
 import Fractal.JsonSchema.Validator.Annotations (annotateProperties)
 import Fractal.JsonSchema.Keyword.Types (CompilationContext(..), contextParseSubschema)
+import Fractal.JsonSchema.Keywords.Common (extractPropertyNames)
 
 -- | Compiled data for unevaluatedProperties keyword
 newtype UnevaluatedPropertiesData = UnevaluatedPropertiesData Schema
@@ -68,7 +71,7 @@ validateUnevaluatedPropertiesPost recursiveValidator (UnevaluatedPropertiesData 
   -- Extract evaluated properties from annotations
   let evaluatedProps = extractEvaluatedProperties collectedAnnotations
       -- All properties in the object
-      allProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+      allProps = extractPropertyNames objMap
       -- Unevaluated properties are those not in the evaluated set
       unevaluatedProps = Set.difference allProps evaluatedProps
   in if Set.null unevaluatedProps
@@ -76,16 +79,19 @@ validateUnevaluatedPropertiesPost recursiveValidator (UnevaluatedPropertiesData 
      then pure $ ValidationSuccess mempty
      else
        -- Validate unevaluated properties against the schema
-       let results = 
-             [ recursiveValidator unevalSchema propValue
-             | propName <- Set.toList unevaluatedProps
-             , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
-             ]
-           failures = [errs | ValidationFailure errs <- results]
-           annotations = [anns | ValidationSuccess anns <- results]
+       let results = do
+             propName <- Set.toList unevaluatedProps
+             Just propValue <- pure $ KeyMap.lookup (Key.fromText propName) objMap
+             pure $ recursiveValidator unevalSchema propValue
+           failures = do
+             ValidationFailure errs <- results
+             pure errs
+           annotations = do
+             ValidationSuccess anns <- results
+             pure anns
        in case failures of
          [] -> pure $ ValidationSuccess $ annotateProperties unevaluatedProps <> mconcat annotations
-         (e:es) -> pure $ ValidationFailure $ foldl (<>) e es
+         failures' -> pure $ ValidationFailure $ sconcat (NE.fromList failures')
 validateUnevaluatedPropertiesPost _ _ _ _ _ = pure $ ValidationSuccess mempty  -- Only applies to objects
 
 -- | Validate unevaluatedProperties with access to collected annotations
@@ -106,20 +112,23 @@ validateUnevaluatedPropertiesWithAnnotations recursiveValidator obj objMap colle
       let -- Extract evaluated properties from annotations
           evaluatedProps = extractEvaluatedProperties collectedAnnotations
           -- All properties in the object
-          allProps = Set.fromList [Key.toText k | k <- KeyMap.keys objMap]
+          allProps = extractPropertyNames objMap
           -- Unevaluated properties are those not in the evaluated set
           unevaluatedProps = Set.difference allProps evaluatedProps
           -- Validate unevaluated properties against the schema
-          results = 
-            [ recursiveValidator unevalSchema propValue
-            | propName <- Set.toList unevaluatedProps
-            , Just propValue <- [KeyMap.lookup (Key.fromText propName) objMap]
-            ]
-          failures = [errs | ValidationFailure errs <- results]
-          annotations = [anns | ValidationSuccess anns <- results]
+          results = do
+            propName <- Set.toList unevaluatedProps
+            Just propValue <- pure $ KeyMap.lookup (Key.fromText propName) objMap
+            pure $ recursiveValidator unevalSchema propValue
+          failures = do
+            ValidationFailure errs <- results
+            pure errs
+          annotations = do
+            ValidationSuccess anns <- results
+            pure anns
       in case failures of
         [] -> ValidationSuccess $ annotateProperties unevaluatedProps <> mconcat annotations
-        (e:es) -> ValidationFailure $ foldl (<>) e es
+        failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 -- | Extract evaluated properties from collected annotations
 -- Only considers annotations at the current instance location (empty pointer)

@@ -22,6 +22,8 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
+import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..), Regex(..)
@@ -66,28 +68,25 @@ compilePatternProperties _ _ _ = Left "patternProperties must be an object"
 -- | Validate patternProperties using the pluggable keyword system
 validatePatternPropertiesKeyword :: ValidateFunc PatternPropertiesData
 validatePatternPropertiesKeyword recursiveValidator (PatternPropertiesData patternSchemas) _ctx (Object objMap) =
-  let matches =
-        [ (propName, recursiveValidator patternSchema propValue)
-        | (k, propValue) <- KeyMap.toList objMap
-        , let propName = Key.toText k
-        , (Regex patternText, patternSchema) <- Map.toList patternSchemas
-        , case RegexModule.compileRegex patternText of
-            Right regex -> RegexModule.matchRegex regex propName
-            Left _ -> False
-        ]
-      matchedProps = Set.fromList [propName | (propName, _) <- matches]
-      failures =
-        [ errs
-        | (_, ValidationFailure errs) <- matches
-        ]
-      shiftedAnnotations =
-        [ shiftAnnotations (propertyPointer propName) anns
-        | (propName, ValidationSuccess anns) <- matches
-        ]
+  let matches = do
+        (k, propValue) <- KeyMap.toList objMap
+        let propName = Key.toText k
+        (Regex patternText, patternSchema) <- Map.toList patternSchemas
+        case RegexModule.compileRegex patternText of
+          Right regex | RegexModule.matchRegex regex propName ->
+            pure (propName, recursiveValidator patternSchema propValue)
+          _ -> []
+      matchedProps = Set.fromList $ map fst matches
+      failures = do
+        (_, ValidationFailure errs) <- matches
+        pure errs
+      shiftedAnnotations = do
+        (propName, ValidationSuccess anns) <- matches
+        pure $ shiftAnnotations (propertyPointer propName) anns
   in pure $
        case failures of
          [] -> ValidationSuccess (annotateProperties matchedProps <> mconcat shiftedAnnotations)
-         (e:es) -> ValidationFailure (foldl (<>) e es)
+         failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 validatePatternPropertiesKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to objects
 
@@ -103,7 +102,9 @@ patternPropertiesKeyword = KeywordDefinition
         case validationPatternProperties (schemaValidation obj) of
           Just patterns ->
             -- Convert Regex keys to Text keys for navigation
-            Just $ Map.fromList [(pat, schema') | (Regex pat, schema') <- Map.toList patterns]
+            Just $ Map.fromList $ do
+              (Regex pat, schema') <- Map.toList patterns
+              pure (pat, schema')
           Nothing -> parsePatternPropertiesFromRaw schema
       _ -> Nothing
   , keywordPostValidate = Nothing

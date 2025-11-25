@@ -32,7 +32,7 @@ import Fractal.JsonSchema.Types
   ( Schema(..), SchemaCore(..), SchemaObject(..), SchemaAnnotations(..), SchemaValidation(..)
   , SchemaType(..), OneOrMany(..), ArrayItemsValidation(..), Dependency(..), Regex(..), Reference(..)
   , JsonSchemaVersion(..), ParseError(..), ParseWarning(..), UnknownKeywordMode(..)
-  , JSONPointer(..), emptyPointer, ValidationResult
+  , JsonPointer(..), emptyPointer, ValidationResult
   )
 import Fractal.JsonSchema.Vocabulary (VocabularyRegistry, lookupDialect)
 import Fractal.JsonSchema.Dialect (Dialect, dialectURI, dialectVersion, dialectUnknownKeywords)
@@ -165,7 +165,9 @@ parseSchemaWithVersion version val = case val of
           , "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"
           , "multipleOf"
           ]
-    let allKeywords = Map.fromList [(Key.toText k, v) | (k, v) <- KeyMap.toList obj]
+    let allKeywords = Map.fromList $ do
+          (k, v) <- KeyMap.toList obj
+          pure (Key.toText k, v)
     let extensions = Map.filterWithKey (\k _ -> not $ Set.member k knownKeywords) allKeywords
 
     schema <- pure $ Schema
@@ -279,7 +281,10 @@ parseSchemaObject version obj = do
   -- Parse composition keywords
   let parseNonEmptySchemas key = KeyMap.lookup key obj >>= \v -> case v of
         Array arr -> do
-          let schemas = [schema | val <- toList arr, Right schema <- [parseSubschema version val]]
+          let schemas = do
+                val <- toList arr
+                Right schema <- pure $ parseSubschema version val
+                pure schema
           NE.nonEmpty schemas
         _ -> Nothing
   
@@ -466,7 +471,9 @@ parseValidationKeywords version obj = do
   let maxProperties = KeyMap.lookup "maxProperties" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
   let minProperties = KeyMap.lookup "minProperties" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
   let required' = KeyMap.lookup "required" obj >>= \v -> case v of
-        Array arr -> Just $ Set.fromList [t | String t <- toList arr]
+        Array arr -> Just $ Set.fromList $ do
+          String t <- toList arr
+          pure t
         _ -> Nothing
   let dependentRequired' = if version >= Draft201909
                            then KeyMap.lookup "dependentRequired" obj >>= AesonTypes.parseMaybe Aeson.parseJSON
@@ -515,13 +522,18 @@ parseArrayItems :: JsonSchemaVersion -> Object -> Maybe ArrayItemsValidation
 parseArrayItems version obj = do
   itemsVal <- KeyMap.lookup "items" obj
   case itemsVal of
-    Array arr -> do
+    Array arr ->
       -- Tuple-style items (array of schemas)
-      let schemas = [schema | val <- toList arr, Right schema <- [parseSubschema version val]]
-      nonEmpty <- NE.nonEmpty schemas
-      -- Parse additionalItems if present
-      let additionalItems' = KeyMap.lookup "additionalItems" obj >>= eitherToMaybe . parseSubschema version
-      pure $ ItemsTuple nonEmpty additionalItems'
+      let schemas = do
+            val <- toList arr
+            Right schema <- pure $ parseSubschema version val
+            pure schema
+      in case NE.nonEmpty schemas of
+        Just nonEmpty -> do
+          -- Parse additionalItems if present
+          let additionalItems' = KeyMap.lookup "additionalItems" obj >>= eitherToMaybe . parseSubschema version
+          pure $ ItemsTuple nonEmpty additionalItems'
+        Nothing -> Nothing
     _ -> do
       -- Single schema for all items
       schema <- eitherToMaybe (parseSubschema version itemsVal)
@@ -530,29 +542,35 @@ parseArrayItems version obj = do
 -- | Parse non-empty array of schemas
 parseArraySchemas :: JsonSchemaVersion -> Value -> Maybe (NonEmpty Schema)
 parseArraySchemas version (Array arr) = do
-  let schemas = [schema | val <- toList arr, Right schema <- [parseSubschema version val]]
+  let schemas = do
+        val <- toList arr
+        Right schema <- pure $ parseSubschema version val
+        pure schema
   NE.nonEmpty schemas
 parseArraySchemas _ _ = Nothing
 
 -- | Parse property schemas map
 parsePropertySchemas :: JsonSchemaVersion -> Value -> Maybe (Map Text Schema)
-parsePropertySchemas version (Object obj) = Just $ Map.fromList
-  [(Key.toText k, schema) | (k, v) <- KeyMap.toList obj
-  , Right schema <- [parseSubschema version v]]
+parsePropertySchemas version (Object obj) = Just $ Map.fromList $ do
+  (k, v) <- KeyMap.toList obj
+  Right schema <- pure $ parseSubschema version v
+  pure (Key.toText k, schema)
 parsePropertySchemas _ _ = Nothing
 
 -- | Parse pattern property schemas
 parsePatternPropertySchemas :: JsonSchemaVersion -> Value -> Maybe (Map Regex Schema)
-parsePatternPropertySchemas version (Object obj) = Just $ Map.fromList
-  [(Regex (Key.toText k), schema) | (k, v) <- KeyMap.toList obj
-  , Right schema <- [parseSubschema version v]]
+parsePatternPropertySchemas version (Object obj) = Just $ Map.fromList $ do
+  (k, v) <- KeyMap.toList obj
+  Right schema <- pure $ parseSubschema version v
+  pure (Regex (Key.toText k), schema)
 parsePatternPropertySchemas _ _ = Nothing
 
 --- | Parse dependencies map (draft-04 through draft-07)
 parseDependencies :: JsonSchemaVersion -> Value -> Maybe (Map Text Dependency)
-parseDependencies version (Object obj) = Just $ Map.fromList
-  [(Key.toText k, dep) | (k, v) <- KeyMap.toList obj
-  , Just dep <- [parseDependency version v]]
+parseDependencies version (Object obj) = Just $ Map.fromList $ do
+  (k, v) <- KeyMap.toList obj
+  Just dep <- pure $ parseDependency version v
+  pure (Key.toText k, dep)
 parseDependencies _ _ = Nothing
 
 --- | Parse a single dependency
@@ -566,8 +584,9 @@ parseDependency version v@(Bool _) =
   case parseSubschema version v of
     Right schema -> Just $ DependencySchema schema
     Left _ -> Nothing
-parseDependency _ (Array arr) = Just $ DependencyProperties $ Set.fromList
-  [t | String t <- toList arr]
+parseDependency _ (Array arr) = Just $ DependencyProperties $ Set.fromList $ do
+  String t <- toList arr
+  pure t
 parseDependency _ _ = Nothing
 
 -- | Parse a schema with dialect registry support

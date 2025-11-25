@@ -14,10 +14,10 @@ import qualified Data.Set as Set
 import qualified Data.Vector as V
 
 import Fractal.JsonSchema
-import Fractal.JsonSchema.Types (ValidationResult, pattern ValidationSuccess, ValidationAnnotations(..), emptyRegistry, JSONPointer, emptyPointer)
+import Fractal.JsonSchema.Types (ValidationResult, pattern ValidationSuccess, ValidationAnnotations(..), emptyRegistry, JsonPointer, emptyPointer)
 import Fractal.JsonSchema.Validator (validateValueWithRegistry, defaultValidationConfig)
 import Fractal.JsonSchema.Parser (parseSchema)
-import Fractal.JSONPointer ((/.), renderPointer)
+import Fractal.JsonPointer ((/.), renderPointer)
 
 spec :: Spec
 spec = describe "Annotation Collection" $ do

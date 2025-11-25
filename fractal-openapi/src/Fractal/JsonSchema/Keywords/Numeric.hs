@@ -9,6 +9,7 @@ module Fractal.JsonSchema.Keywords.Numeric
   ) where
 
 import Fractal.JsonSchema.Types
+import Fractal.JsonSchema.Keyword.Types (combineValidationResults)
 import Data.Aeson (Value(..))
 import qualified Data.Text as T
 import qualified Data.Scientific as Sci
@@ -25,15 +26,8 @@ validateNumericConstraints obj (Number n) =
         , checkMaximumWithExclusive n validation
         , checkMinimumWithExclusive n validation
         ]
-  in combineResults results
+  in combineValidationResults results
   where
-    combineResults :: [ValidationResult] -> ValidationResult
-    combineResults results =
-      let failures = [errs | ValidationFailure errs <- results]
-      in case failures of
-        [] -> ValidationSuccess mempty
-        (e:es) -> ValidationFailure $ foldl (<>) e es
-
     checkMultipleOf :: Sci.Scientific -> Sci.Scientific -> ValidationResult
     checkMultipleOf num divisor =
       -- Special case: if the number is an integer and divisor <= 1, any integer is a multiple

@@ -22,6 +22,8 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable, cast)
+import Data.Traversable (traverse)
+import Data.Foldable (foldl')
 
 import Fractal.JsonSchema.Keyword.Types
 import Fractal.JsonSchema.Types (Schema, schemaVersion, JsonSchemaVersion(..))
@@ -138,20 +140,18 @@ compileKeywords
   -> CompilationContext          -- ^ Compilation context
   -> Either Text CompiledKeywords
 compileKeywords definitions keywordValues schema ctx =
-  -- Fold over keyword values, compiling each one
-  foldl processKeyword (Right emptyCompiledKeywords) (Map.toList keywordValues)
+  -- Traverse over keyword values, compiling each one
+  -- This is clearer than foldl and stops on first error
+  fmap (foldl' (flip (maybe id addCompiledKeyword)) emptyCompiledKeywords) $
+    traverse compileKeywordIfRegistered (Map.toList keywordValues)
   where
-    processKeyword :: Either Text CompiledKeywords
-                   -> (Text, Value)
-                   -> Either Text CompiledKeywords
-    processKeyword (Left err) _ = Left err  -- Propagate errors
-    processKeyword (Right compiled) (name, value) =
+    compileKeywordIfRegistered :: (Text, Value) -> Either Text (Maybe CompiledKeyword)
+    compileKeywordIfRegistered (name, value) =
       case Map.lookup name definitions of
         Nothing ->
           -- Keyword not registered - skip it (allows unknown keywords)
-          Right compiled
+          Right Nothing
         Just def -> do
           -- Compile the keyword
           ck <- compileKeyword def value schema ctx
-          -- Add to collection
-          Right (addCompiledKeyword ck compiled)
+          Right (Just ck)

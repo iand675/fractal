@@ -67,18 +67,19 @@ compileContains value schema _ctx = case parseSchema value of
   Right containsSchema ->
     -- Read minContains and maxContains from adjacent keywords in the schema
     -- Parse on-demand from raw keywords if not pre-parsed
-    let (minCount, maxCount) = case schemaCore schema of
-          ObjectSchema obj ->
-            let validation = schemaValidation obj
-                minVal = case validationMinContains validation of
-                  Just m -> Just m
-                  Nothing -> parseMinContainsFromRaw schema
-                maxVal = case validationMaxContains validation of
-                  Just m -> Just m
-                  Nothing -> parseMaxContainsFromRaw schema
-            in (maybe 1 fromIntegral minVal, fmap fromIntegral maxVal)
-          _ -> error "contains can only appear in object schemas"
-    in Right $ ContainsData containsSchema minCount maxCount
+    case schemaCore schema of
+      ObjectSchema obj ->
+        let validation = schemaValidation obj
+            minVal = case validationMinContains validation of
+              Just m -> Just m
+              Nothing -> parseMinContainsFromRaw schema
+            maxVal = case validationMaxContains validation of
+              Just m -> Just m
+              Nothing -> parseMaxContainsFromRaw schema
+            minCount = maybe 1 fromIntegral minVal
+            maxCount = fmap fromIntegral maxVal
+        in Right $ ContainsData containsSchema minCount maxCount
+      _ -> Left "contains can only appear in object schemas"
   where
     parseMinContainsFromRaw :: Schema -> Maybe Natural
     parseMinContainsFromRaw s = case Map.lookup "minContains" (schemaRawKeywords s) of
@@ -116,7 +117,9 @@ validateContainsKeyword recursiveValidator (ContainsData schema' minCount maxCou
         [ (idx, recursiveValidator schema' item)
         | (idx, item) <- zip [0..] (toList arr)
         ]
-      matchingIndices = Set.fromList [idx | (idx, ValidationSuccess _) <- evaluations]
+      matchingIndices = Set.fromList $ do
+        (idx, ValidationSuccess _) <- evaluations
+        pure idx
       matchCount = fromIntegral (Set.size matchingIndices) :: Natural
       minCheck = matchCount >= minCount
       maxCheck = maybe True (matchCount <=) maxCount

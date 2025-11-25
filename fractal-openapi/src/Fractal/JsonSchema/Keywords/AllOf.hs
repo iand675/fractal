@@ -18,6 +18,7 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Vector as V
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Semigroup (sconcat)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
@@ -68,13 +69,17 @@ validateAllOf
   -> Value                                   -- ^ Value to validate
   -> ValidationResult
 validateAllOf validateSchema schemas value =
-  let results = [validateSchema schema value | schema <- NE.toList schemas]
-      failures = [errs | ValidationFailure errs <- results]
-      annotations = [anns | ValidationSuccess anns <- results]
+  let results = map (flip validateSchema value) (NE.toList schemas)
+      failures = do
+        ValidationFailure errs <- results
+        pure errs
+      annotations = do
+        ValidationSuccess anns <- results
+        pure anns
   in case failures of
     -- Collect annotations from ALL branches in allOf (all must pass)
     [] -> ValidationSuccess $ mconcat annotations
-    (e:es) -> ValidationFailure $ foldl (<>) e es
+    failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 -- | Keyword definition for allOf
 allOfKeyword :: KeywordDefinition
@@ -96,7 +101,10 @@ allOfKeyword = KeywordDefinition
     parseAllOfFromRaw s = case Map.lookup "allOf" (schemaRawKeywords s) of
       Just (Array arr) ->
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ ParserInternal.parseSchemaValue version val
+              pure schema
         in if null schemas && not (null arr)
            then Nothing  -- Had items but all failed to parse
            else Just schemas

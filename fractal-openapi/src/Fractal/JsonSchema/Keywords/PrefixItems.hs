@@ -19,8 +19,10 @@ import Data.Typeable (Typeable)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Foldable (toList)
+import Control.Monad (guard)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Semigroup (sconcat)
 
 import Fractal.JsonSchema.Types 
   ( Schema(..), SchemaCore(..), SchemaObject(..), ArrayItemsValidation(..)
@@ -78,7 +80,10 @@ compilePrefixItems value schema _ctx = case value of
       Just (Array arr) -> do
         -- Tuple-style items
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ parseSchemaValue version val
+              pure schema
         case NE.nonEmpty schemas of
           Just ne -> Just (ItemsTuple ne Nothing)
           Nothing -> Nothing
@@ -97,12 +102,13 @@ validatePrefixItemsKeyword recursiveValidator (PrefixItemsData schemas additiona
         [ (idx, recursiveValidator schema item)
         | (idx, (schema, item)) <- zip [0..] (zip (NE.toList schemas) (toList arr))
         ]
-      prefixFailures = [errs | (_, ValidationFailure errs) <- prefixEvaluations]
-      prefixIndices = Set.fromList [idx | (idx, _) <- prefixEvaluations]
-      prefixAnnotations =
-        [ shiftAnnotations (arrayIndexPointer idx) anns
-        | (idx, ValidationSuccess anns) <- prefixEvaluations
-        ]
+      prefixFailures = do
+        (_, ValidationFailure errs) <- prefixEvaluations
+        pure errs
+      prefixIndices = Set.fromList $ map fst prefixEvaluations
+      prefixAnnotations = do
+        (idx, ValidationSuccess anns) <- prefixEvaluations
+        pure $ shiftAnnotations (arrayIndexPointer idx) anns
       startIdx = length schemas
       remainingItems = drop startIdx (toList arr)
       (additionalFailures, additionalIndices, additionalAnnotations) =
@@ -126,12 +132,13 @@ validatePrefixItemsKeyword recursiveValidator (PrefixItemsData schemas additiona
                       [ (idx, recursiveValidator itemSchema item)
                       | (idx, item) <- zip [startIdx..] remainingItems
                       ]
-                    failures = [errs | (_, ValidationFailure errs) <- evals]
+                    failures = do
+                      (_, ValidationFailure errs) <- evals
+                      pure errs
                     indices = if null evals then Set.empty else Set.fromList [startIdx .. startIdx + length evals - 1]
-                    annotations =
-                      [ shiftAnnotations (arrayIndexPointer idx) anns
-                      | (idx, ValidationSuccess anns) <- evals
-                      ]
+                    annotations = do
+                      (idx, ValidationSuccess anns) <- evals
+                      pure $ shiftAnnotations (arrayIndexPointer idx) anns
                 in (failures, indices, annotations)
           Just (ItemsTuple tupleSchemas maybeAdditional) ->
             -- Treat tuple-style additional validation similar to legacy semantics
@@ -139,12 +146,13 @@ validatePrefixItemsKeyword recursiveValidator (PrefixItemsData schemas additiona
                   [ (idx, recursiveValidator schema' item)
                   | (idx, (schema', item)) <- zip [startIdx..] (zip (NE.toList tupleSchemas) remainingItems)
                   ]
-                tupleFailures = [errs | (_, ValidationFailure errs) <- tupleEvals]
-                tupleIndices = Set.fromList [idx | (idx, _) <- tupleEvals]
-                tupleAnnotations =
-                  [ shiftAnnotations (arrayIndexPointer idx) anns
-                  | (idx, ValidationSuccess anns) <- tupleEvals
-                  ]
+                tupleFailures = do
+                  (_, ValidationFailure errs) <- tupleEvals
+                  pure errs
+                tupleIndices = Set.fromList $ map fst tupleEvals
+                tupleAnnotations = do
+                  (idx, ValidationSuccess anns) <- tupleEvals
+                  pure $ shiftAnnotations (arrayIndexPointer idx) anns
                 extraItems = drop (length tupleSchemas) remainingItems
                 extraStart = startIdx + length tupleSchemas
                 (extraFailures, extraIndices, extraAnnotations) = case maybeAdditional of
@@ -162,14 +170,16 @@ validatePrefixItemsKeyword recursiveValidator (PrefixItemsData schemas additiona
                         ([], Set.empty, [])
                       _ ->
                         -- Validate additional items against the schema
-                        let evals = [ (idx, recursiveValidator addlSchema item)
-                                    | (idx, item) <- zip [extraStart..] extraItems
-                                    ]
-                            failures = [errs | (_, ValidationFailure errs) <- evals]
+                        let evals = do
+                              (idx, item) <- zip [extraStart..] extraItems
+                              pure (idx, recursiveValidator addlSchema item)
+                            failures = do
+                              (_, ValidationFailure errs) <- evals
+                              pure errs
                             indices = if null evals then Set.empty else Set.fromList [extraStart .. extraStart + length evals - 1]
-                            annotations = [ shiftAnnotations (arrayIndexPointer idx) anns
-                                          | (idx, ValidationSuccess anns) <- evals
-                                          ]
+                            annotations = do
+                              (idx, ValidationSuccess anns) <- evals
+                              pure $ shiftAnnotations (arrayIndexPointer idx) anns
                         in (failures, indices, annotations)
                   Nothing -> ([], Set.empty, [])
             in (tupleFailures <> extraFailures, tupleIndices <> extraIndices, tupleAnnotations <> extraAnnotations)
@@ -180,7 +190,7 @@ validatePrefixItemsKeyword recursiveValidator (PrefixItemsData schemas additiona
   in pure $
        case allFailures of
          [] -> ValidationSuccess (annotateItems allIndices <> mconcat allAnnotations)
-         (e:es) -> ValidationFailure (foldl (<>) e es)
+         failures' -> ValidationFailure $ sconcat (NE.fromList failures')
 
 validatePrefixItemsKeyword _ _ _ _ = pure (ValidationSuccess mempty)  -- Only applies to arrays
 
@@ -204,7 +214,10 @@ prefixItemsKeyword = KeywordDefinition
     parsePrefixItemsFromRaw s = case Map.lookup "prefixItems" (schemaRawKeywords s) of
       Just (Array arr) ->
         let version = fromMaybe Draft202012 (schemaVersion s)
-            schemas = [schema | val <- toList arr, Right schema <- [ParserInternal.parseSchemaValue version val]]
+            schemas = do
+              val <- toList arr
+              Right schema <- pure $ ParserInternal.parseSchemaValue version val
+              pure schema
         in if null schemas && not (null arr)
            then Nothing  -- Had items but all failed to parse
            else Just schemas
