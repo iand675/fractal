@@ -416,7 +416,7 @@ createDiagnosticsInterceptor (DiagnosticsCollector ref) = LayerInterceptor
 -- Note: This runs the layer to completion and discards the environment,
 -- only returning diagnostics. For most use cases, 'withLayerDiagnostics' is preferred.
 buildLayerDiagnostics ::
-  (MonadUnliftIO m, Typeable env) =>
+  MonadUnliftIO m =>
   -- | Layer to build
   Layer m deps env ->
   -- | Dependencies
@@ -441,7 +441,7 @@ buildLayerDiagnostics layer deps = do
 --   -- Use the environment...
 -- @
 withLayerDiagnostics ::
-  (MonadUnliftIO m, Typeable env) =>
+  MonadUnliftIO m =>
   -- | Layer to run
   Layer m deps env ->
   -- | Dependencies
@@ -681,8 +681,8 @@ diagnosticsToJSON = toJSON
 -------------------------------------------------------------------------------
 
 -- | Example diagnostics for documentation
-exampleDiagnostics :: LayerDiagnostics
-exampleDiagnostics = LayerDiagnostics
+_exampleDiagnostics :: LayerDiagnostics
+_exampleDiagnostics = LayerDiagnostics
   { rootNode = LayerNode
       { nodeId = "root"
       , nodeName = "ApplicationLayer"

@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -151,6 +152,11 @@ module Fractal.Layer
     AssembleFromEnvironment (..),
     Assembled,
 
+    -- * Interceptors (re-exported from "Fractal.Layer.Interceptor")
+    LayerInterceptor (..),
+    nullInterceptor,
+    combineInterceptors,
+
     -- * Re-exports
     MonadResource,
   )
@@ -165,35 +171,61 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Resource (createInternalState, runInternalState, withInternalState)
 import Control.Monad.Trans.Resource.Internal (ReleaseMap (..), stateCleanupChecked)
 import Control.Selective
-import Data.Either
-import Data.Function hiding (id, (.))
 import Data.Functor.Identity
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
-import Data.Typeable
 import Data.IntMap.Strict (mapKeysMonotonic)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Profunctor
 import Data.Profunctor.Traversing
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock (getCurrentTime, diffUTCTime, NominalDiffTime)
-import Data.Traversable
-import Data.Tuple
+import Data.Typeable
 import Data.Vinyl
 import Data.Vinyl.TypeLevel
 import Fractal.Layer.Interceptor
+import qualified Type.Reflection as TR
 import UnliftIO
 import UnliftIO.Resource
-import Unsafe.Coerce
 import Prelude hiding ((.))
-import GHC.Exts (Any)
+
+-------------------------------------------------------------------------------
+-- Type-safe map keyed by types
+--
+-- Uses SomeTypeRep's Ord instance (fingerprint comparison) for O(log n)
+-- lookups. Existential GADT witness eliminates unsafeCoerce.
+-------------------------------------------------------------------------------
+
+data DynF f where
+  MkDynF :: !(TR.TypeRep a) -> f a -> DynF f
+
+newtype TypeMap f = TypeMap (Map TR.SomeTypeRep (DynF f))
+
+instance Semigroup (TypeMap f) where
+  TypeMap a <> TypeMap b = TypeMap (a <> b)
+
+instance Monoid (TypeMap f) where
+  mempty = TypeMap Map.empty
+
+emptyTypeMap :: TypeMap f
+emptyTypeMap = TypeMap Map.empty
+
+lookupTypeMap :: forall a f. Typeable a => TypeMap f -> Maybe (f a)
+lookupTypeMap (TypeMap m) = do
+  MkDynF rep v <- Map.lookup (TR.SomeTypeRep (TR.typeRep @a)) m
+  TR.HRefl <- TR.eqTypeRep (TR.typeRep @a) rep
+  pure v
+
+insertTypeMap :: forall a f. Typeable a => f a -> TypeMap f -> TypeMap f
+insertTypeMap v (TypeMap m) =
+  TypeMap (Map.insert (TR.SomeTypeRep (TR.typeRep @a)) (MkDynF (TR.typeRep @a) v) m)
 
 data ServiceState a
   = Initialized a
   | Failed SomeException
 
 data LayerEnv m = LayerEnv
-  { serviceStates :: !(MVar (HashMap TypeRep (ServiceState Any)))
+  { serviceStates :: !(MVar (TypeMap ServiceState))
   , interceptor :: !(LayerInterceptor m)
   }
 
@@ -202,27 +234,24 @@ newtype Service m deps env = Service
   }
 
 getOrCreateCachedService :: forall m deps env. (MonadUnliftIO m, Typeable env) => Service m deps env -> Layer m deps env
-getOrCreateCachedService (Service m) = Layer $ \lenv env -> do
+getOrCreateCachedService (Service m) = Layer $ \lenv deps -> do
   let rep = typeRep (Proxy @env)
       serviceName = T.pack (show rep)
 
-  -- Try to get the current state
-  states <- liftIO $ readMVar lenv.serviceStates
-  case HashMap.lookup rep states of
+  -- Fast path: check without write lock
+  snapshot <- liftIO $ readMVar lenv.serviceStates
+  case lookupTypeMap @env snapshot of
     Just (Initialized x) -> do
-      -- Service already exists, notify reuse
       lift $ onServiceReuse (interceptor lenv) serviceName rep
-      pure $ unsafeCoerce x
+      pure x
     Just (Failed e) -> throwIO e
-    _ -> join $ modifyMVar lenv.serviceStates $ \serviceStates -> do
-      case HashMap.lookup rep serviceStates of
+    _ -> join $ modifyMVar lenv.serviceStates $ \currentStates -> do
+      case lookupTypeMap @env currentStates of
         Just (Initialized x) -> do
-          -- Another thread initialized it
           lift $ onServiceReuse (interceptor lenv) serviceName rep
-          pure (serviceStates, pure $ unsafeCoerce x)
-        Just (Failed e) -> pure (serviceStates, throwIO e)
+          pure (currentStates, pure x)
+        Just (Failed e) -> pure (currentStates, throwIO e)
         Nothing -> do
-          -- Notify service creation
           let ctx = OperationContext
                 { operationName = serviceName
                 , operationType = Just rep
@@ -230,14 +259,13 @@ getOrCreateCachedService (Service m) = Layer $ \lenv env -> do
                 }
           lift $ onServiceCreate (interceptor lenv) ctx
 
-          -- Initialize the service
-          eRes <- try $ build m lenv env
+          eRes <- try $ build m lenv deps
           case eRes of
             Left e -> do
-              let states' = HashMap.insert rep (Failed e) states
+              let states' = insertTypeMap @env (Failed e) currentStates
               pure (states', throwIO e)
             Right x -> do
-              let states' = HashMap.insert rep (Initialized $ unsafeCoerce x) states
+              let states' = insertTypeMap @env (Initialized x) currentStates
               pure (states', pure x)
 
 -- |
@@ -311,19 +339,17 @@ resource ::
   (env -> m ()) ->
   Layer m deps env
 resource acq rel = Layer $ \lenv deps -> do
-  -- Notify interceptor
-  let ctx = OperationContext
-        { operationName = T.pack (show $ typeRep (Proxy @env))
-        , operationType = Just (typeRep (Proxy @env))
+  let rep = typeRep (Proxy @env)
+      ctx = OperationContext
+        { operationName = T.pack (show rep)
+        , operationType = Just rep
         , operationMetadata = []
         }
   lift $ onResourceAcquire (interceptor lenv) ctx
   startTime <- liftIO getCurrentTime
 
-  -- Original logic
   (_, env) <- allocateU (lift $ acq deps) (lift . rel)
 
-  -- Notify interceptor on release
   endTime <- liftIO getCurrentTime
   let duration = diffUTCTime endTime startTime
   lift $ onResourceRelease (interceptor lenv) (operationName ctx) duration
@@ -351,19 +377,17 @@ effect ::
   (deps -> m env) ->
   Layer m deps env
 effect f = Layer $ \lenv deps -> do
-  -- Notify interceptor
-  let ctx = OperationContext
-        { operationName = T.pack (show $ typeRep (Proxy @env))
-        , operationType = Just (typeRep (Proxy @env))
+  let rep = typeRep (Proxy @env)
+      ctx = OperationContext
+        { operationName = T.pack (show rep)
+        , operationType = Just rep
         , operationMetadata = []
         }
   lift $ onEffectRun (interceptor lenv) ctx
   startTime <- liftIO getCurrentTime
 
-  -- Run effect
   result <- lift $ f deps
 
-  -- Notify completion
   endTime <- liftIO getCurrentTime
   let duration = diffUTCTime endTime startTime
   lift $ onEffectComplete (interceptor lenv) (operationName ctx) duration
@@ -789,7 +813,7 @@ unsafelyMergeReleaseMap ReleaseMapClosed r = r
 --   'withLayer' instead- this function exists mainly for quick tests.
 runLayer :: MonadUnliftIO m => deps -> Layer m deps env -> m env
 runLayer deps (Layer l) = do
-  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure nullInterceptor
+  lenv <- LayerEnv <$> newMVar emptyTypeMap <*> pure nullInterceptor
   runResourceT (l lenv deps)
 {-# SPECIALIZE runLayer :: deps -> Layer IO deps env -> IO env #-}
 
@@ -818,7 +842,7 @@ withLayer ::
   (env -> ResourceT m r) ->
   m r
 withLayer deps (Layer l) useEnv = runResourceT $ do
-  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure nullInterceptor
+  lenv <- LayerEnv <$> newMVar emptyTypeMap <*> pure nullInterceptor
   env <- l lenv deps
   useEnv env
 
@@ -840,8 +864,8 @@ runLayerWithInterceptor ::
   -- | Layer to run
   Layer m deps env ->
   m env
-runLayerWithInterceptor interceptor deps (Layer l) = do
-  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure interceptor
+runLayerWithInterceptor i deps (Layer l) = do
+  lenv <- LayerEnv <$> newMVar emptyTypeMap <*> pure i
   runResourceT (l lenv deps)
 {-# SPECIALIZE runLayerWithInterceptor :: LayerInterceptor IO -> deps -> Layer IO deps env -> IO env #-}
 
@@ -866,8 +890,8 @@ withLayerAndInterceptor ::
   -- | Action that needs the env
   (env -> ResourceT m r) ->
   m r
-withLayerAndInterceptor interceptor deps (Layer l) useEnv = runResourceT $ do
-  lenv <- LayerEnv <$> newMVar HashMap.empty <*> pure interceptor
+withLayerAndInterceptor i deps (Layer l) useEnv = runResourceT $ do
+  lenv <- LayerEnv <$> newMVar emptyTypeMap <*> pure i
   env <- l lenv deps
   useEnv env
 
