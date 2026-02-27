@@ -785,3 +785,14 @@ spec = do
       let rendered = renderLayerTreeDetailed diags
       rendered `shouldContain` "Kid"
       rendered `shouldContain` "Dad"
+
+  describe "Diagnostics - live rendering support" $ do
+    it "renderLayerTreeLive completes when isDone returns True immediately" $ do
+      collector <- newDiagnosticsCollector
+      renderLayerTreeLive collector (pure True :: IO Bool)
+
+    it "snapshotDiagnostics computes totalDuration" $ do
+      collector <- newDiagnosticsCollector
+      snap <- snapshotDiagnostics collector
+      totalDuration snap `shouldSatisfy` (>= 0)
+      totalResources snap `shouldBe` 0
