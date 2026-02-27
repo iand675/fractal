@@ -152,3 +152,14 @@ spec = do
       let ctx0 = OperationContext "op" Nothing [("existing", "data")]
       let ctx1 = withMetadata [("new", "field")] ctx0
       operationMetadata ctx1 `shouldBe` [("existing", "data"), ("new", "field")]
+
+  describe "showList coverage" $ do
+    it "showList for CompositionType" $ do
+      let s = show [Sequential, Parallel, Sequential]
+      s `shouldContain` "Sequential"
+      s `shouldContain` "Parallel"
+
+    it "showList for OperationContext" $ do
+      let ctx = simpleContext "test"
+      let s = show [ctx, ctx]
+      s `shouldContain` "test"

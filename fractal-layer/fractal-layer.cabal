@@ -82,3 +82,4 @@ test-suite fractal-layer-test
                     , time >= 1.12 && < 2
                     , vinyl >= 0.14 && < 1
                     , unordered-containers >= 0.2 && < 1
+                    , selective >= 0.5 && < 1

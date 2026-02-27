@@ -74,7 +74,6 @@ import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime, UTCTime)
 import Data.Typeable
 import Fractal.Layer.Interceptor
-import GHC.Generics (Generic)
 import System.IO (hFlush, stdout)
 import UnliftIO (MonadIO, MonadUnliftIO, liftIO)
 import UnliftIO.Resource (ResourceT)
@@ -97,7 +96,7 @@ data LayerDiagnostics = LayerDiagnostics
   , sharedResources :: Int
   -- ^ Number of resources that were shared/cached
   }
-  deriving (Show, Generic)
+  deriving (Show)
 
 -- | A node in the layer initialization tree
 data LayerNode = LayerNode
@@ -118,7 +117,7 @@ data LayerNode = LayerNode
   , metadata :: HashMap Text Text
   -- ^ Additional metadata
   }
-  deriving (Show, Generic)
+  deriving (Show)
 
 -- | The type of layer node
 data LayerNodeType
@@ -134,7 +133,7 @@ data LayerNodeType
   -- ^ Parallel composition (&&&)
   | SequentialNode
   -- ^ Sequential composition (>>>)
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 -- | Status of a resource
 data ResourceStatus
@@ -146,7 +145,7 @@ data ResourceStatus
   -- ^ Failed to initialize with error
   | SharedReference Text
   -- ^ Reference to a shared resource (with node ID)
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 -------------------------------------------------------------------------------
 -- JSON Instances
@@ -676,88 +675,3 @@ renderLayerTreeLive collector isDone = do
 diagnosticsToJSON :: LayerDiagnostics -> Value
 diagnosticsToJSON = toJSON
 
--------------------------------------------------------------------------------
--- Example Usage
--------------------------------------------------------------------------------
-
--- | Example diagnostics for documentation
-_exampleDiagnostics :: LayerDiagnostics
-_exampleDiagnostics = LayerDiagnostics
-  { rootNode = LayerNode
-      { nodeId = "root"
-      , nodeName = "ApplicationLayer"
-      , nodeType = SequentialNode
-      , resourceType = Nothing
-      , status = Initialized
-      , duration = Just 0.35
-      , children =
-          [ LayerNode
-              { nodeId = "node-1"
-              , nodeName = "ConfigLayer"
-              , nodeType = EffectNode
-              , resourceType = Just (typeRep (Proxy :: Proxy ()))
-              , status = Initialized
-              , duration = Just 0.05
-              , children = []
-              , metadata = HashMap.fromList [("source", "environment")]
-              }
-          , LayerNode
-              { nodeId = "node-2"
-              , nodeName = "ParallelServices"
-              , nodeType = ParallelNode
-              , resourceType = Nothing
-              , status = Initialized
-              , duration = Just 0.3
-              , children =
-                  [ LayerNode
-                      { nodeId = "node-3"
-                      , nodeName = "DatabaseLayer"
-                      , nodeType = ResourceNode
-                      , resourceType = Nothing
-                      , status = Initialized
-                      , duration = Just 0.2
-                      , children =
-                          [ LayerNode
-                              { nodeId = "svc-001"
-                              , nodeName = "ConnectionPool"
-                              , nodeType = ServiceNode
-                              , resourceType = Nothing
-                              , status = Initialized
-                              , duration = Just 0.15
-                              , children = []
-                              , metadata = HashMap.fromList [("poolSize", "10")]
-                              }
-                          ]
-                      , metadata = HashMap.empty
-                      }
-                  , LayerNode
-                      { nodeId = "node-4"
-                      , nodeName = "WebServerLayer"
-                      , nodeType = ResourceNode
-                      , resourceType = Nothing
-                      , status = Initialized
-                      , duration = Just 0.1
-                      , children =
-                          [ LayerNode
-                              { nodeId = "node-5"
-                              , nodeName = "MetricsCollector"
-                              , nodeType = ServiceNode
-                              , resourceType = Nothing
-                              , status = SharedReference "svc-001"
-                              , duration = Nothing
-                              , children = []
-                              , metadata = HashMap.empty
-                              }
-                          ]
-                      , metadata = HashMap.empty
-                      }
-                  ]
-              , metadata = HashMap.empty
-              }
-          ]
-      , metadata = HashMap.empty
-      }
-  , totalDuration = 0.35
-  , totalResources = 5
-  , sharedResources = 1
-  }

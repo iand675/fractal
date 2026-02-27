@@ -152,6 +152,9 @@ module Fractal.Layer
     AssembleFromEnvironment (..),
     Assembled,
 
+    -- * Exceptions
+    EmptyLayer (..),
+
     -- * Interceptors (re-exported from "Fractal.Layer.Interceptor")
     LayerInterceptor (..),
     nullInterceptor,
@@ -355,7 +358,7 @@ resource acq rel = Layer $ \lenv deps -> do
   lift $ onResourceRelease (interceptor lenv) (operationName ctx) duration
 
   pure env
-{-# SPECIALIZE resource :: forall deps env. Typeable env => (deps -> IO env) -> (env -> IO ()) -> Layer IO deps env #-}
+{-# INLINABLE resource #-}
 
 -- |
 -- Lift a monadic function into a layer without requiring cleanup.
@@ -393,7 +396,7 @@ effect f = Layer $ \lenv deps -> do
   lift $ onEffectComplete (interceptor lenv) (operationName ctx) duration
 
   pure result
-{-# SPECIALIZE effect :: forall deps env. Typeable env => (deps -> IO env) -> Layer IO deps env #-}
+{-# INLINABLE effect #-}
 
 -- |
 -- When you want to run a scoped effect that acquires a resource and releases it, you maybe want it to survive

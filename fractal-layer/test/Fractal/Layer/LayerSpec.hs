@@ -14,11 +14,14 @@ import Fractal.Layer.Interceptor
 import Control.Category ((>>>), (<<<), id, (.))
 import Control.Arrow ((&&&), (***), arr, first, second, ArrowZero(..), ArrowPlus(..), app)
 import Control.Concurrent (myThreadId)
-import Control.Exception (SomeException, evaluate, AsyncException(..))
+import Control.Exception (SomeException, evaluate, AsyncException(..), toException, fromException, displayException)
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Reader
 import Control.Applicative
+import qualified Control.Selective as S
+import Data.List.NonEmpty (NonEmpty(..))
+import Data.Semigroup (stimes, sconcat)
 import Data.Typeable
 import Data.Vinyl hiding ((<+>))
 import Data.Functor.Identity
@@ -1503,3 +1506,96 @@ spec = do
       result `shouldBe` ("hello" :: String)
       logs <- readIORef ref
       logs `shouldContain` ["release"]
+
+  describe "Layer - EmptyLayer Show and Exception" $ do
+    it "show EmptyLayer" $
+      show EmptyLayer `shouldBe` "EmptyLayer"
+
+    it "showList for EmptyLayer" $ do
+      let s = show [EmptyLayer, EmptyLayer]
+      s `shouldContain` "EmptyLayer"
+
+    it "displayException for EmptyLayer" $ do
+      let e = toException EmptyLayer
+      displayException (e :: SomeException) `shouldContain` "EmptyLayer"
+
+    it "fromException round-trips" $ do
+      let e = toException EmptyLayer
+      case fromException e of
+        Just EmptyLayer -> pure ()
+        Nothing -> expectationFailure "fromException failed"
+
+  describe "Layer - Applicative <* and *> and <$" $ do
+    it "*> discards left value" $ do
+      let layer = pure (1 :: Int) *> pure (2 :: Int) :: Layer IO () Int
+      result <- runLayer () layer
+      result `shouldBe` (2 :: Int)
+
+    it "<* discards right value" $ do
+      let layer = pure (1 :: Int) <* pure (2 :: Int) :: Layer IO () Int
+      result <- runLayer () layer
+      result `shouldBe` (1 :: Int)
+
+    it "<$ replaces value" $ do
+      let layer = (99 :: Int) <$ pure ("ignored" :: String) :: Layer IO () Int
+      result <- runLayer () layer
+      result `shouldBe` (99 :: Int)
+
+  describe "Layer - Semigroup stimes/sconcat" $ do
+    it "stimes repeats the semigroup operation" $ do
+      let layer = pure [1 :: Int] :: Layer IO () [Int]
+      let repeated = stimes (3 :: Int) layer
+      result <- runLayer () repeated
+      result `shouldBe` [1, 1, 1]
+
+    it "sconcat folds non-empty list" $ do
+      let layers = pure [1 :: Int] :| [pure [2], pure [3]]
+      let combined = sconcat layers :: Layer IO () [Int]
+      result <- runLayer () combined
+      result `shouldBe` [1, 2, 3]
+
+  describe "Layer - Monoid mappend/mconcat" $ do
+    it "mappend combines two layers" $ do
+      let l1 = pure [1 :: Int] :: Layer IO () [Int]
+      let l2 = pure [2 :: Int] :: Layer IO () [Int]
+      result <- runLayer () (mappend l1 l2)
+      result `shouldBe` [1, 2]
+
+    it "mconcat combines list of layers" $ do
+      let layers = [pure [1], pure [2], pure [3]] :: [Layer IO () [Int]]
+      result <- runLayer () (mconcat layers)
+      result `shouldBe` [1, 2, 3]
+
+  describe "Layer - Selective select" $ do
+    it "select passes through Right" $ do
+      let condLayer = pure (Right (42 :: Int)) :: Layer IO () (Either Int Int)
+      let funcLayer = pure ((*2) :: Int -> Int) :: Layer IO () (Int -> Int)
+      result <- runLayer () (S.select condLayer funcLayer)
+      result `shouldBe` (42 :: Int)
+
+    it "select applies function on Left" $ do
+      let condLayer = pure (Left (7 :: Int)) :: Layer IO () (Either Int Int)
+      let funcLayer = pure ((*3) :: Int -> Int) :: Layer IO () (Int -> Int)
+      result <- runLayer () (S.select condLayer funcLayer)
+      result `shouldBe` (21 :: Int)
+
+  describe "Layer - MonadReader reader" $ do
+    it "reader maps over the environment" $ do
+      let layer = reader (port :: Config -> Int) :: Layer IO Config Int
+      result <- runLayer (Config 8080 "host") layer
+      result `shouldBe` 8080
+
+  describe "Layer - Profunctor composition" $ do
+    it "Category composition chains layers" $ do
+      let layer1 = effect $ \n -> pure (n + 1 :: Int)
+      let layer2 = effect $ \n -> pure (n * 2 :: Int)
+      let composed = layer2 . layer1
+      result <- runLayer (5 :: Int) composed
+      result `shouldBe` (12 :: Int)
+
+  describe "Layer - Traversing wander" $ do
+    it "wander processes traversable structure" $ do
+      let layer = effect (\n -> pure (n * 10 :: Int)) :: Layer IO Int Int
+      let wandered = traverse' layer :: Layer IO [Int] [Int]
+      result <- runLayer [1, 2, 3] wandered
+      result `shouldBe` [10, 20, 30]

@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -7,7 +6,8 @@ module Fractal.Layer.DiagnosticsSpec (spec) where
 
 import Control.Category ((>>>))
 import Control.Monad (void)
-import Data.Aeson (encode, decode)
+import Data.Aeson (encode, decode, toJSON, toEncoding)
+import Data.Aeson.Encoding (encodingToLazyByteString)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as T
@@ -15,7 +15,6 @@ import Data.Typeable (Proxy(..), typeRep)
 import Fractal.Layer
 import Fractal.Layer.Diagnostics
 import Fractal.Layer.Interceptor
-import GHC.Generics (Generic)
 import Test.Hspec
 import UnliftIO
 import UnliftIO.Resource
@@ -23,16 +22,16 @@ import Prelude hiding ((.), id)
 
 -- Test data types
 newtype Config = Config { configPort :: Int }
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 newtype Database = Database { dbConnection :: String }
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 newtype WebServer = WebServer { serverPort :: Int }
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 newtype CacheService = CacheService { cacheSize :: Int }
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 spec :: Spec
 spec = do
@@ -796,3 +795,134 @@ spec = do
       snap <- snapshotDiagnostics collector
       totalDuration snap `shouldSatisfy` (>= 0)
       totalResources snap `shouldBe` 0
+
+  describe "Diagnostics interceptor - composition callbacks" $ do
+    it "onCompositionStart creates Sequential node" $ do
+      collector <- newDiagnosticsCollector
+      let interceptor = createDiagnosticsInterceptor collector
+      onCompositionStart interceptor Sequential
+      onCompositionEnd interceptor Sequential 0.1
+      diags <- finalizeDiagnostics collector
+      let root = rootNode diags
+      length (children root) `shouldSatisfy` (>= 1)
+
+    it "onCompositionStart creates Parallel node" $ do
+      collector <- newDiagnosticsCollector
+      let interceptor = createDiagnosticsInterceptor collector
+      onCompositionStart interceptor Parallel
+      onCompositionEnd interceptor Parallel 0.2
+      diags <- finalizeDiagnostics collector
+      length (children (rootNode diags)) `shouldSatisfy` (>= 1)
+
+  describe "Diagnostics interceptor - service reuse shared node" $ do
+    it "onServiceReuse creates shared reference when service was tracked" $ do
+      collector <- newDiagnosticsCollector
+      let interceptor = createDiagnosticsInterceptor collector
+      let tr = typeRep (Proxy @Int)
+      let ctx = OperationContext "IntService" (Just tr) []
+      onServiceCreate interceptor ctx
+      onServiceReuse interceptor "IntService" tr
+      diags <- finalizeDiagnostics collector
+      sharedResources diags `shouldBe` 1
+      totalResources diags `shouldBe` 1
+
+    it "onServiceReuse with untracked type is a no-op" $ do
+      collector <- newDiagnosticsCollector
+      let interceptor = createDiagnosticsInterceptor collector
+      let tr = typeRep (Proxy @Bool)
+      onServiceReuse interceptor "Unknown" tr
+      diags <- finalizeDiagnostics collector
+      sharedResources diags `shouldBe` 0
+
+  describe "Diagnostics interceptor - endNode edge cases" $ do
+    it "endNode on empty stack is a no-op" $ do
+      collector <- newDiagnosticsCollector
+      let interceptor = createDiagnosticsInterceptor collector
+      onEffectComplete interceptor "test" 0.1
+      onEffectComplete interceptor "test2" 0.2
+      diags <- finalizeDiagnostics collector
+      totalDuration diags `shouldSatisfy` (>= 0)
+
+    it "endNode completing root directly" $ do
+      collector <- newDiagnosticsCollector
+      let interceptor = createDiagnosticsInterceptor collector
+      onEffectRun interceptor (OperationContext "root-effect" Nothing [])
+      onEffectComplete interceptor "root-effect" 0.5
+      diags <- finalizeDiagnostics collector
+      let root = rootNode diags
+      length (children root) `shouldSatisfy` (>= 1)
+
+  describe "Diagnostics - showList coverage" $ do
+    it "showList for LayerNodeType" $ do
+      let s = show [ResourceNode, EffectNode, ServiceNode]
+      s `shouldContain` "ResourceNode"
+      s `shouldContain` "EffectNode"
+
+    it "showList for ResourceStatus" $ do
+      let s = show [Initializing, Initialized, Failed "x"]
+      s `shouldContain` "Initializing"
+
+    it "showList for LayerDiagnostics" $ do
+      let d = LayerDiagnostics
+                (LayerNode "r" "R" ComposedNode Nothing Initialized Nothing [] HashMap.empty)
+                0 0 0
+      let s = show [d]
+      s `shouldContain` "LayerDiagnostics"
+
+    it "showList for LayerNode" $ do
+      let n = LayerNode "n" "N" EffectNode Nothing Initialized Nothing [] HashMap.empty
+      let s = show [n, n]
+      s `shouldContain` "LayerNode"
+
+  describe "Diagnostics - JSON list encoding" $ do
+    it "toJSON list of LayerNodeType" $ do
+      let val = toJSON [ResourceNode, EffectNode, ServiceNode]
+      BSL.length (encode val) `shouldSatisfy` (> 0)
+
+    it "toEncoding of LayerNodeType" $ do
+      BSL.length (encodingToLazyByteString (toEncoding ResourceNode)) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding EffectNode)) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding ServiceNode)) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding ComposedNode)) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding ParallelNode)) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding SequentialNode)) `shouldSatisfy` (> 0)
+
+    it "toEncoding of ResourceStatus" $ do
+      BSL.length (encodingToLazyByteString (toEncoding Initializing)) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding Initialized)) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding (Failed "e"))) `shouldSatisfy` (> 0)
+      BSL.length (encodingToLazyByteString (toEncoding (SharedReference "r"))) `shouldSatisfy` (> 0)
+
+    it "toEncoding of LayerNode" $ do
+      let n = LayerNode "n" "N" EffectNode Nothing Initialized (Just 0.1) [] HashMap.empty
+      BSL.length (encodingToLazyByteString (toEncoding n)) `shouldSatisfy` (> 0)
+
+    it "toEncoding of LayerDiagnostics" $ do
+      let d = LayerDiagnostics
+                (LayerNode "r" "R" ComposedNode Nothing Initialized Nothing [] HashMap.empty)
+                0.5 2 1
+      BSL.length (encodingToLazyByteString (toEncoding d)) `shouldSatisfy` (> 0)
+
+    it "decode JSON list of LayerNodeType" $ do
+      let encoded = encode [ResourceNode, EffectNode]
+      let decoded = decode encoded :: Maybe [LayerNodeType]
+      decoded `shouldBe` Just [ResourceNode, EffectNode]
+
+    it "decode JSON list of ResourceStatus" $ do
+      let encoded = encode [Initializing, Initialized]
+      let decoded = decode encoded :: Maybe [ResourceStatus]
+      decoded `shouldBe` Just [Initializing, Initialized]
+
+    it "decode JSON list of LayerNode" $ do
+      let n = LayerNode "n" "N" EffectNode Nothing Initialized (Just 0.1) [] HashMap.empty
+      let encoded = encode [n]
+      let decoded = decode encoded :: Maybe [LayerNode]
+      case decoded of
+        Nothing -> expectationFailure "Failed to decode"
+        Just ns -> length ns `shouldBe` 1
+
+  describe "Diagnostics - DiagnosticsCollector field" $ do
+    it "newDiagnosticsCollector returns usable collector" $ do
+      collector <- newDiagnosticsCollector
+      diags <- finalizeDiagnostics collector
+      nodeName (rootNode diags) `shouldBe` "Root"
