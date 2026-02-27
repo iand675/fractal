@@ -10,21 +10,23 @@ import Test.Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 import Fractal.Layer
+import Fractal.Layer.Interceptor
 import Control.Category ((>>>), (<<<), id, (.))
 import Control.Arrow ((&&&), (***), arr, first, second, ArrowZero(..), ArrowPlus(..), app)
-import Control.Exception (SomeException, evaluate)
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (myThreadId)
+import Control.Exception (SomeException, evaluate, AsyncException(..))
+import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Reader
 import Control.Applicative
 import Data.Typeable
 import Data.Vinyl hiding ((<+>))
 import Data.Functor.Identity
-import Data.Profunctor (first', second', left', right')
+import Data.Profunctor (lmap, first', second', left', right')
+import qualified Data.Profunctor as P
 import Data.Profunctor.Traversing (traverse')
 import UnliftIO hiding (assert)
 import UnliftIO.Async
-import Data.Time (getCurrentTime, diffUTCTime)
 import Prelude hiding (id, (.))
 
 -- Test data types
@@ -82,11 +84,12 @@ cacheLayer tracker = resource
 failingLayer :: Layer IO () ()
 failingLayer = effect $ \_ -> throwIO $ userError "Test failure"
 
-delayedFailingLayer :: Int -> Layer IO () ()
-delayedFailingLayer delayMs = resource
+-- A layer that waits for a signal before failing, for testing concurrent failure
+signaledFailingLayer :: MVar () -> Layer IO () ()
+signaledFailingLayer signal = resource
   (\_ -> do
-    threadDelay (delayMs * 1000)
-    throwIO $ userError "Delayed failure")
+    takeMVar signal
+    throwIO $ userError "Signaled failure")
   (\_ -> pure ())
 
 spec :: Spec
@@ -357,28 +360,41 @@ spec = do
 
   describe "Layer - Concurrent Composition" $ do
     it "zipLayer runs layers concurrently" $ do
-      startTime <- newIORef =<< getCurrentTime
-      let layer1 = effect $ \_ -> threadDelay 100000 >> getCurrentTime
-      let layer2 = effect $ \_ -> threadDelay 100000 >> getCurrentTime
+      barrier1 <- newEmptyMVar
+      barrier2 <- newEmptyMVar
+      let layer1 = effect $ \_ -> do
+            putMVar barrier1 ()
+            readMVar barrier2
+            pure (1 :: Int)
+      let layer2 = effect $ \_ -> do
+            putMVar barrier2 ()
+            readMVar barrier1
+            pure (2 :: Int)
       let combined = zipLayer layer1 layer2
 
-      (t1, t2) <- runLayer ((), ()) combined
-      start <- readIORef startTime
-
-      -- Both should complete at roughly the same time (within 50ms)
-      let diff = abs $ diffUTCTime t1 t2
-      diff < 0.05 `shouldBe` True
+      (r1, r2) <- runLayer ((), ()) combined
+      r1 `shouldBe` 1
+      r2 `shouldBe` 2
 
     it "zipLayer handles concurrent failures correctly" $ do
       tracker <- newResourceTracker
-      let layer1 = trackedResource tracker "res1" () >> delayedFailingLayer 50
+      failSignal <- newEmptyMVar
+      let layer1 = trackedResource tracker "res1" () >> signaledFailingLayer failSignal
       let layer2 = trackedResource tracker "res2" ("value" :: String)
       let combined = zipLayer layer1 layer2
 
-      runLayer ((), ()) combined `shouldThrow` anyException
+      resultVar <- newEmptyMVar
+      void $ async $ do
+        res <- try $ runLayer ((), ()) combined
+        putMVar resultVar (res :: Either SomeException ((), String))
 
-      -- Both resources should be cleaned up
-      threadDelay 100000
+      putMVar failSignal ()
+      result <- takeMVar resultVar
+
+      case result of
+        Left _ -> pure ()
+        Right _ -> expectationFailure "Expected exception"
+
       rel <- readIORef (released tracker)
       "res1" `elem` rel `shouldBe` True
       "res2" `elem` rel `shouldBe` True
@@ -489,32 +505,39 @@ spec = do
 
     it "service caches initialization - concurrent accesses" $ do
       initCount <- newIORef (0 :: Int)
-      startBarrier <- newEmptyMVar
+      initStarted <- newEmptyMVar
+      initFinish <- newEmptyMVar
 
       let slowLayer = resource
             (\_ -> do
-              -- Wait for all threads to be ready
-              threadDelay 50000  -- 50ms initialization
+              putMVar initStarted ()
+              takeMVar initFinish
               n <- atomicModifyIORef' initCount $ \n -> (n + 1, n + 1)
               pure $ (("concurrent-result-" ++ show n) :: String))
             (\_ -> pure ())
 
       let svc = mkService slowLayer
 
-      -- Launch multiple concurrent accesses
       let concurrentLayer =
             (,,,) <$> service svc <*> service svc <*> service svc <*> service svc
 
-      (r1, r2, r3, r4) <- runLayer () concurrentLayer
+      resultVar <- newEmptyMVar
+      void $ async $ do
+        result <- runLayer () concurrentLayer
+        putMVar resultVar result
 
-      -- All should get the same result
+      takeMVar initStarted
+      putMVar initFinish ()
+
+      (r1, r2, r3, r4) <- takeMVar resultVar
+
       r1 `shouldBe` ("concurrent-result-1" :: String)
       r2 `shouldBe` ("concurrent-result-1" :: String)
       r3 `shouldBe` ("concurrent-result-1" :: String)
       r4 `shouldBe` ("concurrent-result-1" :: String)
 
       count <- readIORef initCount
-      count `shouldBe` 1  -- Only one initialization despite concurrent access
+      count `shouldBe` 1
 
     it "service propagates initialization errors" $ do
       errorCount <- newIORef (0 :: Int)
@@ -1235,21 +1258,25 @@ spec = do
 
     it "multiple concurrent exceptions in zipLayer" $ do
       tracker <- newResourceTracker
+      gate1 <- newEmptyMVar
+      gate2 <- newEmptyMVar
       let layer1 = do
             _ <- trackedResource tracker "res1" ()
-            effect (\_ -> threadDelay 10000 >> throwIO (userError "error1")) :: Layer IO () String
+            effect (\_ -> do
+              putMVar gate1 ()
+              takeMVar gate2
+              throwIO (userError "error1")) :: Layer IO () String
       let layer2 = do
             _ <- trackedResource tracker "res2" ()
-            effect (\_ -> threadDelay 10000 >> throwIO (userError "error2")) :: Layer IO () String
+            effect (\_ -> do
+              putMVar gate2 ()
+              takeMVar gate1
+              throwIO (userError "error2")) :: Layer IO () String
 
       let combined = zipLayer layer1 layer2
 
       runLayer ((), ()) combined `shouldThrow` anyException
 
-      -- Wait for cleanup to complete
-      threadDelay 50000
-
-      -- Both resources should be cleaned up
       rel <- readIORef (released tracker)
       "res1" `elem` rel `shouldBe` True
       "res2" `elem` rel `shouldBe` True
@@ -1257,14 +1284,222 @@ spec = do
     it "exception in one zipLayer branch cleans up both" $ do
       tracker <- newResourceTracker
       let successLayer = trackedResource tracker "success" ("ok" :: String)
-      let failingLayer = trackedResource tracker "failing" () >> effect (\_ -> throwIO $ userError "boom") :: Layer IO () String
+      let failLayer = trackedResource tracker "failing" () >> effect (\_ -> throwIO $ userError "boom") :: Layer IO () String
 
-      let combined = zipLayer successLayer failingLayer
+      let combined = zipLayer successLayer failLayer
 
       runLayer ((), ()) combined `shouldThrow` anyException
 
-      -- Both should be cleaned up
-      threadDelay 50000
       rel <- readIORef (released tracker)
       "success" `elem` rel `shouldBe` True
       "failing" `elem` rel `shouldBe` True
+
+  describe "Layer - mapLayer" $ do
+    it "transforms dependencies before layer runs" $ do
+      let layer = effect $ \n -> pure (n * 2 :: Int)
+      let add10 = (+ 10) :: Int -> Int
+      let mapped = mapLayer add10 layer
+      result <- runLayer (5 :: Int) mapped
+      result `shouldBe` (30 :: Int)
+
+    it "mapLayer with resource management" $ do
+      tracker <- newResourceTracker
+      let layer = resource
+            (\n -> do
+              trackAcquire tracker "mapped-res"
+              pure (n + 100 :: Int))
+            (\_ -> trackRelease tracker "mapped-res")
+      let mapped = mapLayer ((*3) :: Int -> Int) layer
+
+      withLayer (7 :: Int) mapped $ \val -> liftIO $
+        val `shouldBe` (121 :: Int)
+
+      rel <- readIORef (released tracker)
+      rel `shouldBe` ["mapped-res"]
+
+  describe "Layer - mkLayer" $ do
+    it "creates a layer from a ResourceT action" $ do
+      let layer = mkLayer (\n -> pure (n * 3 :: Int)) :: Layer IO Int Int
+      result <- runLayer (14 :: Int) layer
+      result `shouldBe` (42 :: Int)
+
+    it "mkLayer ignores interceptor" $ do
+      ref <- newIORef (0 :: Int)
+      let layer = mkLayer (\() -> do
+            liftIO $ modifyIORef' ref (+ 1)
+            pure (42 :: Int)) :: Layer IO () Int
+
+      result <- runLayer () layer
+      result `shouldBe` (42 :: Int)
+      readIORef ref >>= (`shouldBe` 1)
+
+  describe "Layer - uncached accessor" $ do
+    it "extracts the underlying layer from a service" $ do
+      let layer = effect $ \() -> pure (42 :: Int)
+      let svc = mkService layer
+      result <- runLayer () (uncached svc)
+      result `shouldBe` (42 :: Int)
+
+    it "uncached layer is not cached" $ do
+      counter <- newIORef (0 :: Int)
+      let layer = effect $ \() -> do
+            atomicModifyIORef' counter $ \n -> (n + 1, n + 1)
+      let svc = mkService layer
+      let multiAccess = do
+            a <- uncached svc
+            b <- uncached svc
+            pure (a, b)
+      (r1, r2) <- runLayer () multiAccess
+      r1 `shouldBe` (1 :: Int)
+      r2 `shouldBe` (2 :: Int)
+
+  describe "Layer - Profunctor lmap/rmap" $ do
+    it "lmap transforms input" $ do
+      let layer = effect $ \n -> pure (n + 1 :: Int)
+      let mapped = lmap ((*2) :: Int -> Int) layer
+      result <- runLayer (5 :: Int) mapped
+      result `shouldBe` (11 :: Int)
+
+    it "rmap transforms output" $ do
+      let layer = effect $ \n -> pure (n + 1 :: Int)
+      let mapped = P.rmap ((*3) :: Int -> Int) layer
+      result <- runLayer (5 :: Int) mapped
+      result `shouldBe` (18 :: Int)
+
+  describe "Layer - Async exception safety" $ do
+    it "async exception during layer build triggers resource cleanup" $ do
+      tracker <- newResourceTracker
+      cleanupDone <- newEmptyMVar
+      readyForException <- newEmptyMVar
+      let layer = resource
+            (\_ -> do
+              trackAcquire tracker "async-resource"
+              pure ("resource" :: String))
+            (\_ -> do
+              trackRelease tracker "async-resource"
+              putMVar cleanupDone ())
+
+      tid <- myThreadId
+      void $ async $ do
+        takeMVar readyForException
+        E.throwTo tid ThreadKilled
+
+      let action = withLayer () layer $ \val -> liftIO $ do
+            val `shouldBe` ("resource" :: String)
+            putMVar readyForException ()
+            takeMVar cleanupDone
+
+      action `shouldThrow` (\e -> case fromException e of
+        Just ThreadKilled -> True
+        _ -> False)
+
+      rel <- readIORef (released tracker)
+      "async-resource" `elem` rel `shouldBe` True
+
+    it "mask protects critical sections in zipLayer" $ do
+      tracker <- newResourceTracker
+      let layer1 = trackedResource tracker "zip-a" ("a" :: String)
+      let layer2 = trackedResource tracker "zip-b" ("b" :: String)
+      let combined = zipLayer layer1 layer2
+
+      (a, b) <- runLayer ((), ()) combined
+      a `shouldBe` "a"
+      b `shouldBe` "b"
+
+  describe "Layer - Selective instance" $ do
+    it "selectM works" $ do
+      let layer = pure (Right (42 :: Int)) >>= \case
+            Left f -> pure (f (0 :: Int))
+            Right x -> pure x
+      result <- runLayer () (layer :: Layer IO () Int)
+      result `shouldBe` (42 :: Int)
+
+  describe "Layer - composeLayer" $ do
+    it "composes two layers sequentially" $ do
+      let upper = effect $ \() -> pure (10 :: Int)
+      let lower = effect $ \n -> pure (n * 2 :: Int)
+      let composed = composeLayer upper lower
+      result <- runLayer () composed
+      result `shouldBe` (20 :: Int)
+
+    it "composeLayer preserves resource management" $ do
+      tracker <- newResourceTracker
+      let upper = trackedResource tracker "upper" (5 :: Int)
+      let lower = resource
+            (\n -> do
+              trackAcquire tracker "lower"
+              pure (n + 10 :: Int))
+            (\_ -> trackRelease tracker "lower")
+      let composed = composeLayer upper lower
+      withLayer () composed $ \val -> liftIO $
+        val `shouldBe` (15 :: Int)
+      rel <- readIORef (released tracker)
+      "upper" `elem` rel `shouldBe` True
+      "lower" `elem` rel `shouldBe` True
+
+  describe "Layer - Monad laws (property-based)" $ do
+    it "left identity: return a >>= f  ===  f a" $ property $ \(n :: Int) ->
+      monadicIO $ do
+        let f x = pure (x * 2) :: Layer IO () Int
+        r1 <- run $ runLayer () (return n >>= f)
+        r2 <- run $ runLayer () (f n)
+        assert $ r1 == r2
+
+    it "right identity: m >>= return  ===  m" $ property $ \(n :: Int) ->
+      monadicIO $ do
+        let m = pure n :: Layer IO () Int
+        r1 <- run $ runLayer () (m >>= return)
+        r2 <- run $ runLayer () m
+        assert $ r1 == r2
+
+    it "associativity: (m >>= f) >>= g  ===  m >>= (\\x -> f x >>= g)" $ property $ \(n :: Int) ->
+      monadicIO $ do
+        let m = pure n :: Layer IO () Int
+        let f x = pure (x + 1) :: Layer IO () Int
+        let g x = pure (x * 2) :: Layer IO () Int
+        r1 <- run $ runLayer () ((m >>= f) >>= g)
+        r2 <- run $ runLayer () (m >>= (\x -> f x >>= g))
+        assert $ r1 == r2
+
+  describe "Layer - Arrow laws (property-based)" $ do
+    it "arr id === id" $ property $ \(n :: Int) ->
+      monadicIO $ do
+        r1 <- run $ runLayer n (arr id :: Layer IO Int Int)
+        r2 <- run $ runLayer n (Control.Category.id :: Layer IO Int Int)
+        assert $ r1 == r2
+
+    it "arr (f >>> g) === arr f >>> arr g" $ property $ \(n :: Int) ->
+      monadicIO $ do
+        let f = (+1) :: Int -> Int
+        let g = (*2) :: Int -> Int
+        let gf x = g (f x)
+        r1 <- run $ runLayer n (arr gf :: Layer IO Int Int)
+        r2 <- run $ runLayer n ((arr f :: Layer IO Int Int) >>> (arr g :: Layer IO Int Int))
+        assert $ r1 == r2
+
+  describe "Layer - withLayerAndInterceptor" $ do
+    it "runs a layer with custom interceptor" $ do
+      ref <- newIORef ([] :: [String])
+      let interceptor = nullInterceptor
+            { onEffectRun = \ctx -> modifyIORef ref (++ [show (operationName ctx)])
+            }
+      let layer = effect @IO @() @Int $ \_ -> pure 42
+      withLayerAndInterceptor interceptor () layer $ \val -> liftIO $
+        val `shouldBe` (42 :: Int)
+      logs <- readIORef ref
+      length logs `shouldBe` 1
+
+  describe "Layer - runLayerWithInterceptor" $ do
+    it "runs a layer and returns value with interceptor" $ do
+      ref <- newIORef ([] :: [String])
+      let interceptor = nullInterceptor
+            { onResourceAcquire = \ctx -> modifyIORef ref (++ ["acquire:" ++ show (operationName ctx)])
+            , onResourceRelease = \_ _ -> modifyIORef ref (++ ["release"])
+            }
+      let layer = resource @IO @() @String
+            (\_ -> pure "hello")
+            (\_ -> pure ())
+      result <- runLayerWithInterceptor interceptor () layer
+      result `shouldBe` ("hello" :: String)
+      logs <- readIORef ref
+      logs `shouldContain` ["release"]

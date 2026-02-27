@@ -65,6 +65,7 @@ test-suite fractal-layer-test
     hs-source-dirs:   test
     main-is:          Spec.hs
     other-modules:    Fractal.Layer.DiagnosticsSpec
+                    , Fractal.Layer.InterceptorSpec
                     , Fractal.Layer.LayerSpec
     build-tool-depends: hspec-discover:hspec-discover >= 2.10 && < 3
     build-depends:    base >= 4.17.0.0 && < 5
@@ -80,3 +81,4 @@ test-suite fractal-layer-test
                     , resourcet >= 1.2 && < 2
                     , time >= 1.12 && < 2
                     , vinyl >= 0.14 && < 1
+                    , unordered-containers >= 0.2 && < 1
