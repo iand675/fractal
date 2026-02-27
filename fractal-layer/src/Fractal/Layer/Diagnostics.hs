@@ -74,7 +74,6 @@ import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime, UTCTime)
 import Data.Typeable
 import Fractal.Layer.Interceptor
-import GHC.Generics (Generic)
 import System.IO (hFlush, stdout)
 import UnliftIO (MonadIO, MonadUnliftIO, liftIO)
 import UnliftIO.Resource (ResourceT)
@@ -97,7 +96,7 @@ data LayerDiagnostics = LayerDiagnostics
   , sharedResources :: Int
   -- ^ Number of resources that were shared/cached
   }
-  deriving (Show, Generic)
+  deriving (Show)
 
 -- | A node in the layer initialization tree
 data LayerNode = LayerNode
@@ -118,7 +117,7 @@ data LayerNode = LayerNode
   , metadata :: HashMap Text Text
   -- ^ Additional metadata
   }
-  deriving (Show, Generic)
+  deriving (Show)
 
 -- | The type of layer node
 data LayerNodeType
@@ -134,7 +133,7 @@ data LayerNodeType
   -- ^ Parallel composition (&&&)
   | SequentialNode
   -- ^ Sequential composition (>>>)
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 -- | Status of a resource
 data ResourceStatus
@@ -146,7 +145,7 @@ data ResourceStatus
   -- ^ Failed to initialize with error
   | SharedReference Text
   -- ^ Reference to a shared resource (with node ID)
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq)
 
 -------------------------------------------------------------------------------
 -- JSON Instances
@@ -250,9 +249,7 @@ data DiagnosticsCollectorState = DiagnosticsCollectorState
   }
 
 -- | Opaque handle to a diagnostics collector
-newtype DiagnosticsCollector = DiagnosticsCollector
-  { unCollector :: IORef DiagnosticsCollectorState
-  }
+newtype DiagnosticsCollector = DiagnosticsCollector (IORef DiagnosticsCollectorState)
 
 -- | Create a new diagnostics collector
 newDiagnosticsCollector :: MonadIO m => m DiagnosticsCollector
@@ -297,112 +294,101 @@ finalizeDiagnostics (DiagnosticsCollector ref) = liftIO $ do
 
 -- | Create a LayerInterceptor that collects diagnostics
 createDiagnosticsInterceptor :: MonadIO m => DiagnosticsCollector -> LayerInterceptor m
-createDiagnosticsInterceptor (DiagnosticsCollector ref) = LayerInterceptor
-  { onResourceAcquire = \ctx -> liftIO $ do
-      startNode ctx ResourceNode
-  , onResourceRelease = \name duration -> liftIO $ do
-      endNode name duration Initialized
-  , onEffectRun = \ctx -> liftIO $ do
-      startNode ctx EffectNode
-  , onEffectComplete = \name duration -> liftIO $ do
-      endNode name duration Initialized
+createDiagnosticsInterceptor collector = LayerInterceptor
+  { onResourceAcquire = \ctx -> liftIO $
+      diagStartNode collector ctx ResourceNode
+  , onResourceRelease = \_ dur -> liftIO $
+      diagEndNode collector dur Initialized
+  , onEffectRun = \ctx -> liftIO $
+      diagStartNode collector ctx EffectNode
+  , onEffectComplete = \_ dur -> liftIO $
+      diagEndNode collector dur Initialized
   , onServiceCreate = \ctx -> liftIO $ do
-      startNode ctx ServiceNode
-      -- Register service for tracking sharing
-      case operationType ctx of
-        Just tr -> modifyIORef' ref $ \s -> s
-          { collectorServiceMap = HashMap.insert tr (operationName ctx) (collectorServiceMap s)
-          , collectorTotalResources = collectorTotalResources s + 1
-          }
-        Nothing -> modifyIORef' ref $ \s -> s
-          { collectorTotalResources = collectorTotalResources s + 1
-          }
-  , onServiceReuse = \name tr -> liftIO $ do
-      state <- readIORef ref
-      case HashMap.lookup tr (collectorServiceMap state) of
-        Just originalNodeId -> do
-          -- Add a shared reference node
-          let sharedNode = LayerNode
-                { nodeId = T.pack ("shared-" <> show (collectorNextId state))
-                , nodeName = name
-                , nodeType = ServiceNode
-                , resourceType = Just tr
-                , status = SharedReference originalNodeId
-                , duration = Nothing
-                , children = []
-                , metadata = HashMap.empty
-                }
-          addChildToCurrentNode sharedNode
-          modifyIORef' ref $ \s -> s
-            { collectorNextId = collectorNextId s + 1
-            , collectorSharedResources = collectorSharedResources s + 1
-            }
-        Nothing -> pure () -- Service not tracked, skip
+      diagStartNode collector ctx ServiceNode
+      diagRegisterService collector ctx
+  , onServiceReuse = \name tr -> liftIO $
+      diagAddSharedRef collector name tr
   , onCompositionStart = \typ -> liftIO $ do
-      let nodeType = case typ of
+      let nt = case typ of
             Sequential -> SequentialNode
             Parallel -> ParallelNode
-      startNode (simpleContext $ T.pack $ show typ) nodeType
-  , onCompositionEnd = \_ duration -> liftIO $ do
-      endNode (T.pack "composition") duration Initialized
+          ctx = OperationContext (T.pack (show typ)) Nothing []
+      diagStartNode collector ctx nt
+  , onCompositionEnd = \_ dur -> liftIO $
+      diagEndNode collector dur Initialized
   }
-  where
-    startNode :: OperationContext -> LayerNodeType -> IO ()
-    startNode ctx nodeType = do
-      state <- readIORef ref
-      let newNode = LayerNode
-            { nodeId = T.pack ("node-" <> show (collectorNextId state))
-            , nodeName = operationName ctx
-            , nodeType = nodeType
-            , resourceType = operationType ctx
-            , status = Initializing
-            , duration = Nothing
-            , children = []
-            , metadata = HashMap.fromList (operationMetadata ctx)
-            }
-      modifyIORef' ref $ \s -> s
-        { collectorNodeStack = newNode : collectorNodeStack s
-        , collectorNextId = collectorNextId s + 1
+
+diagStartNode :: DiagnosticsCollector -> OperationContext -> LayerNodeType -> IO ()
+diagStartNode (DiagnosticsCollector ref) ctx nt = do
+  state <- readIORef ref
+  let newNode = LayerNode
+        { nodeId = T.pack ("node-" <> show (collectorNextId state))
+        , nodeName = operationName ctx
+        , nodeType = nt
+        , resourceType = operationType ctx
+        , status = Initializing
+        , duration = Nothing
+        , children = []
+        , metadata = HashMap.fromList (operationMetadata ctx)
+        }
+  modifyIORef' ref $ \s -> s
+    { collectorNodeStack = newNode : collectorNodeStack s
+    , collectorNextId = collectorNextId s + 1
+    }
+
+diagEndNode :: DiagnosticsCollector -> NominalDiffTime -> ResourceStatus -> IO ()
+diagEndNode (DiagnosticsCollector ref) dur st = do
+  state <- readIORef ref
+  case collectorNodeStack state of
+    [] -> pure ()
+    [root] ->
+      writeIORef ref $ state
+        { collectorNodeStack =
+            [root { status = st, duration = Just (realToFrac dur) }]
+        }
+    (current:parent:rest) -> do
+      let completed = current { status = st, duration = Just (realToFrac dur) }
+      writeIORef ref $ state
+        { collectorNodeStack =
+            parent { children = children parent ++ [completed] } : rest
         }
 
-    endNode :: Text -> NominalDiffTime -> ResourceStatus -> IO ()
-    endNode _name duration status = do
-      state <- readIORef ref
-      case collectorNodeStack state of
-        [] -> pure () -- Empty stack, nothing to complete
-        [rootNode] -> do
-          -- Completing the root node
-          let completed = rootNode
-                { status = status
-                , duration = Just (realToFrac duration)
-                }
-          writeIORef ref $ state { collectorNodeStack = [completed] }
-        (current:parent:rest) -> do
-          -- Complete current node and add to parent
-          let completed = current
-                { status = status
-                , duration = Just (realToFrac duration)
-                }
-              updatedParent = parent
-                { children = children parent ++ [completed]
-                }
-          writeIORef ref $ state { collectorNodeStack = updatedParent : rest }
-
-    addChildToCurrentNode :: LayerNode -> IO ()
-    addChildToCurrentNode child = do
-      state <- readIORef ref
-      case collectorNodeStack state of
-        [] -> pure ()
-        (current:rest) -> do
-          let updated = current { children = children current ++ [child] }
-          writeIORef ref $ state { collectorNodeStack = updated : rest }
-
-    simpleContext :: Text -> OperationContext
-    simpleContext name = OperationContext
-      { operationName = name
-      , operationType = Nothing
-      , operationMetadata = []
+diagRegisterService :: DiagnosticsCollector -> OperationContext -> IO ()
+diagRegisterService (DiagnosticsCollector ref) ctx =
+  case operationType ctx of
+    Just tr -> modifyIORef' ref $ \s -> s
+      { collectorServiceMap = HashMap.insert tr (operationName ctx) (collectorServiceMap s)
+      , collectorTotalResources = collectorTotalResources s + 1
       }
+    Nothing -> modifyIORef' ref $ \s -> s
+      { collectorTotalResources = collectorTotalResources s + 1
+      }
+
+diagAddSharedRef :: DiagnosticsCollector -> Text -> TypeRep -> IO ()
+diagAddSharedRef (DiagnosticsCollector ref) name tr = do
+  state <- readIORef ref
+  case HashMap.lookup tr (collectorServiceMap state) of
+    Just originalNodeId -> do
+      let sn = LayerNode
+            { nodeId = T.pack ("shared-" <> show (collectorNextId state))
+            , nodeName = name
+            , nodeType = ServiceNode
+            , resourceType = Just tr
+            , status = SharedReference originalNodeId
+            , duration = Nothing
+            , children = []
+            , metadata = HashMap.empty
+            }
+          cur = collectorNodeStack state
+      case cur of
+        [] -> pure ()
+        (top:rest) ->
+          writeIORef ref $ state
+            { collectorNodeStack = top { children = children top ++ [sn] } : rest
+            , collectorNextId = collectorNextId state + 1
+            , collectorSharedResources = collectorSharedResources state + 1
+            }
+    Nothing -> pure ()
 
 -------------------------------------------------------------------------------
 -- Running with Diagnostics
@@ -416,7 +402,7 @@ createDiagnosticsInterceptor (DiagnosticsCollector ref) = LayerInterceptor
 -- Note: This runs the layer to completion and discards the environment,
 -- only returning diagnostics. For most use cases, 'withLayerDiagnostics' is preferred.
 buildLayerDiagnostics ::
-  (MonadUnliftIO m, Typeable env) =>
+  MonadUnliftIO m =>
   -- | Layer to build
   Layer m deps env ->
   -- | Dependencies
@@ -441,7 +427,7 @@ buildLayerDiagnostics layer deps = do
 --   -- Use the environment...
 -- @
 withLayerDiagnostics ::
-  (MonadUnliftIO m, Typeable env) =>
+  MonadUnliftIO m =>
   -- | Layer to run
   Layer m deps env ->
   -- | Dependencies
@@ -676,88 +662,3 @@ renderLayerTreeLive collector isDone = do
 diagnosticsToJSON :: LayerDiagnostics -> Value
 diagnosticsToJSON = toJSON
 
--------------------------------------------------------------------------------
--- Example Usage
--------------------------------------------------------------------------------
-
--- | Example diagnostics for documentation
-exampleDiagnostics :: LayerDiagnostics
-exampleDiagnostics = LayerDiagnostics
-  { rootNode = LayerNode
-      { nodeId = "root"
-      , nodeName = "ApplicationLayer"
-      , nodeType = SequentialNode
-      , resourceType = Nothing
-      , status = Initialized
-      , duration = Just 0.35
-      , children =
-          [ LayerNode
-              { nodeId = "node-1"
-              , nodeName = "ConfigLayer"
-              , nodeType = EffectNode
-              , resourceType = Just (typeRep (Proxy :: Proxy ()))
-              , status = Initialized
-              , duration = Just 0.05
-              , children = []
-              , metadata = HashMap.fromList [("source", "environment")]
-              }
-          , LayerNode
-              { nodeId = "node-2"
-              , nodeName = "ParallelServices"
-              , nodeType = ParallelNode
-              , resourceType = Nothing
-              , status = Initialized
-              , duration = Just 0.3
-              , children =
-                  [ LayerNode
-                      { nodeId = "node-3"
-                      , nodeName = "DatabaseLayer"
-                      , nodeType = ResourceNode
-                      , resourceType = Nothing
-                      , status = Initialized
-                      , duration = Just 0.2
-                      , children =
-                          [ LayerNode
-                              { nodeId = "svc-001"
-                              , nodeName = "ConnectionPool"
-                              , nodeType = ServiceNode
-                              , resourceType = Nothing
-                              , status = Initialized
-                              , duration = Just 0.15
-                              , children = []
-                              , metadata = HashMap.fromList [("poolSize", "10")]
-                              }
-                          ]
-                      , metadata = HashMap.empty
-                      }
-                  , LayerNode
-                      { nodeId = "node-4"
-                      , nodeName = "WebServerLayer"
-                      , nodeType = ResourceNode
-                      , resourceType = Nothing
-                      , status = Initialized
-                      , duration = Just 0.1
-                      , children =
-                          [ LayerNode
-                              { nodeId = "node-5"
-                              , nodeName = "MetricsCollector"
-                              , nodeType = ServiceNode
-                              , resourceType = Nothing
-                              , status = SharedReference "svc-001"
-                              , duration = Nothing
-                              , children = []
-                              , metadata = HashMap.empty
-                              }
-                          ]
-                      , metadata = HashMap.empty
-                      }
-                  ]
-              , metadata = HashMap.empty
-              }
-          ]
-      , metadata = HashMap.empty
-      }
-  , totalDuration = 0.35
-  , totalResources = 5
-  , sharedResources = 1
-  }
