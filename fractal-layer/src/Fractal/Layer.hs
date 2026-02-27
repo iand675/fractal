@@ -175,6 +175,8 @@ import Control.Monad.Trans.Resource (createInternalState, runInternalState, with
 import Control.Monad.Trans.Resource.Internal (ReleaseMap (..), stateCleanupChecked)
 import Control.Selective
 import Data.Functor.Identity
+import Data.List.NonEmpty (NonEmpty(..))
+import Data.Semigroup (Semigroup(..))
 import Data.IntMap.Strict (mapKeysMonotonic)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -528,20 +530,16 @@ service = getOrCreateCachedService
 -------------------------------------------------------------------------------
 
 instance Functor m => Functor (Layer m deps) where
-  {-# SPECIALIZE instance Functor (Layer IO deps) #-}
   fmap f (Layer l) = Layer $ \lenv deps -> fmap f (l lenv deps)
 
 instance MonadUnliftIO m => Applicative (Layer m deps) where
-  {-# SPECIALIZE instance Applicative (Layer IO deps) #-}
   pure = pureLayer
   lf <*> la = dimap (\d -> (d, d)) (uncurry ($)) (zipLayer lf la)
 
 instance MonadUnliftIO m => Selective (Layer m deps) where
-  {-# SPECIALIZE instance Selective (Layer IO deps) #-}
   select = selectM
 
 instance MonadUnliftIO m => Monad (Layer m deps) where
-  {-# SPECIALIZE instance Monad (Layer IO deps) #-}
   return = pure
   (Layer l) >>= f = Layer $ \lenv deps -> do
     a <- l lenv deps
@@ -549,12 +547,17 @@ instance MonadUnliftIO m => Monad (Layer m deps) where
     l' lenv deps
 
 instance (MonadUnliftIO m, Semigroup env) => Semigroup (Layer m deps env) where
-  {-# SPECIALIZE instance Semigroup env => Semigroup (Layer IO deps env) #-}
   lf <> la = liftA2 (<>) lf la
+  sconcat (h :| t) = foldl (<>) h t
+  stimes n x
+    | n <= 0 = error "stimes: positive multiplier expected"
+    | n == 1 = x
+    | otherwise = x <> stimes (n - 1) x
 
 instance (MonadUnliftIO m, Monoid env) => Monoid (Layer m deps env) where
-  {-# SPECIALIZE instance Monoid env => Monoid (Layer IO deps env) #-}
   mempty = pure mempty
+  mappend = (<>)
+  mconcat = foldl (<>) mempty
 
 mapLayer :: (b -> a) -> Layer m a c -> Layer m b c
 mapLayer f (Layer l) = Layer $ \lenv env -> l lenv (f env)
@@ -566,28 +569,31 @@ instance (MonadUnliftIO m) => MonadReader deps (Layer m deps) where
 -- | Vertical composition: feed the output of the first layer as the
 --   dependencies of the second.
 composeLayer ::
-  Monad m =>
+  MonadUnliftIO m =>
   -- | "Upstream" layer
   Layer m a b ->
   -- | "Downstream" layer
   Layer m b c ->
   Layer m a c
-composeLayer (Layer upper) (Layer lower) = Layer $ \lenv -> upper lenv >=> lower lenv
-{-# SPECIALIZE composeLayer :: Layer IO a b -> Layer IO b c -> Layer IO a c #-}
+composeLayer (Layer upper) (Layer lower) = Layer $ \lenv deps -> do
+  lift $ onCompositionStart (interceptor lenv) Sequential
+  startTime <- liftIO getCurrentTime
+  b <- upper lenv deps
+  c <- lower lenv b
+  endTime <- liftIO getCurrentTime
+  lift $ onCompositionEnd (interceptor lenv) Sequential (diffUTCTime endTime startTime)
+  pure c
 
-instance Monad m => Category (Layer m) where
-  {-# SPECIALIZE instance Category (Layer IO) #-}
+instance MonadUnliftIO m => Category (Layer m) where
   id = Layer $ \_ deps -> pure deps
   (.) = flip composeLayer
 
-instance Functor m => Profunctor (Layer m) where
-  {-# SPECIALIZE instance Profunctor (Layer IO) #-}
+instance MonadUnliftIO m => Profunctor (Layer m) where
   dimap f g (Layer l) = Layer $ \lenv a -> fmap g (l lenv (f a))
   lmap  = mapLayer
   rmap = fmap
 
-instance Monad m => Strong (Layer m) where
-  {-# SPECIALIZE instance Strong (Layer IO) #-}
+instance MonadUnliftIO m => Strong (Layer m) where
   first' :: Layer m a b -> Layer m (a, c) (b, c)
   first' (Layer l) = Layer $ \lenv (a, c) -> do
     b <- l lenv a
@@ -598,8 +604,7 @@ instance Monad m => Strong (Layer m) where
     b <- l lenv a
     pure (c, b)
 
-instance Monad m => Choice (Layer m) where
-  {-# SPECIALIZE instance Choice (Layer IO) #-}
+instance MonadUnliftIO m => Choice (Layer m) where
   left' :: Layer m a b -> Layer m (Either a c) (Either b c)
   left' (Layer l) = Layer $ \lenv -> \case
     Left a -> Left <$> l lenv a
@@ -610,13 +615,11 @@ instance Monad m => Choice (Layer m) where
     Right a -> Right <$> l lenv a
     Left c -> pure (Left c)
 
-instance Monad m => Traversing (Layer m) where
-  {-# SPECIALIZE instance Traversing (Layer IO) #-}
+instance MonadUnliftIO m => Traversing (Layer m) where
   traverse' :: Traversable f => Layer m a b -> Layer m (f a) (f b)
   traverse' (Layer l) = Layer $ \lenv fa -> traverse (l lenv) fa
 
-instance Monad m => Arrow (Layer m) where
-  {-# SPECIALIZE instance Arrow (Layer IO) #-}
+instance MonadUnliftIO m => Arrow (Layer m) where
   arr f = Layer $ \_ a -> pure (f a)
   first = first'
   second = second'
@@ -650,7 +653,6 @@ instance Exception EmptyLayer
 --   -- Use the service...
 -- @
 instance MonadUnliftIO m => Alternative (Layer m deps) where
-  {-# SPECIALIZE instance Alternative (Layer IO deps) #-}
   empty = Layer $ \_ _ -> throwIO EmptyLayer
   Layer l1 <|> Layer l2 = Layer $ \lenv deps ->
     tryWithCleanup (l1 lenv deps) (l2 lenv deps)
@@ -659,7 +661,6 @@ instance MonadUnliftIO m => Alternative (Layer m deps) where
 -- The 'MonadPlus' instance provides the same fallback behavior as 'Alternative',
 -- with 'mzero' being equivalent to 'empty' and 'mplus' being equivalent to '<|>'.
 instance MonadUnliftIO m => MonadPlus (Layer m deps) where
-  {-# SPECIALIZE instance MonadPlus (Layer IO deps) #-}
   mzero = empty
   mplus = (<|>)
 
@@ -676,7 +677,6 @@ instance MonadUnliftIO m => MonadPlus (Layer m deps) where
 --     else zeroArrow -< cfg
 -- @
 instance MonadUnliftIO m => ArrowZero (Layer m) where
-  {-# SPECIALIZE instance ArrowZero (Layer IO) #-}
   zeroArrow = Layer $ \_ _ -> throwIO EmptyLayer
 
 -- |
@@ -691,7 +691,6 @@ instance MonadUnliftIO m => ArrowZero (Layer m) where
 --   <+> backupService -< cfg
 -- @
 instance MonadUnliftIO m => ArrowPlus (Layer m) where
-  {-# SPECIALIZE instance ArrowPlus (Layer IO) #-}
   (Layer l1) <+> (Layer l2) = Layer $ \lenv deps ->
     tryWithCleanup (l1 lenv deps) (l2 lenv deps)
 
@@ -706,8 +705,7 @@ instance MonadUnliftIO m => ArrowPlus (Layer m) where
 -- dynamicLayer = proc (layer, cfg) -> do
 --   app -< (layer, cfg)  -- Apply the layer to the config
 -- @
-instance Monad m => ArrowApply (Layer m) where
-  {-# SPECIALIZE instance ArrowApply (Layer IO) #-}
+instance MonadUnliftIO m => ArrowApply (Layer m) where
   app = Layer $ \lenv (Layer l, b) -> l lenv b
 
 -- |
@@ -798,7 +796,6 @@ zipLayer (Layer l1) (Layer l2) = Layer $ \lenv (d1, d2) -> do
           let mergedStates = unsafelyMergeReleaseMap stateA' stateB'
           atomicModifyIORef' stateMain $ \state -> (unsafelyMergeReleaseMap state mergedStates, ())
           pure (envA, envB)
-{-# SPECIALIZE zipLayer :: Layer IO d1 o1 -> Layer IO d2 o2 -> Layer IO (d1, d2) (o1, o2) #-}
 
 -- The first map is the one that is being merged into. Its refcount is not affected.
 unsafelyMergeReleaseMap :: ReleaseMap -> ReleaseMap -> ReleaseMap
@@ -818,7 +815,6 @@ runLayer :: MonadUnliftIO m => deps -> Layer m deps env -> m env
 runLayer deps (Layer l) = do
   lenv <- LayerEnv <$> newMVar emptyTypeMap <*> pure nullInterceptor
   runResourceT (l lenv deps)
-{-# SPECIALIZE runLayer :: deps -> Layer IO deps env -> IO env #-}
 
 -- |
 -- Safely build a layer, use its environment, and guarantee cleanup.
@@ -870,7 +866,6 @@ runLayerWithInterceptor ::
 runLayerWithInterceptor i deps (Layer l) = do
   lenv <- LayerEnv <$> newMVar emptyTypeMap <*> pure i
   runResourceT (l lenv deps)
-{-# SPECIALIZE runLayerWithInterceptor :: LayerInterceptor IO -> deps -> Layer IO deps env -> IO env #-}
 
 -- |
 -- Run a layer with a custom interceptor and use the environment.
