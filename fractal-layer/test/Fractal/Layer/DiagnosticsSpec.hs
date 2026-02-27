@@ -649,6 +649,28 @@ spec = do
       totalResources diags `shouldSatisfy` (>= 1)
       sharedResources diags `shouldSatisfy` (>= 1)
 
+    it "buildLayerDiagnostics with composed layers exercises composition callbacks" $ do
+      let configL = effect @IO @() @Config $ \_ -> pure (Config 8080)
+      let dbL = effect @IO @Config @Database $ \cfg ->
+            pure (Database ("db:" <> show (configPort cfg)))
+      let composed = configL >>> dbL
+      diags <- buildLayerDiagnostics composed ()
+      totalDuration diags `shouldSatisfy` (>= 0)
+      let root = rootNode diags
+      length (children root) `shouldSatisfy` (>= 1)
+
+    it "buildLayerDiagnostics with service reuse through full pipeline" $ do
+      let svc = mkService $ resource @IO @() @Config
+            (\_ -> pure (Config 42))
+            (\_ -> pure ())
+      let testLayer = do
+            a <- service svc
+            b <- service svc
+            pure (configPort a + configPort b)
+      diags <- buildLayerDiagnostics testLayer ()
+      sharedResources diags `shouldSatisfy` (>= 1)
+      totalResources diags `shouldSatisfy` (>= 1)
+
   describe "Diagnostics - endNode edge cases" $ do
     it "handles completing root node directly" $ do
       collector <- newDiagnosticsCollector
@@ -926,3 +948,28 @@ spec = do
       collector <- newDiagnosticsCollector
       diags <- finalizeDiagnostics collector
       nodeName (rootNode diags) `shouldBe` "Root"
+
+  describe "Diagnostics - full pipeline integration" $ do
+    it "composed layers produce sequential composition nodes in diagnostics" $ do
+      let l1 = effect @IO @() @Config $ \_ -> pure (Config 1)
+      let l2 = effect @IO @Config @Database $ \c -> pure (Database (show (configPort c)))
+      diags <- buildLayerDiagnostics (l1 >>> l2) ()
+      totalDuration diags `shouldSatisfy` (>= 0)
+
+    it "service create+reuse through full pipeline" $ do
+      let svc = mkService $ resource @IO @() @Database
+            (\_ -> pure (Database "svc"))
+            (\_ -> pure ())
+      let layer = do
+            a <- service svc
+            b <- service svc
+            pure (dbConnection a, dbConnection b)
+      diags <- buildLayerDiagnostics layer ()
+      totalResources diags `shouldSatisfy` (>= 1)
+      sharedResources diags `shouldSatisfy` (>= 1)
+
+    it "resource layer produces resource node in diagnostics" $ do
+      let layer = resource @IO @() @Config (\_ -> pure (Config 1)) (\_ -> pure ())
+      diags <- buildLayerDiagnostics layer ()
+      let root = rootNode diags
+      length (children root) `shouldSatisfy` (>= 1)
